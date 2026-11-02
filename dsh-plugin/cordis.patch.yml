@@ -1,0 +1,5 @@
+# dsh-cyber-im-avatar bundle patch: 把 IM 值守席位挂进 web 组合的侧边栏底部。
+# 通过 `dsh plugin --profile <name> add <path>` 安装时自动生效。
+- insert:
+    - id: dsh-cyber-im-avatar
+      name: dsh-cyber-im-avatar

@@ -1,0 +1,98 @@
+name: publish
+
+# 发版：打 tag 即发布。tag 形如 v0.1.1，必须与 dsh-plugin/package.json 的 version 一致。
+#
+# 用 npm 的 Trusted Publishing（OIDC）：不需要任何长期 token，也不需要 2FA 交互。
+# 前提是在 npmjs.com 的包设置里登记过本仓库 + 本工作流文件名（见 PUBLISHING.md）。
+#
+# 注意：bypass-2FA 的 granular token 在 2027-01 之后只能"暂存发布"，
+# 这条路是长期方案；临时救急仍可用 token，但别把它写进仓库。
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: "只打包不发布"
+        type: boolean
+        default: true
+
+permissions:
+  contents: read
+  id-token: write # OIDC：npm 用它换取短期发布凭据
+
+concurrency:
+  group: publish-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: dsh-plugin
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          registry-url: https://registry.npmjs.org
+
+      # OIDC 发布要求 npm >= 11.5；node 22 自带的是 10.x
+      - name: 升级 npm
+        run: npm install -g npm@latest && npm --version
+
+      - name: 版本一致性校验
+        if: startsWith(github.ref, 'refs/tags/v')
+        run: |
+          PKG=$(node -p "require('./package.json').version")
+          TAG="${GITHUB_REF_NAME#v}"
+          echo "package.json=$PKG  tag=$TAG"
+          if [ "$PKG" != "$TAG" ]; then
+            echo "::error::tag 与 package.json 版本不一致：$TAG vs $PKG"
+            exit 1
+          fi
+
+      - name: 回归测试
+        working-directory: ${{ github.workspace }}
+        run: |
+          if [ -f tests/run_tests.py ]; then python3 tests/run_tests.py; fi
+
+      - name: 打包预演
+        run: npm pack --dry-run
+
+      # npm 的版本号不可重用。用 token 应急发过某版本后，再补打同一个 tag 不该变红，
+      # 所以这里先查一眼：已经在库里就只跑测试、跳过发布。
+      - name: 这个版本是否已发布
+        id: exists
+        if: startsWith(github.ref, 'refs/tags/v')
+        run: |
+          V=$(node -p "require('./package.json').version")
+          if npm view "dsh-cyber-im-avatar@$V" version >/dev/null 2>&1; then
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+            echo "::notice::$V 已在 npm 上，跳过发布（仍会校验 tag、跑测试、打包预演）"
+          else
+            echo "skip=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: 发布（Trusted Publishing）
+        if: startsWith(github.ref, 'refs/tags/v') && inputs.dry_run != true && steps.exists.outputs.skip != 'true'
+        run: |
+          # 失败时把错误尾部转成 ::error:: 注释——注释是公开的，
+          # 无需任何凭据就能在 API 里看到 npm 报错的真实原因。
+          # pipefail 必须开：否则管道退出码取自 tee，npm 的失败会被吞掉。
+          set -o pipefail
+          if ! npm publish --provenance --access public 2>&1 | tee publish.log; then
+            tail -8 publish.log | while IFS= read -r l; do echo "::error::${l:0:400}"; done
+            exit 1
+          fi
+
+      - name: 版本自检
+        if: startsWith(github.ref, 'refs/tags/v') && inputs.dry_run != true
+        run: |
+          V=$(node -p "require('./package.json').version")
+          sleep 10
+          npm view "dsh-cyber-im-avatar@$V" version --registry=https://registry.npmjs.org

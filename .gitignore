@@ -1,0 +1,28 @@
+__pycache__/
+*.py[cod]
+.DS_Store
+.im-standin/
+lark-im-resources/
+*.pos
+*.pos.tmp.*
+*.bad
+
+# DSH 插件形态（dsh-plugin/）
+node_modules/
+*.log
+package-lock.json
+
+# 面板服务本地数据（默认落在 ~/.im-standin/，这里兜底）
+dsh-plugin/**/*.db
+dsh-plugin/**/*.db-journal
+dsh-plugin/**/panel.json
+
+# npm prepack 生成的 skill 副本（源在仓库根目录）
+dsh-plugin/skill/
+
+# 本地私有痕迹（会话日志 / 计划草稿），不进版本库
+.workbuddy/
+.zcode/
+
+# 本机/其他宿主的探索性实验，不属于本项目交付物
+probe/

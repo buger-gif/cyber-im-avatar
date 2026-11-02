@@ -1,0 +1,23 @@
+{
+  "_comment": "活文档行数预算（scripts/verify_docs.py 强制，tests/test_docs.py 复查覆盖）。上限=现值+约10%余量；涨到顶就就地精简，确需扩写先改这份说明。冻结区（log/archive/audits/decisions/CHANGELOG/specs）不设预算。2026-11-01 初版随 spec 0002 建立。",
+  "AGENTS.md": 65,
+  "README.md": 200,
+  "SKILL.md": 300,
+  "dsh-plugin/README.md": 350,
+  "docs/AGENTS.md": 90,
+  "docs/README.md": 70,
+  "docs/architecture/README.md": 30,
+  "docs/architecture/01-shape.md": 125,
+  "docs/architecture/02-data.md": 135,
+  "docs/architecture/03-runtime.md": 80,
+  "docs/specs/README.md": 65,
+  "docs/specs/contracts/01-api.md": 85,
+  "docs/specs/contracts/02-storage.md": 105,
+  "docs/specs/contracts/03-config.md": 80,
+  "docs/decisions/README.md": 55,
+  "docs/implementation/PROGRESS.md": 90,
+  "docs/implementation/runbooks/README.md": 30,
+  "docs/implementation/runbooks/dev-loop.md": 80,
+  "docs/implementation/runbooks/publish.md": 260,
+  "docs/implementation/runbooks/troubleshoot.md": 75
+}

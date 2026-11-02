@@ -1,0 +1,37 @@
+name: test
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  regression:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.9", "3.11", "3.13"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+      # 插件测试与契约探针是 Node 22+（node:sqlite 在 22.5 才可用）。
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: python3 tests/run_tests.py
+
+  docs-gate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: 静态层 gate（文档死链 / 契约对账 / 版本一致 / 构建产物新鲜度 / 密钥扫描）
+        run: |
+          bash scripts/gate.sh --quick

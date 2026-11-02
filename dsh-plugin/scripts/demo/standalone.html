@@ -1,0 +1,25 @@
+<!doctype html>
+<!-- UI 走查用的独立挂载页：不依赖 DSH、不连真实服务，数据全走 fixture 拦截。
+
+     用法（仓库根）：
+       node dsh-plugin/scripts/shot.mjs "file://$PWD/dsh-plugin/scripts/demo/standalone.html#tab=service" /tmp/ui-service.png
+     hash 支持 #tab=service / #thread=feishu:oc_demo_lin / #tab=settings 等。
+-->
+<html>
+<head>
+  <meta charset="utf-8">
+  <title>IM 值守 · UI 预览（假数据）</title>
+</head>
+<body style="margin:0;height:100vh;background:#f5f2ec">
+  <div id="app" style="height:100vh"></div>
+  <script type="module">
+    import { intercept } from "./fixture.mjs";
+    window.IM_STANDIN_TOKEN = "demo";
+    const s = document.createElement("script");
+    s.textContent = intercept;
+    document.head.appendChild(s);
+    await import("../../web/panel.js");
+    window.IMStandinPanel.mountDock(document.getElementById("app"));
+  </script>
+</body>
+</html>

@@ -1,0 +1,17 @@
+{
+  "name": "dev-cyber-im-avatar",
+  "plugins": [
+    {
+      "name": "panel-probe",
+      "source": "./probe/panel-probe",
+      "version": "0.1.1",
+      "description": "ZCode 插件能力探针：验证 ui.surfaces 面板渲染、跨源 fetch 本地服务、MCP 工具注册。",
+      "displayName": "插件探针",
+      "displayName_i18n": { "zh-CN": "插件探针" },
+      "description_i18n": {
+        "zh-CN": "验证 ZCode 第三方插件能否渲染自定义面板、面板能否访问本机服务、MCP 工具能否被调用。"
+      },
+      "category": "developer-tools"
+    }
+  ]
+}

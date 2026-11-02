@@ -1,0 +1,70 @@
+{
+  "name": "dsh-cyber-im-avatar",
+  "version": "0.8.0",
+  "description": "IM 分身壳：在 DSH 侧边栏值守飞书/企业微信，命中新消息唤醒绑定 DSH 会话，由 agent 按 skill 闭环自己调 CLI、调研、回复；面板只做消息展示、通知与手动发送。",
+  "type": "module",
+  "main": "./lib/index.js",
+  "scripts": {
+    "prepack": "node scripts/bundle-skill.mjs",
+    "test": "node --test",
+    "build": "python3 scripts/build_client.py",
+    "build:skill": "node scripts/bundle-skill.mjs",
+    "migrate": "node scripts/migrate-state.mjs"
+  },
+  "exports": {
+    ".": "./lib/index.js",
+    "./client": "./lib/client.js",
+    "./cordis.patch.yml": "./cordis.patch.yml",
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "lib",
+    "web",
+    "skill",
+    "cordis.patch.yml",
+    "README.md",
+    "scripts/migrate-state.mjs"
+  ],
+  "dsh": {
+    "manifestVersion": 1,
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    },
+    "client": {
+      "platform": "web",
+      "inject": [
+        "@deepseek-ai/dsh-client-ui-sidebar",
+        "@deepseek-ai/dsh-client-ui-sidebar-right"
+      ]
+    }
+  },
+  "engines": {
+    "node": ">=22.5"
+  },
+  "keywords": [
+    "dsh",
+    "dsh-plugin",
+    "deepseek-harness",
+    "im",
+    "feishu",
+    "lark",
+    "wecom",
+    "customer-service",
+    "inbox"
+  ],
+  "author": "buger-gif",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/buger-gif/cyber-im-avatar.git",
+    "directory": "dsh-plugin"
+  },
+  "homepage": "https://github.com/buger-gif/cyber-im-avatar/tree/main/dsh-plugin",
+  "bugs": {
+    "url": "https://github.com/buger-gif/cyber-im-avatar/issues"
+  },
+  "publishConfig": {
+    "access": "public",
+    "registry": "https://registry.npmjs.org/"
+  }
+}

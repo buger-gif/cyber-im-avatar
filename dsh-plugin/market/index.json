@@ -1,0 +1,85 @@
+{
+  "format": 1,
+  "title": {
+    "en": "cyber-im-avatar",
+    "zh-cn": "赛博办公 IM 分身"
+  },
+  "description": {
+    "en": "Plugins from the cyber-im-avatar project: keep an IM stand-in seat inside DSH.",
+    "zh-cn": "cyber-im-avatar 的插件：在 DSH 里挂一个替你值守 IM 的常驻席位。"
+  },
+  "metadata": {
+    "categories": {
+      "communication": {
+        "title": {
+          "en": "Communication",
+          "zh-cn": "沟通协作"
+        }
+      }
+    },
+    "labels": {
+      "local-first": {
+        "title": {
+          "en": "Local first",
+          "zh-cn": "数据留在本机"
+        }
+      },
+      "needs-im-cli": {
+        "title": {
+          "en": "Needs IM CLI",
+          "zh-cn": "需先登录 IM CLI"
+        }
+      }
+    },
+    "sortKeys": {}
+  },
+  "plugins": [
+    {
+      "name": "dsh-cyber-im-avatar",
+      "title": {
+        "en": "IM Stand-in",
+        "zh-cn": "IM 值守"
+      },
+      "description": {
+        "en": "Sidebar seat in DSH that watches Feishu / WeCom chats, drafts replies in your voice, and sends after you confirm.",
+        "zh-cn": "在 DSH 侧边栏常驻的 IM 值守席位：收件箱聚合 @我 与私聊，按你的语气起草回复，确认后以本人身份发出。"
+      },
+      "icon": "data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCA2NCA2NCIgd2lkdGg9IjY0IiBoZWlnaHQ9IjY0Ij4KPHJlY3Qgd2lkdGg9IjY0IiBoZWlnaHQ9IjY0IiByeD0iMTQiIGZpbGw9IiMxZjZmNWMiLz4KPHBhdGggZD0iTTE0IDMyaDEwbDQgN2g4bDQtN2gxMCIgZmlsbD0ibm9uZSIgc3Ryb2tlPSIjZjZmM2VjIiBzdHJva2Utd2lkdGg9IjQiCiAgc3Ryb2tlLWxpbmVjYXA9InJvdW5kIiBzdHJva2UtbGluZWpvaW49InJvdW5kIi8+CjxwYXRoIGQ9Ik0xNCAzNFYyMGE0IDQgMCAwIDEgNC00aDI4YTQgNCAwIDAgMSA0IDR2MTQiIGZpbGw9Im5vbmUiIHN0cm9rZT0iI2Y2ZjNlYyIKICBzdHJva2Utd2lkdGg9IjQiIHN0cm9rZS1saW5lY2FwPSJyb3VuZCIvPgo8cGF0aCBkPSJNMTQgMzR2MTBhNCA0IDAgMCAwIDQgNGgyOGE0IDQgMCAwIDAgNC00VjM0IiBmaWxsPSJub25lIiBzdHJva2U9IiNmNmYzZWMiCiAgc3Ryb2tlLXdpZHRoPSI0IiBzdHJva2UtbGluZWNhcD0icm91bmQiLz4KPC9zdmc+",
+      "author": "buger-gif",
+      "homepage": "https://github.com/buger-gif/cyber-im-avatar/tree/main/dsh-plugin",
+      "repository": {
+        "url": "https://github.com/buger-gif/cyber-im-avatar",
+        "directory": "dsh-plugin"
+      },
+      "metadata": {
+        "category": "communication",
+        "keywords": [
+          "dsh",
+          "dsh-plugin",
+          "deepseek-harness",
+          "im",
+          "feishu",
+          "lark",
+          "wecom",
+          "customer-service",
+          "inbox"
+        ],
+        "labels": [
+          "local-first",
+          "needs-im-cli"
+        ],
+        "sortKeys": {}
+      },
+      "versions": [
+        {
+          "version": "0.7.0",
+          "publishTimestamp": 1793507057,
+          "source": {
+            "type": "npm"
+          },
+          "engines": {}
+        }
+      ]
+    }
+  ]
+}
