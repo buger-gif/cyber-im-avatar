@@ -5,7 +5,7 @@
 
 ## 更新时间
 
-2026-11-02（v0.8.0：Node 单进程壳；公开历史已脱敏重写并 push，npm 待发布）
+2026-11-03（v0.8.0：Node 单进程壳；公开历史已脱敏重写；npm 已发布，tag 已推）
 
 ## 最近批次
 
@@ -21,7 +21,7 @@
 
 ## 当前断点
 
-- 工作区代码 = **v0.8.0（已 push；历史已压成单提交并脱敏；npm 待发布）**：插件只剩 DSH 宿主里的 Node 模块
+- 工作区代码 = **v0.8.0（已 push + npm 发布 + tag 已推；历史已压成单提交并脱敏）**：插件只剩 DSH 宿主里的 Node 模块
   `lib/index.js`（同源路由/token/skill 安装/服务注入）→ `app.js`（API）→
   `poller.js` + `im.js`（拉取）→ `turns.js`（live turn）→ `state.js` / `profiles.js`
   / `workspaces.js` / `sessions.js`。没有 Python、stdio、SQLite、headless 子进程。
@@ -39,34 +39,31 @@
   （旧库迁移存量，未逐条清理）。
 - 测试：`node --test` 51 条全过（state/profiles/im/poller/turns/app/migration）；
   `tests/test_docs.py` 契约对账已改为 Node 探针。
-- `main` 已 push（公开历史压成单提交并脱敏；旧 tag 已删，`v0.8.0` 待
-  npm 凭据完成后重打）。npm 线上 latest 仍是 `dsh-cyber-im-avatar@0.7.0`：
-  tag 触发的 publish 在 Trusted Publishing 步骤报 404（包设置里尚未登记
-  Trusted Publisher），0.8.0 未发布；`dsh-plugin/market/index.json` 仍指 0.7.0
-  是正确状态。
+- `main` 已 push，公开历史是一根脱敏提交；`v0.8.0` 指向 npm 发布后的收尾提交。
+  npm 线上 latest 已是 `dsh-cyber-im-avatar@0.8.0`（发布后约 3 分钟可查），
+  `dsh-plugin/market/index.json` 已切到 0.8.0（npm 源）。
+- 发布凭据是 npm 网页生成的 bypass-2FA granular token（7 天有效），只放在仓库外的
+  本地 0600 文件里，不写入仓库；下一版发版前应改为 Trusted Publisher。
 - 桌面 DSH 与 3080 都装的是本地 `link:` 插件；两者不能同时写同一份 state，
   开发/验证只留一个。
 
 ## 挂账（按优先级）
 
-1. **npm 发布凭据**：0.8.0 的 publish 被 OIDC 404 挡住。二选一：
-   npm 包设置登记 Trusted Publisher（`buger-gif/cyber-im-avatar` + `publish.yml`），
-   或提供带 bypass-2FA 的 granular token；之后重跑 publish workflow / 本地 `npm publish`。
-   2FA 目前未完成：CLI 的 TOTP 路线需要一次邮箱 OTP；网页安全密钥需要本人在场。
-2. **v0.8.0 tag**：历史重写后旧 tag 已删，npm 发布前不要重打。
-3. **v0.8.0 发版**：npm 未发布，索引仍指 0.7.0。
-4. **历史待回清理**：迁移带来的 50 条旧 pending 是否在面板「收件箱 → 清理」一次，
+1. **下一版发布方式**：本次用 7 天有效的 bypass-2FA granular token 发布；npm 已宣布
+   2027-01 起移除直接发布。下一版发版前在 npm 包设置登记 Trusted Publisher
+   （`buger-gif/cyber-im-avatar` + `publish.yml`），走 OIDC。
+2. **真实 0.8.0 live turn 验收**：等示例对象 A下一条消息命中，确认新会话绑定、
+   turn/end、post-turn 拉取与收件箱收敛。
+3. **历史待回清理**：迁移带来的 50 条旧 pending 是否在面板「收件箱 → 清理」一次，
    还是等用户逐个看，待拍板。
-5. **0.5.0 屏蔽的 UI 端到端截图**：功能已过测试，截图验证被中断。
+4. **0.5.0 屏蔽的 UI 端到端截图**：功能已过测试，截图验证被中断。
 
 ## 下一步
 
 1. 等示例对象 A下一条消息命中 → live turn（新会话）→ post-turn 拉取闭环；期间不要主动给
    真实客户发消息，除非用户在草稿确认流里同意。
-2. 跑 `node --test` + `bash scripts/gate.sh` 全量；`python3 tests/run_tests.py`
-   确认 skill 形态未受影响。
-3. 同步 `~/.agents/skills/cyber-im-avatar` 的 SKILL.md（`node scripts/bundle-skill.mjs` + 安装副本）。
-4. 按需把 0011/0012/0013 归档，更新 README/CHANGELOG 后发 0.8.0。
+2. 下一版发版前登记 Trusted Publisher；本次 token 到期后不要再依赖它。
+3. 按需把 0011/0012/0013 归档；改文档时保持 `CHANGELOG.md`、README 与 market 索引一致。
 
 ## 规则性提醒
 
