@@ -164,6 +164,9 @@ def test_time_window():
 
 def test_docs():
     """文档索引不能烂：锚点可跳、章节齐全、无真实 ID 泄漏。"""
+    if not os.path.exists(os.path.join(ROOT, "scripts", "verify_docs.py")):
+        print("\n[文档] 跳过：包内没有 verify_docs.py（仅仓库版有）")
+        return
     import glob
     import re
 
@@ -554,6 +557,9 @@ def test_safety_docs():
 def test_plugin_polling():
     """dsh-plugin：Node 单进程壳的 state/poller/live turn/API/迁移测试。"""
     plug = os.path.join(ROOT, "dsh-plugin")
+    if not os.path.isdir(plug):
+        print("\n[插件] 跳过：包内没有 dsh-plugin/（仅仓库版有）")
+        return
     r = subprocess.run(["node", "--test"], cwd=plug, capture_output=True, text=True, timeout=180)
     tail = (r.stderr or r.stdout or "").strip().splitlines()
     detail = tail[-1] if tail else ""
@@ -562,6 +568,9 @@ def test_plugin_polling():
 
 def test_doc_contracts():
     """docs/specs/contracts 与代码对账 + 版本一致 + 构建产物新鲜度 + verify_docs。"""
+    if not os.path.exists(os.path.join(HERE, "test_docs.py")):
+        print("\n[文档对账] 跳过：包内没有 tests/test_docs.py（仅仓库版有）")
+        return
     print("\n[文档对账] 契约 / 版本 / 构建产物 / verify_docs")
     sys.path.insert(0, HERE)
     import test_docs
