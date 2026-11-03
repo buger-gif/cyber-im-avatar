@@ -5,7 +5,8 @@
 
 ## 更新时间
 
-2026-11-03（0.9.0 的实现与验收已全部完成，未发版；真实客户命中与真实平台媒体待命中）
+2026-11-03（0.9.0 的实现与验收已全部完成，未发版；真实客户命中与真实平台媒体待命中；
+钉钉已真机命中，发送只到 dry-run）
 
 ## 最近批次
 
@@ -22,6 +23,7 @@
 | 2026-11-03 | 值守快车道：候选 60 秒、发现 10 分钟；`poll.fast_sec` 可关（spec 0022 / ADR 0007） | `lib/poller.js`、`lib/state.js`、`web/panel.js` |
 | 2026-11-03 | 插件只追加消息、画像归 agent、`dsh.full_access`（spec 0018） | `lib/turns.js`、`lib/state.js`、`lib/profiles.js` |
 | 2026-11-03 | 值守可靠性：双水位、whoami 暂停、@ 判定、富媒体交付（spec 0017） | `lib/poller.js`、`lib/im.js`、`lib/turns.js`、`lib/media.js` |
+| 2026-11-03 | 钉钉真机：登录 → 取 userId → 真实会话命中 → 起草（发送未执行）；修 `+recent-conversations` 的 `data.conversations` 路径 | `scripts/bootstrap.py`、`references/dingtalk.md` |
 | 2026-11-02 | 插件重写为 Node 单进程（spec 0013）：state.json + live turn | `dsh-plugin/lib/`、`scripts/migrate-state.mjs` |
 
 ## 当前断点
@@ -48,10 +50,15 @@
 - **面板走查**：320 / 360 / 420，浅/深两套，六个页签；`.ims-panel` 各宽度
   `scrollWidth === clientWidth`，越界元素 0；设置页三个数字框均 92px；详情「重开会话」
   在 DSH 会话行右侧不换行。走查截图在本地临时目录（未入库）。
-- **测试**：`node --test` 102/102；`python3 -I tests/run_tests.py` 110/0；
+- **测试**：`node --test` 103/103；`python3 -I tests/run_tests.py` 110/0；
   `bash scripts/gate.sh` 全量六项全绿。
 - **状态文件**：真实 `~/.im-standin/state.json` 未被本轮写入；所有演练写入
   `/tmp/im-standin-accept/`（验收后已清理）。桌面 DSH 与 3080 不要同时写同一份 state。
+- **钉钉真机已通，发送未验证**：组织开通「CLI 数据访问」后 `dws auth login --device` 一次成功
+  （access 当日 18:09 到期 / refresh 2026-12-03），`profile list` 取到 `userId`，
+  `env.json` 已写入 `self_id`。真实会话上监听命中、正文完整、水位推进、退出码 0。
+  **发送只到 dry-run**：计划解析为 `send_personal_message` + `identity=user`，未真发。
+  该组织里只有一个机器人会话，人类私聊的完整闭环仍缺真实对象。
 
 ## 挂账（按优先级）
 
@@ -62,12 +69,15 @@
    图片、文件、语音、视频尚未命中；等用户在场或指定测试会话时补，不要主动外发。
 3. **历史待回清理**：旧库迁移带来的约 50 条 pending 是否在「收件箱 → 清理」一次，待用户拍板。
 4. **0.5.0 屏蔽的 UI 端到端截图**：功能已过测试，截图验证仍中断。
+5. **钉钉发送与真人闭环**：只到 dry-run。真发前要定 `--ai-tag` 口径（默认给消息打 AI 标识）；
+   再找一个真人会话跑完「命中 → 草稿 → 发送 → 重挂」。
 
 ## 下一步
 
 1. 按发版 runbook 发 0.9.0；发版前再跑 `bash scripts/gate.sh` 全量。
 2. 等真实客户消息/媒体命中；只观察，不主动给真实客户发消息。
 3. 用户确认后清理历史待回；清理前不要当作用户已同意。
+4. 钉钉补完真人闭环：给一个真人会话跑「命中 → 草稿 → 发送 → 重挂」，先定 `--ai-tag` 口径。
 
 ## 规则性提醒
 

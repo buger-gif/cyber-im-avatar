@@ -238,7 +238,9 @@ def check_auth(rep, env):
                     fix="dws profile list 确认组织；必要时 dws auth login 重选", ref="b")
     else:
         rep.add("auth", "fail", obj.get("message") or "未登录",
-                fix=f"{rep.cli} auth login（无头环境加 --device）", ref="b")
+                fix=f"{rep.cli} auth login（无头环境加 --device）；"
+                    "若登录一路到「授权成功」后报「您暂无 CLI 数据访问权限」，"
+                    "是组织未开通 CLI 访问，找该组织主管理员，重试设备码不会变", ref="b")
 
     if cached and not rep.has_fail():
         pass  # env 里的缓存值由 check_env 校验

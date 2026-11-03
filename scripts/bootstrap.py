@@ -277,7 +277,8 @@ PLATFORMS = {
         "cmd_chat_search": ["chat", "+chat-search", "--query", "{query}"],
         "f_search_items": [["chats"], ["conversations"], ["result"], ["items"]],
         "cmd_recent": ["chat", "+recent-conversations"],
-        "f_recent_items": [["conversations"], ["items"], ["result"], ["chats"]],
+        # 实测返回 {"ok":true,"data":{"conversations":[{conversationId,name,type}]}}
+        "f_recent_items": [["data", "conversations"], ["conversations"], ["items"], ["result"], ["chats"]],
         "cmd_chats": ["chat", "+chat-list"],
         "f_chat_items": [["conversations"], ["chats"], ["items"], ["result"]],
         "f_chat_id": [["openConversationId"], ["conversationId"], ["chatId"]],

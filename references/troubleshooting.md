@@ -129,7 +129,7 @@ python3 tests/run_tests.py                                     # 引擎回归（
 |---|---|---|
 | 飞书 | `lark-cli auth status` | 看 `identities.user.tokenStatus`；`expiresAt` 是 access token（约 2 小时），`refreshExpiresAt` 是刷新凭证（约 7 天）。**refresh 也过了就必须重新扫码** |
 | 企业微信 | `wecom-cli auth show` | 文本 `Status: authorized` + `Bot ID: ...`；其它状态即未授权 |
-| 钉钉 | `dws auth status` | JSON `authenticated: true/false`，`message` 直接写「未登录」 |
+| 钉钉 | `dws auth status` | JSON `authenticated: true/false`，`message` 直接写「未登录」。**false 有两种**：真没登过；登录被组织闸门拒（见 B.2 末），后者只能从登录输出认出来 |
 
 ```bash
 lark-cli auth status | python3 -c "import json,sys; u=json.load(sys.stdin)['identities']['user']; print(u['tokenStatus'], u.get('expiresAt'), u.get('refreshExpiresAt'))"
@@ -170,6 +170,26 @@ lark-cli auth login --device-code <code>    # 用户确认已授权后收尾
 > 设备码 **10 分钟**过期，且等同于一次登录凭证 —— 卡片不要转发。
 > 若卡片发不出去（bot 未开通与你单聊 / 应用可用范围不含你），脚本会自动退化为文本消息，
 > 再失败就打印链接让你手动开。
+
+**钉钉 —— 先分清「没登录」和「组织没开」**
+
+`dws auth login --device` 给出短链接 + `user_code`，本人点确认后流程不会立刻成功，
+还要过 Step 4「检查组织 CLI 授权状态」。组织没开 CLI 数据访问时这一步直接拒：
+
+```
+⚠️  您暂无 CLI 数据访问权限
+   当前组织未授权您通过 CLI 访问个人数据。
+   组织主管理员：<姓名>
+   管理员操作入口：https://open-dev.dingtalk.com/fe/old#/developerSettings
+```
+
+退出码 2，**token 不落盘**：`dws auth status` 回到 `authenticated: false`，
+`dws profile list` 空数组，与「从没登录过」在状态上无法区分。闸门按**组织**走，
+换号只有在目标号所在组织已开通（或本人就是该组织主管理员）时才有用，重跑设备码
+是同一个结果。
+
+处理：把这段输出原文与主管理员名字交给用户，请其开通后再 `dws auth login`。
+这是组织侧开关，脚本不申请、不绕过（同 §B.3 的「不扩权」）。
 
 <a id="b3"></a>
 ### B.3 权限范围：只续期、不扩权（自适应所有人）
