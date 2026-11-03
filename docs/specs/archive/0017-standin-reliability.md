@@ -3,7 +3,7 @@
 > 状态: 已验收
 > 编号: 0017
 > 版本: 0.9.0
-> 关联: `docs/specs/contracts/01-api.md`、`docs/specs/contracts/02-storage.md`、`docs/specs/contracts/03-config.md`、`docs/architecture/02-data.md`、`docs/architecture/03-runtime.md`、`docs/decisions/proposed/0006-media-handoff.md`
+> 关联: `docs/specs/contracts/01-api.md`、`docs/specs/contracts/02-storage.md`、`docs/specs/contracts/03-config.md`、`docs/architecture/02-data.md`、`docs/architecture/03-runtime.md`、`docs/decisions/implemented/0006-media-handoff.md`
 
 ## 背景
 
@@ -249,7 +249,7 @@ sticker 是已知类型但没有可下载文件：prompt 只标 `[表情]`，不
 | 只把媒体 key 放进 prompt，让 DSH 会话自己用 CLI 取 | 模型看不到图片，等于把“取资源”的工作和失败面丢给 agent；用户明确否掉 |
 | 插件下载后只给本地路径、不 attach | 模型仍然看不到图；图片应作为 DSH image block 随消息交付 |
 | 每轮 poll 都下载媒体 | 没人发消息时也打下载接口，违背“等待期零成本”；只在唤醒时取本批 |
-| 把二进制存 `state.json` 或新开 `/api/resource` | 指针状态变成媒体库，增加存储/清理/鉴权面；见 `docs/decisions/proposed/0006-media-handoff.md` |
+| 把二进制存 `state.json` 或新开 `/api/resource` | 指针状态变成媒体库，增加存储/清理/鉴权面；见 `docs/decisions/implemented/0006-media-handoff.md` |
 | 面板内嵌预览 | 浏览器拿不到本地文件，做预览必须新增资源路由；本 spec 只给“在 IM 打开” |
 | 给钉钉补插件 adapter | 平台差异大、没有实测授权链路；先如实标注，独立 skill 继续支持 |
 | 手动/点开继续绕过冷却 | 面板连点会直接打 IM 接口；冷却本来就是为这个场景写的 |
