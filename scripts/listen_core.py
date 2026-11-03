@@ -10,8 +10,10 @@
    ADAPTER 任意键（命令或字段路径）。schema 漂移就地修配置，不动代码。
 4. **失败可诊断**：字段路径全不命中时上抛 `SCHEMA_MISMATCH` + 原始输出，供 agent/人
    对照写出 override。
+5. **55 分钟缓存续期**：模型上下文缓存通常 1 小时过期；到 55 分钟主动退出（退出码 3），
+   agent 重挂时那次模型调用会命中并续上缓存，等待期仍然只有本地轮询。
 
-退出码: 0=命中(stdout 单行 JSON) · 3=超时未命中 · 2=参数/环境错误
+退出码: 0=命中(stdout 单行 JSON) · 3=超时未命中/缓存续期 · 2=参数/环境错误
 """
 import argparse
 import hashlib
@@ -27,6 +29,7 @@ from data_guard import atomic_write_json, ensure_private_dir, redact_sensitive, 
 ENV_DIR = os.environ.get("IM_STANDIN_DIR") or os.path.expanduser("~/.im-standin")
 ENV_PATH = os.path.join(ENV_DIR, "env.json")
 STATE_DIR = os.path.join(ENV_DIR, "states")
+DEFAULT_CACHE_REFRESH_MIN = 55.0
 
 
 def dig(obj, paths):
@@ -242,6 +245,14 @@ def resolve_deadline(until="", timeout=0):
             raise ValueError("--until 必须是 Unix 时间戳或 ISO 8601 时间") from e
 
 
+def sleep_capped(seconds, deadline=None):
+    """睡 seconds，但不超过 deadline，避免大 interval 拖过缓存续期点。"""
+    if deadline is not None:
+        seconds = min(seconds, max(0.0, deadline - time.time()))
+    if seconds > 0:
+        time.sleep(seconds)
+
+
 def main(platform, adapter):
     ap = argparse.ArgumentParser(description=f"单发唤醒式 {platform} 消息监听")
     ap.add_argument("--chat-id", default="", help="目标会话 ID（与 --user-id 二选一）")
@@ -255,18 +266,33 @@ def main(platform, adapter):
     ap.add_argument("--init", choices=["latest", "zero"], default="latest",
                     help="latest=只盯今后新消息；zero=立刻对存量最新一条判定")
     ap.add_argument("--state", default="", help="水位文件路径")
-    ap.add_argument("--timeout", type=int, default=0, help="相对超时秒，0=不限；到点退出码 3")
+    ap.add_argument("--timeout", type=int, default=0,
+                    help="相对超时秒，0=不设额外上限（仍受缓存续期约束）；到点退出码 3")
     ap.add_argument("--until", default="",
                     help="绝对截止时间（Unix 时间戳/ISO 8601）；重挂沿用，不能和 --timeout 同用")
+    ap.add_argument("--cache-refresh-min", type=float, default=DEFAULT_CACHE_REFRESH_MIN,
+                    help="到点主动退出以续模型上下文缓存（分钟，0=关闭）")
     args = ap.parse_args()
 
     try:
-        deadline = resolve_deadline(args.until, args.timeout)
+        user_deadline = resolve_deadline(args.until, args.timeout)
     except ValueError as e:
         print(f"ERROR: {e}", file=sys.stderr)
         sys.exit(2)
-    if deadline and time.time() >= deadline:
+    cache_min = max(0.0, args.cache_refresh_min)
+    cache_deadline = time.time() + cache_min * 60 if cache_min > 0 else None
+    deadline = min([d for d in (user_deadline, cache_deadline) if d is not None], default=None)
+    cache_cap = (cache_deadline is not None and
+                 (user_deadline is None or cache_deadline <= user_deadline))
+
+    def timeout_exit():
+        if cache_cap and cache_deadline is not None and time.time() >= cache_deadline:
+            print(f"[cache-refresh] {cache_min:g} 分钟到点退出，重挂即可续上下文缓存",
+                  file=sys.stderr)
         sys.exit(3)
+
+    if deadline and time.time() >= deadline:
+        timeout_exit()
     if not args.chat_id and not args.user_id:
         print("ERROR: 必须给 --chat-id 或 --user-id", file=sys.stderr)
         sys.exit(2)
@@ -304,7 +330,7 @@ def main(platform, adapter):
 
     while True:
         if deadline and time.time() > deadline:
-            sys.exit(3)
+            timeout_exit()
         ln.window = time_window(args.lookback_min)
         ok, res = ln.fetch_messages(target, by_user)
         if not ok:
@@ -313,7 +339,7 @@ def main(platform, adapter):
                 print(f"ERROR: 连续 5 轮拉取失败（登录态/权限/schema 漂移）: {res}",
                       file=sys.stderr)
                 sys.exit(2)
-            time.sleep(args.interval)
+            sleep_capped(args.interval, deadline)
             continue
         fail_streak = 0
 
@@ -353,4 +379,4 @@ def main(platform, adapter):
             wm = newest
             save_watermark(state_file, wm)
 
-        time.sleep(args.interval)
+        sleep_capped(args.interval, deadline)
