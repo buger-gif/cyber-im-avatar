@@ -5,8 +5,8 @@
 
 ## 更新时间
 
-2026-11-03（0.9.0 已定稿并推 main，等 v0.9.0 tag 与 CI 发布；真实客户命中与真实平台
-媒体待命中；插件壳已支持钉钉（dws），真发仍只到 dry-run）
+2026-11-03（0.9.0 已推 main 与 v0.9.0 tag；npm 发布被 Trusted Publisher 404 挡住，待登记；
+真实客户命中与真实平台媒体待命中；插件壳已支持钉钉（dws），真发仍只到 dry-run）
 
 ## 最近批次
 
@@ -33,9 +33,9 @@
   三组主题本地提交（含后续修正），工作区干净、已推 main；已有会话的后续醒来只发消息行，
   完整上下文只在首轮载荷里出现。0013、0017–0023 全部逐条对勾后
   `git mv` 进 `docs/specs/archive/`，归档表已登记。ADR 0006 已从 proposed 移到 implemented。
-- **发版进行中**：`dsh-plugin/package.json`、`CHANGELOG.md` 顶部小节与 `v0.9.0` tag
-  统一为 0.9.0；npm 走 Trusted Publisher，推 tag 后由 CI 发布。npm 上确认 0.9.0
-  之后才提交 `market/index.json`，顺序不能反。
+- **0.9.0 已推、npm 未发**：版本号、CHANGELOG 顶部与 `v0.9.0` tag 都是 0.9.0。
+  CI 用 OIDC 拿到凭据并签了 provenance，但 registry 对 `PUT` 返回 404——Trusted Publisher
+  未命中。`market/index.json` 仍指 0.8.0，npm 上确认 0.9.0 之前不要改。
 - **验证环境**：3080 使用 `IM_STANDIN_DIR=/tmp/im-standin-accept` 的隔离状态，只有合成会话
   `oc_e2e_local_only`；web profile 已 link 本地插件。**没有向真实客户外发**，也没有拉真实消息。
 - **合成 live turn**：`chatWake` 创建 `session-76a20026…` → turn/end → `session_turns=1`、
@@ -64,8 +64,10 @@
 
 ## 挂账（按优先级）
 
-1. **0.9.0 发布收尾**：Trusted Publisher 已登记；推 `v0.9.0` 后确认 CI 发布成功、
-   `npm view` 拿到 0.9.0，再单独提交 `market/index.json` 指向该版本。
+1. **0.9.0 npm 发布**：核对 npm 包页的 Trusted Publisher（User `buger-gif` /
+   Repository `cyber-im-avatar` / Workflow `publish.yml` / Environment 空）。登记好后
+   `gh workflow run publish.yml --ref v0.9.0 -f dry_run=false` 重跑，**不要移动 tag**；
+   `npm view` 看到 0.9.0 再单独提交 `market/index.json`。
 2. **真实客户 live turn / 真实平台媒体**：0013 与 0017 的合成验证已做，但真实飞书/企微
    图片、文件、语音、视频尚未命中；等用户在场或指定测试会话时补，不要主动外发。
 3. **历史待回清理**：旧库迁移带来的约 50 条 pending 是否在「收件箱 → 清理」一次，待用户拍板。
@@ -76,7 +78,7 @@
 
 ## 下一步
 
-1. 推 `v0.9.0` tag，等 CI 发布；npm 上可见后更新 `market/index.json`。
+1. 修好 Trusted Publisher 后重跑 publish workflow；npm 上可见后更新 `market/index.json`。
 2. 等真实客户消息/媒体命中；只观察，不主动给真实客户发消息。
 3. 用户确认后清理历史待回；清理前不要当作用户已同意。
 4. 钉钉补完真人闭环：在环境里启用钉钉，给一个真人会话跑「命中 → 草稿 → 发送 → 重挂」，
