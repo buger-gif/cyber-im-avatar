@@ -341,7 +341,7 @@ export class Poller {
     const active = !!this.turns?.isActive(chat.platform, chat.chat_id);
     if (batch.length) {
       if (!this.turns) return false;
-      const r = await this.turns.wake(chat, { interrupted: active, postTurn });
+      const r = await this.turns.wake(chat, { interrupted: active, postTurn, batch });
       return !!r.ok;
     }
     if (chat.wake?.failed && !active && this.state.pendingCount(chat) > 0 && this.turns) {

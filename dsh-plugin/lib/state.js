@@ -217,6 +217,7 @@ export class State {
         : { at: 0, failed: false, turn_id: "", active: false },
       added_at: Number(input.added_at) || 0,
       recent: [],
+      prompt_session: typeof input.prompt_session === "string" ? input.prompt_session : "",
     };
     const seen = new Set();
     for (const m of (Array.isArray(input.recent) ? input.recent : [])) {
@@ -450,6 +451,7 @@ export class State {
       chat.dsh_session = sid;
       chat.session_bound_at = sid ? Date.now() / 1000 : 0;
       chat.session_turns = 0;
+      chat.prompt_session = "";
     }
     this.save();
   }

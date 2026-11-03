@@ -42,6 +42,7 @@
 | wake | object | `at` / `failed` / `turn_id` / `active`；失败的下一轮重试，成功但未回复不重喊 |
 | added_at | number | 入库时刻 |
 | recent | array | 最近消息指针，最多 10 条，最新在前；字段见下 |
+| prompt_session | string | 已消费完整唤醒载荷的 DSH session id；与当前 dsh_session 一致时后续唤醒只追加新消息 |
 
 ## recent 里的一条消息
 

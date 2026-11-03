@@ -10,7 +10,7 @@ import fs from "node:fs";
 
 import { chatKey } from "./state.js";
 import * as workspaces from "./workspaces.js";
-import { MAX_PROFILE } from "./profiles.js";
+import { MAX_PROFILE, SOFT_PROFILE, profileNeedsCompact } from "./profiles.js";
 
 const PROFILE_RE = /<!--\s*im-profile-update\s*\r?\n([\s\S]*?)\r?\n\s*-->/g;
 const PLAT_LABEL = { feishu: "飞书", wecom: "企业微信", dingtalk: "钉钉" };
@@ -34,6 +34,14 @@ function textOfContent(content) {
   return content.map((c) => (c && c.type === "text" ? String(c.text || "") : "")).join("");
 }
 
+function formatMsgLine(m) {
+  let text = String(m.content || "").replace(/\s+/g, " ").trim();
+  if (!text) text = "（正文在线查）";
+  if (text.length > 800) text = text.slice(0, 800) + "…";
+  const tag = m.kind === "out" ? "我" : (m.sender_name || "对方");
+  return `- [${m.ts || ""}] ${tag}: ${text}`;
+}
+
 export function buildPrompt(platform, chatName, chatId, recent, {
   profilePath = "", profileText = "", interrupted = false,
 } = {}) {
@@ -49,26 +57,57 @@ export function buildPrompt(platform, chatName, chatId, recent, {
   if (profilePath) parts.push(`画像文件：${profilePath}`);
   if (String(profileText || "").trim()) {
     let text = String(profileText).trim();
-    if (Buffer.byteLength(text, "utf8") > 8 * 1024) {
-      parts.push("（画像偏长，请把稳定结论压缩后再回写；不要丢事实。）");
+    const compact = profileNeedsCompact(text);
+    if (compact.needed) {
+      const detail = compact.reason === "size"
+        ? `画像 ${(compact.bytes / 1024).toFixed(1)}KB`
+        : `历史结论 ${compact.bullets} 条（日期流水 ${compact.dated} 条）`;
+      parts.push(`（${detail}，需要整理：保留四段结构，合并重复，删除一次性/已失效，` +
+        "把按日期的流水改写成结论，历史结论控制在 20 条内；先整理到 8KB 以下，" +
+        "仍超 12KB 会被拒写。）");
     }
     parts.push("当前画像：");
     parts.push(text);
   }
   parts.push("最近 10 条（本地只留指针，完整上下文在线查）：");
   for (const m of recent.slice().sort((a, b) => (a.ts_epoch - b.ts_epoch))) {
-    let text = String(m.content || "").replace(/\s+/g, " ").trim();
-    if (!text) text = "（正文在线查）";
-    if (text.length > 800) text = text.slice(0, 800) + "…";
-    const tag = m.kind === "out" ? "我" : (m.sender_name || "对方");
-    parts.push(`- [${m.ts || ""}] ${tag}: ${text}`);
+    parts.push(formatMsgLine(m));
   }
   parts.push("");
   parts.push("按 skill 处理这通会话。监听、水位、唤醒由插件负责，不要挂监听。");
-  parts.push("画像更新：本轮若学到长期有效的新事实（对方是谁、沟通偏好、在意/忌讳、已确认结论），" +
-    "在最终回复末尾附一个完整的新画像 Markdown，格式：");
+  const needAttach = profileNeedsCompact(profileText).needed;
+  parts.push(needAttach
+    ? "画像更新：当前画像需要整理；本轮即使没有新事实，也要在最终回复末尾附整理后的完整画像，格式："
+    : "画像更新：本轮若学到长期有效的新事实，在最终回复末尾附一个完整的新画像 Markdown，格式：");
   parts.push("<!-- im-profile-update\n<完整画像>\n-->");
-  parts.push("没有新事实就不要附；不要写聊天原文、其他会话的事实或凭据。");
+  parts.push(needAttach
+    ? "只写结论，不写聊天原文、其他会话的事实或凭据。"
+    : "没有新事实就不要附；不要写聊天原文、其他会话的事实或凭据。");
+  parts.push("画像维护：历史结论只放仍然有效的结论，不按日期记流水；同一事实合并/覆盖，" +
+    "旧结论被推翻就改原句；历史结论控制在 20 条内。");
+  return parts.join("\n");
+}
+
+/**
+ * 同一会话的后续唤醒：只追加这次触发的新消息。
+ * skill 入口、画像正文、最近 10 条与完整监听说明已在首轮载荷里，不重复；
+ * 只留一行运行形态，避免会话被压缩后误挂监听。
+ */
+export function buildDeltaPrompt(platform, chatName, chatId, messages, {
+  interrupted = false, profileNote = "",
+} = {}) {
+  const label = PLAT_LABEL[platform] || platform;
+  const parts = [];
+  if (interrupted) {
+    parts.push("（上一轮被新消息打断，以最新上下文为准；未完成的事重新判断。）");
+  }
+  parts.push(`值守命中 · ${label} · ${chatName || chatId} · 新消息`);
+  parts.push(`chat_id：${chatId}`);
+  parts.push("运行形态：DSH 插件壳；不要挂监听，不要写 ~/.im-standin。");
+  if (profileNote) parts.push(profileNote);
+  for (const m of messages.slice().sort((a, b) => (a.ts_epoch - b.ts_epoch))) {
+    parts.push(formatMsgLine(m));
+  }
   return parts.join("\n");
 }
 
@@ -116,7 +155,7 @@ export class Turns {
     return this.active.has(chatKey(platform, chatId));
   }
 
-  async wake(chat, { interrupted = false, retry = false, postTurn = false } = {}) {
+  async wake(chat, { interrupted = false, retry = false, postTurn = false, batch = null } = {}) {
     if (!this.hostReady()) {
       return { ok: false, reason: "host_unavailable" };
     }
@@ -134,7 +173,7 @@ export class Turns {
     if (starting) {
       try { await starting; } catch { /* 上一次启动失败也继续 */ }
     }
-    const run = this._wake(chat, { interrupted, retry, postTurn });
+    const run = this._wake(chat, { interrupted, retry, postTurn, batch });
     this.starting.set(key, run);
     try {
       return await run;
@@ -143,7 +182,7 @@ export class Turns {
     }
   }
 
-  async _wake(chat, { interrupted = false } = {}) {
+  async _wake(chat, { interrupted = false, batch = null } = {}) {
     const key = chatKey(chat.platform, chat.chat_id);
     const current = this.state.getChat(chat.platform, chat.chat_id) || chat;
     if (!current.watching || current.blocked) {
@@ -186,9 +225,17 @@ export class Turns {
       this.state.save();
 
       const prof = this.profiles.read(current.platform, current.chat_id, current.name);
-      const prompt = buildPrompt(current.platform, current.name, current.chat_id, current.recent, {
-        profilePath: prof.path, profileText: prof.text, interrupted,
-      });
+      // 同一 session 已经吃过完整载荷：后续只追加新消息。skill 入口、画像和
+      // 最近 10 条都在会话历史里，不重复注入。
+      const delta = current.prompt_session === sid
+        ? this.deltaMessages(current, batch) : [];
+      const prompt = delta.length
+        ? buildDeltaPrompt(current.platform, current.name, current.chat_id, delta, {
+          interrupted, profileNote: this.profileNote(prof),
+        })
+        : buildPrompt(current.platform, current.name, current.chat_id, current.recent, {
+          profilePath: prof.path, profileText: prof.text, interrupted,
+        });
       const effective = session.cwd || "";
       this.active.set(key, handle);
       handle.done = this.runTurn(handle, {
@@ -209,6 +256,33 @@ export class Turns {
       this.logger.warn?.(`[im-standin] wake ${key}: ${reason}`);
       return { ok: false, reason };
     }
+  }
+
+  deltaMessages(chat, batch) {
+    const seen = new Set();
+    const out = [];
+    const add = (m) => {
+      const id = String(m?.msg_id || "");
+      if (!id || seen.has(id) || !String(m?.content || "").trim()) return;
+      seen.add(id);
+      out.push(m);
+    };
+    if (Array.isArray(batch) && batch.length) {
+      for (const m of batch) add(m);
+    } else {
+      for (const m of this.state.pendingMessages(chat)) add(m);
+    }
+    return out.sort((a, b) => (Number(a.ts_epoch) || 0) - (Number(b.ts_epoch) || 0));
+  }
+
+  profileNote(prof) {
+    const compact = profileNeedsCompact(prof?.text);
+    if (!compact.needed) return "";
+    const detail = compact.reason === "size"
+      ? `${(compact.bytes / 1024).toFixed(1)}KB`
+      : `历史结论 ${compact.bullets} 条（日期流水 ${compact.dated} 条）`;
+    return `（画像 ${detail}，需要整理；回写前按 skill「服务对象画像」整理到 8KB 以下、` +
+      "历史结论 ≤20 条）";
   }
 
   async agentFromCreated(created) {
@@ -335,6 +409,10 @@ export class Turns {
         }
         this.active.delete(key);
         if (result.ok) {
+          // turn 成功说明 prompt 已被消费；事件漏掉时也补一次。
+          if (chat.prompt_session !== sid) {
+            chat.prompt_session = sid;
+          }
           try { this.applyProfile(chat, result.text, profile); }
           catch (e) { this.logger.warn?.(`[im-standin] profile write failed: ${e?.message || e}`); }
           this.state.bumpTurn(chat, true);
@@ -370,6 +448,12 @@ export class Turns {
         if (type === "user/message") {
           if (event?.data?.id && event.data.id === handle.promptId) {
             promptSeen = true;
+            handle.promptSeen = true;
+            // 这一轮的载荷已经进 agent 的上下文：之后只追加新消息。
+            if (chat.prompt_session !== sid) {
+              chat.prompt_session = sid;
+              this.state.save();
+            }
             // DSH 在轮次边界先发 turn/start，再提交 user/message。
             if (!turnStarted && lastTurnStart != null) {
               turnStarted = true;
@@ -467,13 +551,25 @@ export class Turns {
     if (!hits.length) return;
     const body = (hits[hits.length - 1][1] || "").trim();
     if (!body) return;
-    if (Buffer.byteLength(body, "utf8") > MAX_PROFILE) {
-      this.logger.warn?.(`[im-standin] profile ${chat.platform}:${chat.chat_id}: 超过 12KB，未写入`);
+    const newBytes = Buffer.byteLength(body, "utf8");
+    if (newBytes > MAX_PROFILE) {
+      this.logger.warn?.(`[im-standin] profile ${chat.platform}:${chat.chat_id}: 超过 12KB，未写入（请先整理）`);
       return;
     }
+    const current = this.profiles.read(chat.platform, chat.chat_id, chat.name);
+    const oldBytes = Buffer.byteLength(current.text || "", "utf8");
     const res = this.profiles.write(chat.platform, chat.chat_id, chat.name, body, profile?.mtime || 0);
     if (!res.ok) {
       this.logger.warn?.(`[im-standin] profile ${chat.platform}:${chat.chat_id}: ${res.reason}`);
+      return;
+    }
+    if (current.path && oldBytes > SOFT_PROFILE && newBytes < oldBytes) {
+      try {
+        const dest = this.profiles.archive(current.path, current.text);
+        if (dest) this.logger.info?.(`[im-standin] profile archived -> ${dest}`);
+      } catch (e) {
+        this.logger.warn?.(`[im-standin] profile archive failed: ${e?.message || e}`);
+      }
     }
   }
 

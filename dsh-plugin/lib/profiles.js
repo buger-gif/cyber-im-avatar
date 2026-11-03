@@ -3,6 +3,7 @@
  *
  * 文件是唯一事实源：面板、agent、插件都读写它；env.json 不再存画像。
  * 目录 700、文件 600，写入走临时文件 + rename；上限 12KB，拒绝而不是静默截断。
+ * 超过 8KB 视为「该整理了」：prompt 会要求 agent 压缩，缩小时旧版归档到 .history.md。
  */
 import fs from "node:fs";
 import os from "node:os";
@@ -10,6 +11,7 @@ import path from "node:path";
 import crypto from "node:crypto";
 
 export const MAX_PROFILE = 12 * 1024;
+export const SOFT_PROFILE = 8 * 1024;
 const PLATFORM_LABEL = { feishu: "飞书", wecom: "企业微信", dingtalk: "钉钉" };
 const SAFE = /[^0-9A-Za-z._\-\u4e00-\u9fff]+/g;
 
@@ -26,6 +28,26 @@ export function profileRel(platform, chatId = "", name = "") {
     file = `${base}-${digest}`;
   }
   return path.join("profiles", plat, `${file}.md`);
+}
+
+/** 画像是否该整理：体积、历史结论条数、日期流水条数，任一超线。 */
+export function profileNeedsCompact(text) {
+  const raw = String(text || "");
+  const bytes = Buffer.byteLength(raw, "utf8");
+  const section = raw.split(/^##\s*历史结论\s*$/m)[1] || "";
+  const bullets = section.split(/\r?\n/).filter((line) => line.trim().startsWith("- "));
+  const dated = bullets.filter((line) =>
+    /^-\s*(\d{1,2}-\d{1,2}|\d{4}-\d{2}-\d{2})\b/.test(line.trim()));
+  if (bytes > SOFT_PROFILE) {
+    return { needed: true, reason: "size", bytes, bullets: bullets.length, dated: dated.length };
+  }
+  if (bullets.length > 20) {
+    return { needed: true, reason: "bullets", bytes, bullets: bullets.length, dated: dated.length };
+  }
+  if (dated.length > 8) {
+    return { needed: true, reason: "dated", bytes, bullets: bullets.length, dated: dated.length };
+  }
+  return { needed: false, bytes, bullets: bullets.length, dated: dated.length };
 }
 
 export function profileTemplate(name, platform, chatId, notes = []) {
@@ -126,6 +148,22 @@ export class Profiles {
     } finally {
       try { if (fs.existsSync(tmp)) fs.unlinkSync(tmp); } catch { /* best effort */ }
     }
+  }
+
+  historyPath(file) {
+    return file.endsWith(".md") ? `${file.slice(0, -3)}.history.md` : `${file}.history.md`;
+  }
+
+  /** 整理缩小时把旧画像追加到 .history.md，保留可追溯性。 */
+  archive(file, text) {
+    const body = String(text || "").trim();
+    if (!body) return "";
+    const dest = this.historyPath(file);
+    this.ensureDir(path.dirname(dest));
+    const stamp = new Date().toISOString();
+    fs.appendFileSync(dest, `\n\n<!-- archived ${stamp} -->\n${body}\n`, { mode: 0o600 });
+    try { fs.chmodSync(dest, 0o600); } catch { /* best effort */ }
+    return dest;
   }
 
   /**

@@ -417,6 +417,9 @@ python3 scripts/doctor.py --repair-state       # 隔离损坏的水位/状态文
 |---|---|
 | `env.json` 非法 JSON | `mv ~/.im-standin/env.json ~/.im-standin/env.json.corrupt && python3 scripts/bootstrap.py`（会重建，别名/档案需重录） |
 | `--note` 报「别名未注册」 | 先 `--find` 或 `--alias` 登记 |
+| 画像超过 12KB / 回写被拒 | 压缩「历史结论」的旧条目再回写；插件日志会报 `超过 12KB` |
+| 面板刚改过画像，agent 回写没生效 | mtime CAS 主动放弃（`profile_conflict`）；以面板内容为准，下一轮再合并，不要直接覆盖 |
+| 画像路径/权限不对 | `ls -l ~/.im-standin/profiles/<platform>/`；目录 700、文件 600；路径以 `env.json` 的 `profile_file` 为准 |
 | 状态文件权限错 | `chmod -R u+rw ~/.im-standin`；确认不是 root 建的 |
 | 想多账号/测试隔离 | `IM_STANDIN_DIR=/tmp/imtest python3 scripts/doctor.py` |
 | 升级后行为诡异 | 先 `python3 tests/run_tests.py` 判断是引擎还是配置问题 |

@@ -408,6 +408,59 @@ def test_absolute_deadline():
         shutil.rmtree(x, ignore_errors=True)
 
 
+def test_cache_refresh():
+    """--cache-refresh-min 到点主动退出（退出码 3），用一次重挂续上下文缓存。"""
+    import time
+    print("\n[缓存续期] 到点主动退出")
+    msgs = [{"id": "c1", "sender": "PEER", "content": "旧消息", "time": "2026-10-30 14:00:00"}]
+    d, data = setup("wecom", "wecom", msgs)
+    start = time.time()
+    r = listen("wecom", d, data, "wecom", "--user-id", "PEER", "--init", "latest",
+               "--interval", "2", "--cache-refresh-min", "0.02", "--timeout", "20")
+    elapsed = time.time() - start
+    check("缓存续期到点退出 3", r.returncode == 3, f"rc={r.returncode} err={r.stderr[:200]}")
+    check("退出原因写 stderr", "cache-refresh" in r.stderr, r.stderr[:200])
+    check("不误报命中", '"hit": true' not in r.stdout, r.stdout[:200])
+    check("按时退出（<8s）", elapsed < 8, f"{elapsed:.1f}s")
+    shutil.rmtree(d, ignore_errors=True)
+
+
+def test_profile_compact():
+    """画像超限整理：去重、历史结论 ≤20、旧结论进 history、dry-run 不落盘。"""
+    print("\n[画像] 超限整理 / 去重 / 归档")
+    d = tempfile.mkdtemp(prefix="standin_compact_")
+    env = dict(os.environ, IM_STANDIN_DIR=d)
+    script = os.path.join(SCRIPTS, "bootstrap.py")
+    r = subprocess.run([PY, script, "--alias", "feishu", "测试对象", "oc_demo"],
+                       capture_output=True, text=True, env=env, timeout=30)
+    profile = os.path.join(d, "profiles", "feishu", "oc_demo.md")
+    hist = os.path.join(d, "profiles", "feishu", "oc_demo.history.md")
+    check("别名注册建画像", r.returncode == 0 and os.path.exists(profile), r.stderr[:200])
+    bullets = "\n".join(f"- 11-{i:02d} 历史事实 {i}" for i in range(30))
+    text = ("# 测试对象\n\n> 飞书 · oc_demo\n\n## 对方是谁\n\n" + "填充" * 1666 +
+            "\n\n## 沟通偏好\n\n- 直接\n\n## 在意与忌讳\n\n- 自证口径\n\n## 历史结论\n\n" +
+            bullets + "\n- 11-00 历史事实 0\n")
+    with open(profile, "w", encoding="utf-8") as f:
+        f.write(text)
+    before = os.path.getsize(profile)
+    r2 = subprocess.run([PY, script, "--compact", "feishu", "测试对象", "--dry-run"],
+                        capture_output=True, text=True, env=env, timeout=30)
+    check("dry-run 退出 0 且不落盘",
+          r2.returncode == 0 and os.path.getsize(profile) == before and not os.path.exists(hist),
+          f"rc={r2.returncode} {r2.stderr[:200]}")
+    r3 = subprocess.run([PY, script, "--compact", "feishu", "测试对象"],
+                        capture_output=True, text=True, env=env, timeout=30)
+    after = open(profile, encoding="utf-8").read()
+    kept = [line for line in after.splitlines() if line.startswith("- 11-")]
+    check("compact 退出 0", r3.returncode == 0, r3.stderr[:300])
+    check("主文件 ≤12KB", os.path.getsize(profile) <= 12 * 1024, str(os.path.getsize(profile)))
+    check("历史结论 ≤20 条", len(kept) <= 20, str(len(kept)))
+    check("重复 bullet 被去重", after.count("- 11-00 历史事实 0") == 1,
+          str(after.count("- 11-00 历史事实 0")))
+    check("旧结论进 history", os.path.exists(hist) and "历史事实" in open(hist, encoding="utf-8").read())
+    shutil.rmtree(d, ignore_errors=True)
+
+
 def test_privacy_and_redaction():
     """个人数据默认私有；敏感语料脱敏；删除必须显式确认。"""
     import stat
@@ -490,6 +543,10 @@ def test_safety_docs():
     check("文档声明聊天内容不可信", "不可信" in skill)
     check("文档禁止聊天消息触发命令/读文件", "执行命令" in skill and "读文件" in skill)
     check("文档提供 --until", "--until" in skill)
+    check("文档提供 --cache-refresh-min", "--cache-refresh-min" in skill)
+    check("文档说明 55 分钟缓存续期", "55 分钟" in skill and "缓存" in skill)
+    readme = open(os.path.join(ROOT, "README.md"), encoding="utf-8").read()
+    check("README 说明 55 分钟缓存续期", "55 分钟" in readme and "缓存" in readme)
     check("文档禁止重挂重置截止时间", "重置截止时间" in skill)
     check("文档提供显式数据删除命令", "--delete-data --yes" in skill)
 
@@ -519,6 +576,8 @@ if __name__ == "__main__":
     test_time_window()
     test_find_command()
     test_absolute_deadline()
+    test_cache_refresh()
+    test_profile_compact()
     test_privacy_and_redaction()
     test_schema_error_redaction()
     test_docs()

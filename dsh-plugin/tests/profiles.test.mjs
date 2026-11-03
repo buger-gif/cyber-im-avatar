@@ -50,6 +50,17 @@ test("mtime CAS skips agent write when the user edited in the meantime", async (
   assert.match(fs.readFileSync(first.path, "utf8"), /用户手改/);
 });
 
+test("archive appends the old profile to .history.md with private permissions", () => {
+  const { profiles } = tempProfiles();
+  const first = profiles.ensure("feishu", "oc_abc", "示例对象 A");
+  const dest = profiles.archive(first.path, "# 旧画像\n\n- 旧结论\n");
+  assert.equal(dest, first.path.replace(/\.md$/, ".history.md"));
+  const text = fs.readFileSync(dest, "utf8");
+  assert.match(text, /<!-- archived /);
+  assert.match(text, /旧结论/);
+  assert.equal(fs.statSync(dest).mode & 0o777, 0o600);
+});
+
 test("delete removes only that profile", () => {
   const { profiles } = tempProfiles();
   const a = profiles.ensure("feishu", "oc_a", "A");

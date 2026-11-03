@@ -13,6 +13,7 @@
   python3 bootstrap.py --smoke feishu oc_xxx  # 对某会话冒烟测试
   python3 bootstrap.py --alias feishu "张三私聊" oc_xxx  # 注册会话别名
   python3 bootstrap.py --note feishu "张三私聊" "对价格敏感，周五不回消息"  # 给服务对象记档案
+  python3 bootstrap.py --compact feishu "张三私聊" [--dry-run]  # 画像去重/归档旧结论
   python3 bootstrap.py --learn-style feishu --chats oc_xxx [--limit 100]  # 脱敏语料
   python3 bootstrap.py --delete-data --yes                 # 删除个人数据
 """
@@ -32,6 +33,10 @@ from data_guard import (atomic_write_json, atomic_write_text, ensure_private_dir
 ENV_DIR = os.environ.get("IM_STANDIN_DIR") or os.path.expanduser("~/.im-standin")
 ENV_PATH = os.path.join(ENV_DIR, "env.json")
 PROFILES_DIR = os.path.join(ENV_DIR, "profiles")
+PROFILE_MAX_BYTES = 12 * 1024
+PROFILE_SOFT_BYTES = 8 * 1024
+PROFILE_MAX_HISTORY = 20
+PROFILE_MAX_DATED = 8
 _SAFE_RE = re.compile(r"[^0-9A-Za-z._\-\u4e00-\u9fff]+")
 
 
@@ -66,6 +71,75 @@ def ensure_profile(platform, alias, node):
     return path
 
 
+def _profile_history_path(path):
+    return path[:-3] + ".history.md" if path.endswith(".md") else path + ".history.md"
+
+
+def _dedupe_profile_bullets(text):
+    """按小节去掉完全相同的 bullet；返回 (text, 去重条数)。"""
+    out, seen, section, removed = [], set(), "", 0
+    for line in text.splitlines():
+        if line.startswith("## "):
+            section = line.strip()
+        stripped = line.strip()
+        if stripped.startswith("- "):
+            key = (section, stripped)
+            if key in seen:
+                removed += 1
+                continue
+            seen.add(key)
+        out.append(line)
+    return "\n".join(out).rstrip() + "\n", removed
+
+
+def _dated_bullet(line):
+    return bool(re.match(r"^-\s*(\d{1,2}-\d{1,2}|\d{4}-\d{2}-\d{2})\b", line.strip()))
+
+
+def _compact_profile_text(text):
+    """去重 + 把「历史结论」最旧的 bullet 移到 history。
+
+    新条目由 append_profile_note 插在最前，所以列表末尾最旧。
+    返回 (新正文, 被归档的 bullet, 去重条数, 是否仍超硬上限)。
+    """
+    text, dedup = _dedupe_profile_bullets(text)
+    head, sep, tail = text.partition("## 历史结论")
+    removed = []
+    if sep:
+        body = tail.splitlines()
+        while True:
+            bullets = [i for i, line in enumerate(body) if line.strip().startswith("- ")]
+            dated = [i for i in bullets if _dated_bullet(body[i])]
+            candidate = head + sep + "\n".join(body)
+            if not candidate.endswith("\n"):
+                candidate += "\n"
+            if (len(bullets) <= PROFILE_MAX_HISTORY and
+                    len(dated) <= PROFILE_MAX_DATED and
+                    len(candidate.encode("utf-8")) <= PROFILE_MAX_BYTES):
+                break
+            if not bullets:
+                break
+            removed.append(body.pop(bullets[-1]).strip())
+        text = head + sep + "\n".join(body)
+        if not text.endswith("\n"):
+            text += "\n"
+    too_big = len(text.encode("utf-8")) > PROFILE_MAX_BYTES
+    return text, removed, dedup, too_big
+
+
+def _archive_profile_bullets(path, bullets):
+    if not bullets:
+        return ""
+    dest = _profile_history_path(path)
+    ensure_private_dir(os.path.dirname(dest))
+    with open(dest, "a", encoding="utf-8") as f:
+        f.write("\n\n<!-- archived %s -->\n" % time.strftime("%Y-%m-%dT%H:%M:%S"))
+        for bullet in bullets:
+            f.write(bullet + "\n")
+    os.chmod(dest, 0o600)
+    return dest
+
+
 def append_profile_note(platform, alias, node, note):
     path = ensure_profile(platform, alias, node)
     try:
@@ -84,8 +158,45 @@ def append_profile_note(platform, alias, node, note):
             text += "\n\n" + rest.rstrip() + "\n"
         else:
             text += "\n"
+        text, removed, _dedup, too_big = _compact_profile_text(text)
         atomic_write_text(path, text)
+        _archive_profile_bullets(path, removed)
+        if too_big:
+            print("WARN: 画像仍超过 12KB，请运行 --compact 或手动压缩", file=sys.stderr)
     return path
+
+
+def compact_profile(platform, alias, dry_run=False):
+    env = load_env()
+    node = env.get("targets", {}).get(platform, {}).get(alias)
+    if not node:
+        print(f"ERROR: 别名未注册: {platform} / {alias}", file=sys.stderr)
+        return 2
+    path = ensure_profile(platform, alias, node)
+    save_env(env)
+    try:
+        with open(path) as f:
+            text = f.read()
+    except OSError as e:
+        print(f"ERROR: 读不到画像: {e}", file=sys.stderr)
+        return 2
+    before = len(text.encode("utf-8"))
+    new_text, removed, dedup, too_big = _compact_profile_text(text)
+    after = len(new_text.encode("utf-8"))
+    summary = (f"{before / 1024:.1f}KB -> {after / 1024:.1f}KB，"
+               f"去重 {dedup} 条，归档 {len(removed)} 条")
+    if dry_run:
+        print(f"[dry-run] 画像整理预演: {summary}")
+        return 0
+    if new_text != text:
+        atomic_write_text(path, new_text)
+    dest = _archive_profile_bullets(path, removed)
+    print(f"[ok] 画像已整理: {summary}" + (f" -> {dest}" if dest else ""))
+    if too_big:
+        print("WARN: 画像仍超过 12KB，请压缩「对方是谁 / 沟通偏好 / 在意与忌讳」段",
+              file=sys.stderr)
+        return 2
+    return 0
 
 PLATFORMS = {
     "feishu": {
@@ -705,6 +816,10 @@ def main():
                     help="注册会话别名，之后可用别名指代会话")
     ap.add_argument("--note", nargs=3, metavar=("PLATFORM", "ALIAS", "TEXT"),
                     help="给服务对象追加一条档案（喜好/忌讳/关系/历史结论）")
+    ap.add_argument("--compact", nargs=2, metavar=("PLATFORM", "ALIAS"),
+                    help="整理画像：去重 + 把最旧的历史结论归档到 .history.md")
+    ap.add_argument("--dry-run", action="store_true",
+                    help="配合 --compact 只打印整理结果，不写盘")
     ap.add_argument("--learn-style", metavar="PLATFORM",
                     help="从 --chats 显式选择的会话抓本人语料并脱敏")
     ap.add_argument("--chats", default="",
@@ -758,6 +873,10 @@ def main():
         save_env(env)
         print(f"[ok] 画像已追加: {path}")
         return
+
+    if args.compact:
+        platform, alias = args.compact
+        sys.exit(compact_profile(platform, alias, args.dry_run))
 
     if args.learn_style:
         if args.retention_days < 0:

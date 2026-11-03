@@ -24,6 +24,7 @@ poller 判定命中
   └─ turns.wake(chat)
        ├─ 先取消同会话在飞 turn（agent.inbox.remove / agent.cancel）
        ├─ resolveAgent(dsh_session) 或 create({workspaceId|cwd})
+       ├─ 首轮/换会话 → 完整载荷；同会话后续 → 只追加新消息（buildDeltaPrompt）
        ├─ agent.followup(createUserMessage(prompt))
        ├─ ctx.sessions.flush(agent.session)
        └─ 听 session/event：turn/start → user/message(id 匹配) → assistant/message → turn/end
@@ -32,6 +33,9 @@ poller 判定命中
 - 一通 IM 会话 ↔ 一个 DSH 会话（`chats.dsh_session`），默认永久复用；
   用户点「新建会话」才换。显式工作区目录存在但未在 DSH 登记时，仍先尝试恢复旧会话，
   只有 cwd 漂移才在正确工作区重开。
+- 会话已经消费过完整载荷（`chats.prompt_session == dsh_session`）后，后续唤醒只把
+  本次 `batch` 里的新消息追加进去；画像、最近 10 条与 skill 入口留在会话历史里。
+  换会话或重置会清空 `prompt_session`，下一次重新发完整载荷。
 - 因为就是宿主里的 live agent，DSH UI 打开同一会话不再是锁问题；只有**另一个
   DSH 宿主持有写锁**时才报 `session_locked_other_host`。所以同一份 state 只让一个宿主写。
 - `turn/start` 在 `user/message` 之前到达是 DSH 的正常顺序；匹配 prompt id 后

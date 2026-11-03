@@ -26,7 +26,7 @@
 | 层 | 一行是什么 | 关键字段 |
 | --- | --- | --- |
 | `config` | 插件配置，改动即时生效 | `poll.*`、`platforms`、`dsh.timeout` |
-| `chats` | 一个会话（一个人或一个群） | `watching`、`timer`、`blocked`、`last_epoch`、`dsh_session` |
+| `chats` | 一个会话（一个人或一个群） | `watching`、`timer`、`blocked`、`last_epoch`、`dsh_session`、`prompt_session` |
 | `chats[].recent` | 最近 10 条消息**指针** | `kind`(dm/mention/fyi/out)、`state`(new/opened/replied/ignored)、`msg_id` |
 
 `recent` 不是聊天记录库：最多 10 条、最新在前，`content` 只在

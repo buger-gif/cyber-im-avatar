@@ -5,8 +5,8 @@ import path from "node:path";
 import test from "node:test";
 
 import { State } from "../lib/state.js";
-import { Profiles } from "../lib/profiles.js";
-import { Turns, buildPrompt } from "../lib/turns.js";
+import { Profiles, SOFT_PROFILE } from "../lib/profiles.js";
+import { Turns, buildPrompt, buildDeltaPrompt } from "../lib/turns.js";
 
 function recent(n = 2) {
   const out = [];
@@ -32,6 +32,42 @@ test("prompt carries skill entry, chat, profile, recent 10 and shell marker", ()
   assert.match(prompt, /消息 2/);
   assert.match(prompt, /im-profile-update/);
   assert.doesNotMatch(prompt, /阻塞轮询|零 token|启动监听/);
+});
+
+test("prompt asks for compaction when the profile is over the soft limit", () => {
+  const big = `# 示例对象 A\n\n${"x".repeat(SOFT_PROFILE + 10)}`;
+  const prompt = buildPrompt("feishu", "示例对象 A", "oc_abc", recent(1), {
+    profilePath: "/tmp/profile.md", profileText: big,
+  });
+  assert.match(prompt, /整理/);
+  assert.match(prompt, /8KB/);
+  assert.match(prompt, /12KB/);
+  assert.match(prompt, /历史结论控制在 20 条内/);
+});
+
+test("prompt asks for compaction when 历史结论 is a dated log", () => {
+  const bullets = Array.from({ length: 10 },
+    (_, i) => `- 11-${String(i + 1).padStart(2, "0")} 事实 ${i}`).join("\n");
+  const text = `# 示例对象 A\n\n## 历史结论\n\n${bullets}\n`;
+  const prompt = buildPrompt("feishu", "示例对象 A", "oc_abc", recent(1), {
+    profilePath: "/tmp/profile.md", profileText: text,
+  });
+  assert.match(prompt, /历史结论 10 条（日期流水 10 条）/);
+  assert.match(prompt, /即使没有新事实/);
+});
+
+test("delta prompt only carries the new messages", () => {
+  const prompt = buildDeltaPrompt("feishu", "示例对象 A", "oc_abc", recent(2), {
+    interrupted: true,
+  });
+  assert.match(prompt, /上一轮被新消息打断/);
+  assert.match(prompt, /值守命中 · 飞书 · 示例对象 A · 新消息/);
+  assert.match(prompt, /chat_id：oc_abc/);
+  assert.match(prompt, /运行形态：DSH 插件壳/);
+  assert.match(prompt, /消息 0/);
+  assert.match(prompt, /消息 1/);
+  assert.doesNotMatch(prompt, /^\/cyber-im-avatar/);
+  assert.doesNotMatch(prompt, /当前画像|最近 10 条|im-profile-update|按 skill 处理/);
 });
 
 class FakeHost {
@@ -128,6 +164,94 @@ test("second wake reuses the bound session instead of creating another", async (
   assert.equal(chat.session_turns, 2);
 });
 
+test("a batched wake after the first turn only appends the new messages", async () => {
+  const { chat, host, turns } = setup({ reply: "第一轮" });
+  await turns.wake(chat);
+  await new Promise((r) => setTimeout(r, 5));
+  assert.equal(chat.prompt_session, "session-1");
+
+  host.reply = "第二轮";
+  await turns.wake(chat, { batch: [{
+    msg_id: "m9", sender_id: "ou_other", sender_name: "客户",
+    content: "新来的消息", ts: "t9", ts_epoch: 109, kind: "dm", state: "new",
+  }] });
+  const second = host.followups[1].content[0].text;
+  assert.match(second, /新来的消息/);
+  assert.match(second, /· 新消息/);
+  assert.doesNotMatch(second, /^\/cyber-im-avatar/);
+  assert.doesNotMatch(second, /当前画像|最近 10 条|im-profile-update|按 skill 处理/);
+});
+
+test("a new message during the first turn interrupts into a delta payload", async () => {
+  const { chat, host, turns } = setup();
+  host.agent.followup = (message) => {
+    host.followups.push(message);
+    queueMicrotask(() => {
+      host.emit({ type: "turn/start", seq: 1, data: { turn: 1 } });
+      host.emit({ type: "user/message", seq: 2, data: { id: message.id } });
+      // 不产生 turn/end：模拟首轮还在跑。
+    });
+  };
+  await turns.wake(chat);
+  await new Promise((r) => setTimeout(r, 5));
+  assert.equal(chat.prompt_session, "session-1");
+
+  await turns.wake(chat, { interrupted: true, batch: [{
+    msg_id: "m9", sender_id: "ou_other", sender_name: "客户",
+    content: "插进来的新消息", ts: "t9", ts_epoch: 109, kind: "dm", state: "new",
+  }] });
+  const second = host.followups[1].content[0].text;
+  assert.match(second, /插进来的新消息/);
+  assert.match(second, /上一轮被新消息打断/);
+  assert.doesNotMatch(second, /^\/cyber-im-avatar/);
+});
+
+test("a wake without a batch falls back to the pending messages", async () => {
+  const { state, chat, host, turns } = setup({ reply: "第一轮" });
+  await turns.wake(chat);
+  await new Promise((r) => setTimeout(r, 5));
+  state.mergeRecent(chat, [{
+    msg_id: "p1", sender_id: "ou_other", sender_name: "客户",
+    content: "待回消息", ts: "t10", ts_epoch: 110, kind: "dm", state: "new",
+  }]);
+
+  host.reply = "第二轮";
+  await turns.wake(chat);
+  const second = host.followups[1].content[0].text;
+  assert.match(second, /待回消息/);
+  assert.doesNotMatch(second, /^\/cyber-im-avatar/);
+});
+
+test("switching to a new session sends the full payload again", async () => {
+  const { state, chat, host, turns } = setup({ reply: "第一轮" });
+  await turns.wake(chat);
+  await new Promise((r) => setTimeout(r, 5));
+  assert.equal(chat.prompt_session, "session-1");
+
+  state.setSession(chat, "");
+  assert.equal(chat.prompt_session, "");
+  host.reply = "新会话";
+  await turns.wake(chat);
+  assert.match(host.followups[1].content[0].text, /^\/cyber-im-avatar/);
+});
+
+test("a prompt that was never consumed keeps the next wake full", async () => {
+  const { chat, host, turns } = setup();
+  const real = host.agent.followup;
+  host.agent.followup = (message) => { host.followups.push(message); };
+  await turns.wake(chat);
+  await new Promise((r) => setTimeout(r, 5));
+  assert.equal(chat.prompt_session, "");
+  turns.cancel("feishu", "oc_abc");
+
+  host.agent.followup = real;
+  await turns.wake(chat, { batch: [{
+    msg_id: "m9", sender_id: "ou_other", sender_name: "客户",
+    content: "新来的消息", ts: "t9", ts_epoch: 109, kind: "dm", state: "new",
+  }] });
+  assert.match(host.followups[1].content[0].text, /^\/cyber-im-avatar/);
+});
+
 test("successful turn applies an im-profile-update block through mtime CAS", async () => {
   const { dir, profiles, chat, host, turns } = setup({
     reply: "已处理。\n\n<!-- im-profile-update\n# 示例对象 A\n\n- 负责审核\n-->\n",
@@ -139,6 +263,21 @@ test("successful turn applies an im-profile-update block through mtime CAS", asy
   assert.match(text, /负责审核/);
   assert.ok(text.endsWith("\n"));
   assert.equal(host.followups.length, 1);
+});
+
+test("compacted profile archives the previous verbose version", async () => {
+  const { profiles, chat, turns } = setup({
+    reply: "已处理。\n\n<!-- im-profile-update\n# 示例对象 A\n\n- 新结论\n-->\n",
+  });
+  const big = `# 示例对象 A\n\n## 历史结论\n\n${"- 旧结论\n".repeat(800)}`;
+  const before = profiles.write("feishu", "oc_abc", "示例对象 A", big);
+  assert.equal(before.ok, true);
+  await turns.wake(chat);
+  await new Promise((r) => setTimeout(r, 5));
+  assert.match(fs.readFileSync(before.path, "utf8"), /新结论/);
+  const history = fs.readFileSync(before.path.replace(/\.md$/, ".history.md"), "utf8");
+  assert.match(history, /<!-- archived /);
+  assert.match(history, /旧结论/);
 });
 
 test("agent profile block is dropped when the user edited the profile during the turn", async () => {
