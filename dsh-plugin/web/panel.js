@@ -12,7 +12,8 @@
   var PLAT = {
     feishu: { label: "飞书", short: "飞", color: "#4176e6" },
     wecom: { label: "企业微信", short: "企", color: "#22c55e" },
-    dingtalk: { label: "钉钉", short: "钉", color: "#4d93f8" }
+    // 只用于显示存量会话：插件壳不加载钉钉 adapter，不提供加入入口。
+    dingtalk: { label: "钉钉（不支持）", short: "钉", color: "var(--fg3)" }
   };
   var KIND = {
     dm: { label: "私聊", color: "var(--dsw-alias-state-business-primary,#4176e6)" },
@@ -20,6 +21,12 @@
     service: { label: "客服", color: "var(--dsw-alias-state-success-primary,#22c55e)" },
     fyi: { label: "知会", color: "var(--dsw-alias-label-tertiary,#81858c)" },
     out: { label: "已发", color: "var(--dsw-alias-label-tertiary,#81858c)" }
+  };
+  var MEDIA_LABEL = {
+    image: "[图片]", file: "[文件]", audio: "[语音]", voice: "[语音]",
+    media: "[视频]", video: "[视频]", sticker: "[表情]", post: "[富文本]",
+    interactive: "[卡片]", share_chat: "[群名片]", share_user: "[个人名片]",
+    system: "[系统消息]", merge_forward: "[合并转发]", location: "[位置]"
   };
 
   var SVG = {
@@ -173,6 +180,8 @@
     "white-space:pre-wrap;word-break:break-word;font-size:12.6px;line-height:1.62}",
     ".ims-msg.me{align-self:flex-end;background:var(--dsw-specific-bubble,#edf3fe);border-color:var(--dsw-specific-bubble-highlight,#d3e2ff)}",
     ".ims-msg-meta{font-size:10.5px;color:var(--fg3);margin-bottom:3px}",
+    ".ims-link{color:var(--blue);text-decoration:none;margin-left:6px}",
+    ".ims-link:hover{text-decoration:underline}",
     ".ims-compose{flex:none;border-top:1px solid var(--line);padding:10px var(--pad) 12px;display:flex;flex-direction:column;gap:8px}",
     ".ims-rowline{display:flex;align-items:center;gap:8px;flex-wrap:wrap;min-width:0}",
     ".ims-found{padding:6px 0;border-top:1px solid var(--line)}",
@@ -328,6 +337,21 @@
     return d.getFullYear() + "/" + (d.getMonth() + 1) + "/" + d.getDate();
   }
 
+  function todayStr() {
+    var d = new Date();
+    var pad = function (n) { return n < 10 ? "0" + n : "" + n; };
+    return d.getFullYear() + "-" + pad(d.getMonth() + 1) + "-" + pad(d.getDate());
+  }
+
+  /** 「3.2 小时前 / 2 天前」：只给日报的陈旧提示用，不参与别的读数。 */
+  function relAge(ts) {
+    if (!ts) return "";
+    var h = (Date.now() / 1000 - ts) / 3600;
+    if (h < 1) return Math.max(1, Math.round(h * 60)) + " 分钟前";
+    if (h < 48) return (Math.round(h * 10) / 10) + " 小时前";
+    return Math.round(h / 24) + " 天前";
+  }
+
   function baseName(p) {
     if (!p) return "";
     var parts = String(p).replace(/\/+$/, "").split("/");
@@ -358,9 +382,10 @@
       inboxChats: 0, inboxTotal: 0, grouped: true, expanded: {},
       detail: null, thread: [], threadOffline: false, threadError: "", sending: false,
       chats: [], targets: [], workspaces: [], doctor: null, cfg: null,
-      search: { q: "", platform: "feishu", items: null, err: "" },
+      search: { q: "", platform: "feishu", items: null, err: "", seq: 0 },
       addWs: readWsMemory(), addWsPicked: false, detailWs: "", wsPicked: false,
-      targetEdit: "", targetDrafts: {}, dead: false, timer: null
+      targetEdit: "", targetDrafts: {}, dead: false, timer: null,
+      digest: null, digestDate: ""
     };
 
     var toastTimer = null;
@@ -448,8 +473,20 @@
         if (S.tab === "inbox" && !S.detail) paintBody();
       }).catch(function () { S.status = null; });
     }
-    function loadInbox() {
-      // 默认拿聚合视图：一个人 / 一个群一行，同一人的连发不会再刷满列表。
+    // 日报只由 agent 写；这里只读文件，不解析、不统计。
+    function loadDigest(date) {
+      var d = date || S.digestDate || todayStr();
+      S.digestDate = d;
+      return api("/api/digest?date=" + encodeURIComponent(d)).then(function (r) {
+        if (S.dead) return;
+        S.digest = (r && r.ok === false) ? { exists: false, error: r.reason || "" } : (r || {});
+        if (S.tab === "attention") paintBody();
+      }).catch(function () {
+        S.digest = { exists: false, error: "unreachable" };
+        if (S.tab === "attention") paintBody();
+      });
+    }
+    function loadInbox() {      // 默认拿聚合视图：一个人 / 一个群一行，同一人的连发不会再刷满列表。
       return api("/api/inbox?filter=" + encodeURIComponent(S.filter) + "&limit=40").then(function (d) {
         S.items = d.items || [];
         S.counts = d.counts || S.counts;
@@ -531,7 +568,8 @@
         (poll.blocked ? h("span", { text: "· 屏蔽 " + poll.blocked + " 个" }) : null),
         h("span", { class: "ims-grow" }),
         h("span", { text: (dsh.configured ? "DSH 值守会话就绪" : "DSH 未就绪") +
-          " · 每 " + (poll.interval_min || 10) + " 分钟拉一轮 · 通知 60 秒" +
+          " · 值守 " + (poll.fast_sec > 0 ? poll.fast_sec + " 秒" : "关") +
+          " · 发现 " + (poll.interval_min || 10) + " 分钟" +
           (st.last_cycle_at ? " · 上轮 " + fmtTime(st.last_cycle_at) : "") }));
     }
 
@@ -568,6 +606,7 @@
     function tabs() {
       var defs = [
         ["inbox", "收件箱", "inbox"],
+        ["attention", "关注", "note"],
         ["service", "分身", "headset"],
         ["targets", "服务对象", "user"],
         ["status", "体检", "pulse"],
@@ -583,6 +622,7 @@
             S.tab = d[0]; S.detail = null; paint();
             if (d[0] === "service") loadChats();
             if (d[0] === "targets") loadTargets();
+            if (d[0] === "attention") loadDigest();
           }
         },
           h("span", { class: "ims-ico", html: icon(d[2], 15) }),
@@ -596,6 +636,7 @@
       var wrap = h("div", { class: "ims-body" });
       if (S.detail) { wrap.appendChild(detailView()); return wrap; }
       if (S.tab === "inbox") { wrap.appendChild(filters()); wrap.appendChild(inboxList()); }
+      else if (S.tab === "attention") wrap.appendChild(attentionView());
       else if (S.tab === "service") wrap.appendChild(serviceView());
       else if (S.tab === "targets") wrap.appendChild(targetsView());
       else if (S.tab === "status") wrap.appendChild(statusView());
@@ -603,9 +644,28 @@
       return wrap;
     }
 
+    /** 焦点在可输入控件里：后台刷新只换头尾，不重建 body，别打断正在打的字。 */
+    function typingFocus() {
+      var a = typeof document !== "undefined" ? document.activeElement : null;
+      if (!a) return false;
+      var tag = String(a.tagName || "").toLowerCase();
+      if (tag === "textarea") return true;
+      if (tag !== "input") return false;
+      var type = String(a.type || "text").toLowerCase();
+      return ["checkbox", "radio", "button", "submit", "reset", "file"].indexOf(type) < 0;
+    }
+
     function paintBody() {
       var b = panel.querySelector(".ims-body");
       if (!b) return paint();
+      if (typingFocus()) {
+        // 用户正在输入：只刷新页头/页脚，body 等失焦或下一次主动操作再重建。
+        var h0 = panel.querySelector(".ims-head");
+        if (h0) h0.replaceWith(head());
+        var f0 = panel.querySelector(".ims-foot");
+        if (f0) f0.replaceWith(foot());
+        return;
+      }
       b.replaceWith(body());
       var old = panel.querySelector(".ims-head");
       if (old) old.replaceWith(head());
@@ -717,7 +777,7 @@
 
     // ---- 收件箱 ---------------------------------------------------------
     function filters() {
-      var defs = [["todo", "待回"], ["unread", "未读"], ["mention", "@我"], ["dm", "私聊"], ["service", "客服"], ["all", "全部"]];
+      var defs = [["todo", "待回"], ["unread", "未读"], ["mention", "@我"], ["dm", "私聊"], ["all", "全部"]];
       var bar = h("div", { class: "ims-filters" });
       defs.forEach(function (d) {
         bar.appendChild(h("button", {
@@ -741,8 +801,10 @@
     }
 
     /* 历史消息的正文不在本地：已处理/知会/已发的行只留指针。 */
-    function msgText(content, state, kind) {
+    function msgText(content, state, kind, msgType) {
       if (content) return content.replace(/\s+/g, " ");
+      var media = MEDIA_LABEL[msgType] || "";
+      if (media) return media;
       if (state === "replied" || state === "ignored") return "历史消息 · 点开在线查看";
       if (kind === "fyi") return "知会消息 · 点开在线查看";
       if (kind === "out") return "已发消息 · 点开在线查看";
@@ -753,7 +815,7 @@
       return h("div", { class: "ims-pv-item" },
         h("span", { class: "ims-pv-meta",
           text: (m.sender_name ? m.sender_name + " · " : "") + fmtTime(m.ts_epoch) }),
-        msgText(m.content, m.state, m.kind).slice(0, 160));
+        msgText(m.content, m.state, m.kind, m.msg_type).slice(0, 160));
     }
 
     /* 一个会话一行：人多发几条不再刷屏，条数收进右侧角标，想看细节再展开。 */
@@ -806,7 +868,7 @@
         h("div", { class: "ims-snippet",
           text: (g.sender_name && g.sender_name !== g.chat_name ? g.sender_name + "：" : "") +
                 msgText(g.content, (g.preview && g.preview[0] || {}).state,
-                        (g.preview && g.preview[0] || {}).kind) }),
+                        (g.preview && g.preview[0] || {}).kind, g.msg_type) }),
         expanded && rest.length
           ? h("div", { class: "ims-pv" },
               rest.map(previewItem),
@@ -817,7 +879,7 @@
 
       return h("div", {
         class: "ims-row", title: msgText(g.content, (g.preview && g.preview[0] || {}).state,
-                                         (g.preview && g.preview[0] || {}).kind),
+                                         (g.preview && g.preview[0] || {}).kind, g.msg_type),
         onclick: function () { openThread(g.platform, g.chat_id, g.msg_id); }
       },
         h("div", { class: "ims-pdot", style: "--pc:" + p.color, text: p.short }),
@@ -916,23 +978,24 @@
       chat = chat || (S.detail && S.detail.chat) || {};
       return h("button", {
         class: "ims-btn mini ghost", type: "button",
-        title: "解绑当前 DSH 会话，下一轮命中开新会话（旧会话保留在侧边栏）",
+        title: "打断这一轮、解绑当前 DSH 会话，下一轮命中开新会话（旧会话留在侧边栏，不再续聊）",
         onclick: function () {
           var ws = actionWs(chat);
           var where = ws ? wsTitle(ws) : effectiveLabel(chat);
           if (typeof window !== "undefined" && window.confirm &&
-              !window.confirm("新建会话？当前绑定的 DSH 会话会保留在侧边栏，但不再续聊。\n" +
+              !window.confirm("重开会话？会打断正在跑的这一轮，并解绑当前 DSH 会话" +
+                              "（旧会话留在侧边栏，不再续聊）。\n" +
                               "下一轮命中会在「" + where + "」开新会话。")) return;
           api("/api/chat/session/reset", { method: "POST",
                                            body: { platform: d.platform, chat_id: d.chat_id,
                                                    workspace: ws } })
             .then(function (r) {
-              say(r.ok ? "已解绑；下次命中在「" + where + "」开新会话"
+              say(r.ok ? "已重开：下一轮命中在「" + where + "」开新会话（旧会话留在侧边栏）"
                        : "没成功：" + (r.reason || "未知"));
               refreshDetail(); loadChats();
             });
         }
-      }, "新建会话");
+      }, "重开会话");
     }
 
     function detailView() {
@@ -1048,8 +1111,7 @@
         h("span", { class: "ims-hint" + (chat.workspace_missing ? " ims-err" : ""),
                     text: wsHint }),
         h("span", { class: "ims-grow" }),
-        watched ? newSessionBtn(d)
-                : h("span", { class: "ims-hint", text: "加入值守时生效" })));
+        watched ? null : h("span", { class: "ims-hint", text: "加入值守时生效" })));
 
       if (watched) {
         var sid = chat.dsh_session || "";
@@ -1061,7 +1123,9 @@
               : h("span", { class: "ims-hint", text: "还没跑过；命中新消息时自动创建" }),
           h("span", { class: "ims-hint",
                       text: (chat.session_turns || 0) + " 轮" +
-                        (chat.session_bound_at ? " · 绑于 " + fmtTime(chat.session_bound_at) : "") })));
+                        (chat.session_bound_at ? " · 绑于 " + fmtTime(chat.session_bound_at) : "") }),
+          h("span", { class: "ims-grow" }),
+          newSessionBtn(d)));
         if (running) {
           wrap.appendChild(h("div", { class: "ims-hint", style: "padding:0 var(--pad) 6px",
                                       text: "agent 正在这通会话里处理；去会话能看到它拉消息、查工作区的过程。" }));
@@ -1124,9 +1188,18 @@
       }
       S.thread.forEach(function (m) {
         var me = !!m.is_self;
-        var body = msgText(m.content, m.state, m.kind) || "（本地只有指针）";
+        var body = msgText(m.content, m.state, m.kind, m.msg_type) || "（本地只有指针）";
+        var meta = h("div", { class: "ims-msg-meta",
+          text: (me ? "我" : (m.sender_name || "对方")) + " · " + (m.ts || fmtTime(m.ts_epoch)) });
+        if (m.app_link) {
+          meta.appendChild(h("a", { class: "ims-link", href: m.app_link,
+            target: "_blank", rel: "noreferrer", text: "在飞书打开" }));
+        } else if (MEDIA_LABEL[m.msg_type]) {
+          meta.appendChild(h("span", { class: "ims-link",
+            text: (m.media_paths && m.media_paths.length) ? "已在会话中附带" : "在 IM 客户端查看" }));
+        }
         thread.appendChild(h("div", { class: "ims-msg" + (me ? " me" : "") },
-          h("div", { class: "ims-msg-meta", text: (me ? "我" : (m.sender_name || "对方")) + " · " + (m.ts || fmtTime(m.ts_epoch)) }),
+          meta,
           body));
       });
       wrap.appendChild(thread);
@@ -1328,9 +1401,29 @@
       var inp = h("input", { class: "ims-inp", placeholder: "搜人 / 搜群：输入名称，如 张三、告警群" });
       inp.value = S.search.q;
       var go = h("button", { class: "ims-btn", type: "button" }, "搜索");
+      // 搜完不需要时一键回到空白：清搜索词、清结果，但不动平台和手动加入表单。
+      var clear = h("button", {
+        class: "ims-btn ghost mini", type: "button", title: "清空搜索词和结果"
+      }, "清空");
       var result = h("div", {});
+      // 搜索是异步的：清空/换平台/重新搜都要让旧响应作废，否则清空后结果会再冒出来。
+      // 序号放在 S.search 里，面板重绘后也仍然有效。
+
+      function syncClear() {
+        var any = !!(inp.value.trim() || S.search.q || S.search.items || S.search.err);
+        clear.style.display = any ? "" : "none";
+      }
+
+      function clearSearch() {
+        S.search.seq++;
+        inp.value = "";
+        S.search.q = ""; S.search.items = null; S.search.err = "";
+        renderRows();
+        inp.focus();
+      }
 
       function renderRows() {
+        syncClear();
         result.textContent = "";
         if (S.search.err) {
           result.appendChild(h("div", { class: "ims-hint ims-err", text: S.search.err }));
@@ -1389,8 +1482,9 @@
         if (go.disabled) return;
         var q = inp.value.trim();
         S.search.q = q;
-        if (!q) return say("先输入名字");
+        if (!q) { clearSearch(); return; }
         var platform = S.search.platform;
+        var seq = ++S.search.seq;
         go.disabled = true; go.textContent = "…";
         Promise.all([
           api("/api/search", { body: { platform: platform, q: q } })
@@ -1399,7 +1493,7 @@
             .catch(function (e) { return { ok: false, items: [], error: String(e) }; })
         ]).then(function (rs) {
           go.disabled = false; go.textContent = "搜索";
-          if (S.dead || S.search.platform !== platform) return;
+          if (S.dead || S.search.platform !== platform || seq !== S.search.seq) return;
           var people = (rs[0].items || []).map(function (u) {
             return { id: u.id, chat_id: u.chat_id || u.id, name: u.name,
                      department: u.department || "", kind: "p2p" };
@@ -1435,25 +1529,62 @@
         });
       }
       go.addEventListener("click", doSearch);
+      clear.addEventListener("click", clearSearch);
+      inp.addEventListener("input", syncClear);
       inp.addEventListener("keydown", function (e) {
         if (e.key === "Enter") { e.preventDefault(); doSearch(); }
+        else if (e.key === "Escape" && clear.style.display !== "none") {
+          // Esc 只清搜索，不冒泡到全局（全局 Esc 是退回会话列表）。
+          e.preventDefault(); e.stopPropagation(); clearSearch();
+        }
       });
       sel.addEventListener("change", function () {
+        S.search.seq++;
         S.search.platform = sel.value;
         S.search.items = null; S.search.err = "";
+        wcForm.style.display = sel.value === "wecom" ? "" : "none";
         renderRows();
+      });
+
+      // 企微没有群枚举/群搜索：知道会话 ID 时用这个小表单手动加入。
+      var wcName = h("input", { class: "ims-inp", placeholder: "显示名（只在本面板使用）" });
+      var wcId = h("input", { class: "ims-inp", placeholder: "会话 ID / 对方 userid" });
+      var wcKind = h("select", { class: "ims-select" },
+        h("option", { value: "group" }, "群"),
+        h("option", { value: "p2p" }, "私聊"));
+      var wcAdd = h("button", { class: "ims-btn mini primary", type: "button" }, "加入值守");
+      var wcForm = h("div", { style: S.search.platform === "wecom" ? "" : "display:none" },
+        h("div", { class: "ims-rowline" },
+          h("span", { class: "ims-hint", text: "手动加入企微会话" }), wcName, wcId, wcKind, wcAdd),
+        h("div", { class: "ims-hint",
+          text: "企微没有群搜索/群枚举，群聊只能在这里填会话 ID 加入；显示名只用于本面板，不写回平台。" }));
+      wcAdd.addEventListener("click", function () {
+        var name = wcName.value.trim();
+        var chatId = wcId.value.trim();
+        if (!name || !chatId) return say("先填显示名和会话 ID");
+        wcAdd.disabled = true;
+        joinWatch("wecom", chatId, name, wcKind.value, function () {
+          wcName.value = ""; wcId.value = "";
+          loadChats().then(paintBody);
+        }).then(function () {
+          wcAdd.disabled = false;
+        }).catch(function (e) {
+          wcAdd.disabled = false;
+          say("加入失败：" + e);
+        });
       });
 
       var card = h("div", { class: "ims-card" },
         h("div", { class: "ims-card-h" },
           h("span", { class: "ims-ico", html: icon("search", 15) }), "搜人 / 搜群"),
-        h("div", { class: "ims-rowline" }, sel, inp, go),
+        h("div", { class: "ims-rowline" }, sel, inp, go, clear),
         h("div", { class: "ims-rowline" },
           h("span", { class: "ims-hint", text: "加入值守时绑定工作区" }),
           wsOptions(joinWorkspace(), function (v) {
             S.addWs = v; S.addWsPicked = true; rememberWs(v);
           }, true)),
         result,
+        wcForm,
         h("div", { class: "ims-hint", text: "搜到后「加入值守」即可在值守列表里看到它；结果只显示名称，不显示平台 id。" }));
       renderRows();
       return card;
@@ -1575,6 +1706,54 @@
     }
 
     // ---- 体检 -----------------------------------------------------------
+    // ---- 关注 -----------------------------------------------------------
+    // 日报由 agent 按 skill 维护；面板只把文件原文摊开，不解析、不统计。
+    function attentionView() {
+      var d = S.digest || {};
+      var date = S.digestDate || todayStr();
+      var scroll = h("div", { class: "ims-scroll" });
+      var picker = h("input", {
+        class: "ims-inp", type: "date", value: date, style: "max-width:160px",
+        onchange: function (e) { loadDigest(e.target.value); }
+      });
+      scroll.appendChild(h("div", { class: "ims-rowline", style: "padding:8px var(--pad) 6px" },
+        h("span", { class: "ims-hint", text: "日期" }),
+        picker,
+        h("span", { class: "ims-grow" }),
+        date !== todayStr()
+          ? h("button", {
+              class: "ims-btn mini ghost", type: "button",
+              onclick: function () { loadDigest(todayStr()); }
+            }, "回到今天")
+          : (d.exists ? h("span", { class: "ims-hint", text: "最后更新 " + fmtTime(d.mtime) }) : null)));
+
+      var stale = d.exists && d.mtime && (Date.now() / 1000 - d.mtime) > 24 * 3600;
+      if (stale) {
+        scroll.appendChild(h("div", { class: "ims-banner warn" },
+          h("span", { class: "ims-ico", html: icon("bell", 13) }),
+          h("span", { text: "最后更新于 " + relAge(d.mtime) + "，可能已经过时" })));
+      }
+
+      if (d.error === "bad_date") {
+        scroll.appendChild(h("div", { class: "ims-empty", text: "日期格式不对" }));
+        return scroll;
+      }
+      if (!d.exists) {
+        scroll.appendChild(h("div", { class: "ims-empty", text: date === todayStr()
+          ? "今天还没有日报。agent 会在下次被唤醒时写；现在没人找你就是没人在等。"
+          : "这一天没有日报。" }));
+        return scroll;
+      }
+
+      var pre = h("pre", {
+        style: "white-space:pre-wrap;word-break:break-word;margin:0;padding:4px var(--pad) 16px;" +
+               "font:12px/1.7 ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;color:var(--fg)"
+      });
+      pre.textContent = d.text || "";
+      scroll.appendChild(pre);
+      return scroll;
+    }
+
     function statusView() {
       var st = S.status || {}, scroll = h("div", { class: "ims-scroll" });
       var ins = st.instances || [];
@@ -1589,8 +1768,9 @@
             onclick: function () { api("/api/doctor").then(function (d) { S.doctor = d; paint(); }); }
           }, "跑一次体检")),
         h("div", { class: "ims-kv" }, h("span", { text: "轮询" }),
-          h("span", { text: "每 " + ((st.poll || {}).interval_min || 10) + " 分钟一轮 · 已完成 " +
-            (st.cycles || 0) + " 轮 · 上轮 " + (st.last_cycle_ms || 0) + "ms" })),
+          h("span", { text: "值守 " + (((st.poll || {}).fast_sec > 0) ? ((st.poll || {}).fast_sec + " 秒") : "关") +
+            " · 发现 " + ((st.poll || {}).interval_min || 10) + " 分钟 · 已完成 " +
+            (st.cycles || 0) + " 轮慢车道 · 上轮 " + (st.last_cycle_ms || 0) + "ms" })),
         h("div", { class: "ims-kv" }, h("span", { text: "本轮范围" }),
           h("span", { text: "私聊 " + (((st.poll || {}).last_result || {}).targets || 0) +
             " 个候选 · 实拉 " + (((st.poll || {}).last_result || {}).chats || 0) +
@@ -1662,53 +1842,80 @@
         h("div", { class: "ims-kv" },
           h("span", { text: "单轮上限" }),
           h("span", { text: ((cfg.dsh || {}).timeout || 600) + " 秒 · 新消息到达会打断在飞 turn" })),
+        h("div", { class: "ims-kv" },
+          h("span", { text: "画像写权限" }),
+          h("span", { class: "ims-tag",
+            style: "color:" + ((cfg.dsh || {}).full_access ? "var(--warn)" : "var(--fg3)"),
+            text: (cfg.dsh || {}).full_access ? "完整文件访问" : "工作区内" })),
+        h("div", { class: "ims-rowline" },
+          h("span", { class: "ims-hint", text: "agent 直接改 ~/.im-standin/profiles 需要完整文件访问；开启后它能写整个 home，只建议在信任的值守会话里开。" }),
+          h("span", { class: "ims-grow" }),
+          h("button", {
+            class: "ims-btn", type: "button",
+            onclick: function () {
+              var next = !((S.cfg || {}).dsh || {}).full_access;
+              if (next && !window.confirm("开启后 agent 可以写整个 home（包括画像目录），不再弹审批。只建议在信任的值守会话里使用。继续？")) return;
+              api("/api/config", { body: { dsh: { full_access: next } } }).then(function (c) {
+                S.cfg = c;
+                say(next ? "已开启完整文件访问" : "已关闭完整文件访问");
+                paint();
+              });
+            }
+          }, (cfg.dsh || {}).full_access ? "关闭完整访问" : "开启完整访问")),
         h("div", { class: "ims-hint", text: "命中值守会话的新消息 → 在绑定的 DSH 会话里跑一轮 agent，由它自己调 IM CLI、查工作区、起草与发送。插件只负责拉取、唤醒和展示。" })));
 
-      // 值守节奏：分钟级，下限 10 分钟
+      // 值守节奏：快车道（值守会话，秒级）+ 慢车道（发现新会话，分钟级）
       var pcfg = cfg.poll || {};
       var pollInfo = st.poll || {};
+      var fast = h("input", { class: "ims-inp", style: "max-width:92px",
+                              type: "number", min: "0", max: "600", step: "5" });
+      fast.value = String(pcfg.fast_sec == null ? 60 : pcfg.fast_sec);
       var mins = h("input", { class: "ims-inp", style: "max-width:92px",
                               type: "number", min: String(pcfg.min_interval_min || 10), max: "240", step: "1" });
       mins.value = String(pcfg.interval_min || 10);
       var recent = h("input", { class: "ims-inp", style: "max-width:92px", type: "number", min: "1", max: "200" });
       recent.value = String(pcfg.dm_recent || 20);
-      var scope = h("select", { class: "ims-select" });
-      [["recent", "最近活跃的私聊"], ["all", "全部私聊"], ["watched", "只拉值守名单"]].forEach(function (o) {
-        scope.appendChild(h("option", { value: o[0], selected: (pcfg.dm_scope || "recent") === o[0] }, o[1]));
-      });
-      var dueText = pollInfo.due_in > 0
-        ? "下一轮约 " + Math.ceil(pollInfo.due_in / 60) + " 分钟后"
-        : "下一轮马上就到";
+      var dueText = (pollInfo.fast_sec > 0 ? "值守 " + pollInfo.fast_sec + " 秒" : "快车道已关") +
+        (pollInfo.due_in > 0 ? " · 发现约 " + Math.ceil(pollInfo.due_in / 60) + " 分钟后" : " · 发现马上就到");
       scroll.appendChild(h("div", { class: "ims-card" },
         h("div", { class: "ims-card-h" },
           h("span", { class: "ims-ico", html: icon("pulse", 15) }), "值守节奏",
           h("span", { class: "ims-grow" }),
           h("span", { class: "ims-tag", text: dueText })),
         h("div", { class: "ims-rowline" },
-          h("span", { class: "ims-hint", text: "拉取间隔(分钟)" }), mins,
-          h("span", { class: "ims-hint", text: "私聊取前 N 个" }), recent),
-        h("div", { class: "ims-rowline" },
-          h("span", { class: "ims-hint", text: "定时拉哪些私聊" }), scope,
+          h("span", { class: "ims-hint", text: "值守间隔(秒)" }), fast,
+          h("span", { class: "ims-hint", text: "发现间隔(分钟)" }), mins,
+          h("span", { class: "ims-hint", text: "私聊取前 N 个" }), recent,
           h("span", { class: "ims-grow" }),
           h("button", {
             class: "ims-btn primary", type: "button",
             onclick: function () {
               var v = Math.max(10, parseInt(mins.value, 10) || 10);
+              var f = parseInt(fast.value, 10);
+              if (!isFinite(f)) f = 60;
+              f = Math.max(0, Math.min(600, f));
+              if (f > 0 && f < 20) f = 20;
               api("/api/config", { body: { poll: {
                 interval_min: v,
-                dm_recent: Math.max(1, parseInt(recent.value, 10) || 20),
-                dm_scope: scope.value
+                fast_sec: f,
+                dm_recent: Math.max(1, parseInt(recent.value, 10) || 20)
               } } }).then(function (c) {
                 S.cfg = c;
-                mins.value = String((c.poll || {}).interval_min || 10);
-                say("已保存：每 " + ((c.poll || {}).interval_min || 10) + " 分钟拉一轮");
+                var cp = c.poll || {};
+                mins.value = String(cp.interval_min || 10);
+                fast.value = String(cp.fast_sec);
+                say(cp.fast_sec > 0
+                  ? "已保存：值守 " + cp.fast_sec + " 秒一拉 · 发现每 " + cp.interval_min + " 分钟"
+                  : "已保存：快车道关闭，只有每 " + cp.interval_min + " 分钟一轮");
                 loadStatus();
                 paint();
               });
             }
           }, "保存")),
-        h("div", { class: "ims-hint", text: "下限 10 分钟：每个私聊每次都是一次 IM 接口调用，按秒扫会把接口当靶子打。" +
-          "定时只拉「私聊」+ 你逐个勾了定时检测的群，群默认一律不碰。面板通知每 60 秒刷新一次。" }),
+        h("div", { class: "ims-hint", text: "值守会话按「值守间隔」拉，发现新会话按「发现间隔」；" +
+          "0 = 关闭快车道，退回只跑发现间隔。" +
+          "每个候选每次都是一次 IM 接口调用：N 个会话约 N×86400÷秒数 次/天，体检页有估算。" +
+          "定时只拉「私聊」+ 你逐个勾了定时检测的群，群默认一律不碰。" }),
         h("div", { class: "ims-rowline" },
           h("button", {
             class: "ims-btn", type: "button",
@@ -1778,6 +1985,7 @@
       loadStatus();
       if (!S.detail && S.tab === "inbox") loadInbox();
       if (S.tab === "service") loadChats();
+      if (!S.detail && S.tab === "attention") loadDigest();
     }
     S.timer = setInterval(tick, 60000);
 
@@ -1790,6 +1998,9 @@
     if (typeof location !== "undefined" && (location.hash || "").indexOf("#tab=") === 0) {
       S.tab = location.hash.slice(5);
       paint();
+      if (S.tab === "service") loadChats();
+      if (S.tab === "targets") loadTargets();
+      if (S.tab === "attention") loadDigest();
     }
     if (typeof location !== "undefined" && (location.hash || "").indexOf("#thread=") === 0) {
       var parts = location.hash.slice(8).split(":");

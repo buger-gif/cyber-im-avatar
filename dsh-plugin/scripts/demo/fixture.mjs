@@ -180,12 +180,37 @@ const workspaces = {
   default: W1,
 };
 
+// 每日关注摘要：面板只显示原文，这里给一份虚构的（人物仍来自本文件的示例）。
+const _d = new Date();
+const _p = (n) => (n < 10 ? "0" + n : "" + n);
+const TODAY = `${_d.getFullYear()}-${_p(_d.getMonth() + 1)}-${_p(_d.getDate())}`;
+const digest = {
+  ok: true, date: TODAY, exists: true,
+  mtime: Math.floor(_d.getTime() / 1000) - 3600,
+  text: [
+    `# ${TODAY} · 今日关注`,
+    "",
+    "> agent 整理；覆盖写，不是日志。最新更新 14:30。",
+    "",
+    "## P1 · 等你拍板",
+    "- [P1] 周明 · 飞书私聊 · 问报价能否下周交 · 首次 " + TODAY + " 10:20 · 最近 13:05 · 待回 2",
+    "",
+    "## P2 · 在等回复（超过 4 小时）",
+    "- [P2] 示例客户 · 企业微信私聊 · 在等回复 · 首次 11-01 21:10 · 最近 11-01 21:10 · 待回 3",
+    "",
+    "## 今日已处理",
+    "- 14:30 示例对象 · 已回复",
+    "",
+  ].join("\n"),
+};
+
 /** 按路径返回夹具；没覆盖的接口回落到真实服务。 */
 export function resolve(path) {
   const p = path.split("?")[0];
   if (p === "/api/status") return status;
   if (p === "/api/chats") return { items: chats };
   if (p === "/api/inbox") return { filter: "todo", items: inbox, counts: status.counts };
+  if (p === "/api/digest") return digest;
   if (p === "/api/thread") return { chat: chats[0], items: thread };
   if (p === "/api/search") return { ok: true, items: searchUsers };
   if (p === "/api/search/chats") return { ok: true, items: searchChats };
@@ -198,12 +223,13 @@ export function resolve(path) {
 
 /** 注入到页面里的拦截器源码（字符串，走 addScriptToEvaluateOnNewDocument）。 */
 export const intercept = `(() => {
-  const FIX = ${JSON.stringify({ chats, inbox, thread, targets, workspaces, status, config, searchUsers, searchChats })};
+  const FIX = ${JSON.stringify({ chats, inbox, thread, targets, workspaces, status, config, searchUsers, searchChats, digest })};
   const pick = (path) => {
     const p = path.split("?")[0];
     if (p === "/api/status") return FIX.status;
     if (p === "/api/chats") return { items: FIX.chats };
     if (p === "/api/inbox") return { filter: "todo", items: FIX.inbox, counts: FIX.status.counts };
+    if (p === "/api/digest") return FIX.digest;
     if (p === "/api/thread") return { chat: FIX.chats[0], items: FIX.thread };
     if (p === "/api/search") return { ok: true, items: FIX.searchUsers };
     if (p === "/api/search/chats") return { ok: true, items: FIX.searchChats };

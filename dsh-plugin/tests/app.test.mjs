@@ -21,7 +21,7 @@ function makeApp() {
   const state = new State(dir);
   state.load();
   const profiles = new Profiles(dir);
-  const calls = { send: [], wake: [], cancel: [] };
+  const calls = { send: [], wake: [], cancel: [], poll: [], fetchThread: [] };
   const turns = {
     hostReady: () => true,
     isActive: () => false,
@@ -59,8 +59,12 @@ function makeApp() {
     reload() {},
     turnInfo() { return { state: "idle", since: 0, last_ok: null, last_reason: "", last_at: 0 }; },
     candidates() { return []; },
-    async pollChat() { return { fetched: true, new: 0, woke: false, items: [] }; },
+    async pollChat(platform, chatId, opts = {}) {
+      calls.poll.push({ platform, chatId, opts });
+      return { fetched: true, new: 0, woke: false, items: [] };
+    },
     async fetchThread() {
+      calls.fetchThread.push(1);
       return {
         ok: true,
         items: [
@@ -180,6 +184,20 @@ test("chatWake refuses blocked/unwatched and starts a real turn for pending", as
   assert.deepEqual(calls.wake, ["oc_abc"]);
 });
 
+test("chatWake refuses when there is nothing pending", async () => {
+  const { app, state, calls } = makeApp();
+  const chat = state.ensureChat("feishu", "oc_abc", { name: "示例对象 A", kind: "p2p" });
+  chat.watching = true;
+  state.mergeRecent(chat, [msg("m1", 101, { state: "replied" })]);
+  const out = await app.handle("/api/chat/wake", "POST", null, {
+    platform: "feishu", chat_id: "oc_abc",
+  });
+  assert.equal(out.body.ok, false);
+  assert.equal(out.body.reason, "no_pending");
+  assert.equal(out.body.pending, 0);
+  assert.deepEqual(calls.wake, []);
+});
+
 test("block marks pending as ignored, clears bodies and cancels the turn", async () => {
   const { app, state, calls } = makeApp();
   const chat = state.ensureChat("feishu", "oc_abc", { name: "示例对象 A", kind: "p2p" });
@@ -233,4 +251,58 @@ test("config POST clamps and persists", async () => {
   assert.equal(out.body.poll.interval_min, 10);
   assert.equal(state.data.config.poll.per_chat_limit, 5);
   assert.equal((await app.handle("/api/config", "GET")).body.poll.interval_min, 10);
+});
+
+test("opening a thread only polls; it never starts a turn", async () => {
+  const { app, calls } = makeApp();
+  const out = await app.handle("/api/thread", "GET",
+    new URLSearchParams("platform=feishu&chat_id=oc_abc&fetch=1&limit=30"));
+  assert.equal(out.body.online, true);
+  assert.equal(calls.poll.length, 1);
+  assert.equal(calls.poll[0].opts.wake, false);
+  assert.equal(calls.wake.length, 0);
+  assert.equal(calls.fetchThread.length, 0);
+});
+
+test("manual poll no longer bypasses the cooldown with force", async () => {
+  const { app, calls } = makeApp();
+  await app.handle("/api/poll", "POST", null, { platform: "feishu", chat_id: "oc_abc" });
+  assert.equal(calls.poll.length, 1);
+  assert.notEqual(calls.poll[0].opts.force, true);
+});
+
+test("wecom group can be added by display name + chat_id", async () => {
+  const { app, state } = makeApp();
+  const out = await app.handle("/api/watch", "POST", null, {
+    platform: "wecom", chat_id: "wr_group_1", name: "客户群", kind: "group", watching: true,
+  });
+  assert.equal(out.body.ok, true);
+  const chat = state.getChat("wecom", "wr_group_1");
+  assert.equal(chat.kind, "group");
+  assert.equal(chat.watching, true);
+  assert.equal(chat.name, "客户群");
+  assert.ok(out.body.chat);
+  assert.equal(out.body.chat.recent, undefined);
+});
+
+test("dingtalk is rejected by the plugin shell without deleting stored chats", async () => {
+  const { app, state } = makeApp();
+  const legacy = state.ensureChat("dingtalk", "cid_legacy", { name: "钉钉旧会话", kind: "p2p" });
+  legacy.watching = true;
+  const out = await app.handle("/api/watch", "POST", null, {
+    platform: "dingtalk", chat_id: "cid_new", name: "新会话", kind: "p2p",
+  });
+  assert.equal(out.body.ok, false);
+  assert.match(out.body.reason, /插件壳不支持/);
+  assert.equal(state.getChat("dingtalk", "cid_new"), null);
+  assert.ok(state.getChat("dingtalk", "cid_legacy"));
+  const send = await app.handle("/api/send", "POST", null, {
+    platform: "dingtalk", chat_id: "cid_legacy", text: "x",
+  });
+  assert.equal(send.body.ok, false);
+
+  const cfg = await app.handle("/api/config", "POST", null, { platforms: ["dingtalk"] });
+  assert.deepEqual(cfg.body.ignored_platforms, ["dingtalk"]);
+  assert.match(cfg.body.notice, /插件壳不支持/);
+  assert.deepEqual(state.data.config.platforms, []);
 });

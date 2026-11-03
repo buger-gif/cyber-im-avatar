@@ -162,13 +162,18 @@ await run("document.querySelector('.ims-row').click(); 'ok'");
 await sleep(2200);
 await shot("03-会话详情");
 
-// 05 分身实例：绑的哪个 DSH 会话、几轮、工作区与最近的习惯
+// 04 关注：agent 写的每日摘要（面板只显示原文，不解析）
 await run("document.querySelectorAll('.ims-tab')[1].click(); 'ok'");
+await sleep(1400);
+await shot("04-关注");
+
+// 05 分身实例：绑的哪个 DSH 会话、几轮、工作区与最近的习惯
+await run("document.querySelectorAll('.ims-tab')[2].click(); 'ok'");
 await sleep(1400);
 await shot("05-分身实例");
 
 // 06 服务对象：每个人的习惯时间线
-await run("document.querySelectorAll('.ims-tab')[2].click(); 'ok'");
+await run("document.querySelectorAll('.ims-tab')[3].click(); 'ok'");
 await sleep(1400);
 await shot("06-服务对象");
 
