@@ -21,6 +21,7 @@
 | `poll.backfill_hours` | `72` | 0–720 | 首次见到会话时的回看窗口；企微 `fetchThread` 用它（上限 7 天），飞书没有时间回看参数、不传 |
 | `poll.refresh_chatlist` | `true` | true / false | 每轮刷一次会话列表（只取元数据） |
 | `poll.cooldown_sec` | `20` | 0–600 | 点开 / 手动 `/api/poll` 都生效，防连点；post-turn 补拉例外 |
+| `poll.group_wake_sec` | `60` | 0–3600 | `wake_mode="all"` 的群合并窗口（秒）：窗口内到达的消息攒着，一次唤醒全给；`0` = 不合并。快车道仍是 60 秒一轮，所以默认值等价「每分钟最多一次」 |
 | `platforms` | `["feishu", "wecom"]` | 平台名数组 | 插件支持 `feishu` / `wecom` / `dingtalk`；缺省只开前两个，其他值被忽略。启用的平台才跑 `whoami` 与轮询；加入某平台值守会自动启用它 |
 | `dsh.timeout` | `600` | 30–3600 秒 | 单轮 live turn 最长等多久；超时按失败处理并取消 |
 | `dsh.full_access` | `false` | true / false | 为 true 时把值守会话切到 DSH 内置 `danger-full-access`，agent 可直接写 `~/.im-standin/profiles`；默认关闭，开启后 agent 能写整个 home |
@@ -41,6 +42,7 @@
 | `poll.per_chat_limit` | 1 | 50 |
 | `poll.backfill_hours` | 0 | 720 |
 | `poll.cooldown_sec` | 0 | 600 |
+| `poll.group_wake_sec` | 0 | 3600 |
 | `dsh.timeout` | 30 | 3600 |
 
 ## 老键迁移

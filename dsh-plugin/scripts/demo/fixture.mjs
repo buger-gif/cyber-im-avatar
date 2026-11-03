@@ -48,7 +48,7 @@ const chats = [
   },
   {
     platform: "feishu", chat_id: "oc_demo_grp", name: "云雀项目 · 交付群", kind: "group",
-    tracked: 0, watching: 1, turn_state: "idle", blocked: 0, pending: 3,
+    tracked: 0, watching: 1, timer: 1, wake_mode: "mention", turn_state: "idle", blocked: 0, pending: 3,
     last_ts: stamp(60000), last_epoch: now - 60000, last_sync: now - 20,
     last_error: "", added_at: now - day, workspace: "",
     workspace_effective: W1,
@@ -377,6 +377,13 @@ export const intercept = `(() => {
       const c = FIX.chats.find((x) => x.platform === body.platform && x.chat_id === body.chat_id);
       if (c) c.watching = p === "/api/unwatch" ? 0 : (body.watching === false ? 0 : 1);
       return { ok: true };
+    }
+    if (p === "/api/chat/mode") {
+      const row = FIX.chats.find((x) => x.platform === body.platform && x.chat_id === body.chat_id) || {};
+      row.watching = body.mode === "off" ? 0 : 1;
+      row.timer = body.mode === "off" ? -1 : 1;
+      row.wake_mode = body.mode === "all" ? "all" : "mention";
+      return { ok: true, chat: row };
     }
     if (p === "/api/chat/timer") {
       const c = FIX.chats.find((x) => x.platform === body.platform && x.chat_id === body.chat_id);

@@ -26,6 +26,7 @@ export const ROUTES = {
   "/api/search": "search",
   "/api/search/chats": "searchChats",
   "/api/chat/timer": "chatTimer",
+  "/api/chat/mode": "chatMode",
   "/api/chat/block": "chatBlock",
   "/api/poll": "pollNow",
   "/api/pause": "pause",
@@ -114,6 +115,8 @@ export class App {
     workspaces.decorateChat(out);
     const ti = this.poller.turnInfo(chat);
     out.timer = Number(chat.timer) || 0;
+    out.wake_mode = chat.wake_mode === "all" ? "all" : "mention";
+    out.last_wake_at = Number(chat.last_wake_at) || 0;
     out.blocked = !!chat.blocked;
     out.watching = !!chat.watching;
     out.pending = this.state.pendingCount(chat);
@@ -357,6 +360,12 @@ export class App {
     const watching = rawWatching === undefined || rawWatching === "" ? true : boolValue(rawWatching, true);
     chat.watching = watching;
     chat.target = true;
+    // 群加入值守的默认口径是「只盯 @我」：拉起来、只 @ 唤醒。
+    // 不这么做会留成「值守中但 timer=-1」——看着在盯，其实一条都不拉。
+    if (chat.kind === "group" && watching) {
+      if (Number(chat.timer) !== 1) chat.timer = 1;
+      if (chat.wake_mode !== "all") chat.wake_mode = "mention";
+    }
     // 加入值守即视为启用该平台：钉钉默认不开，避免没装 dws 的用户每轮白跑一次 whoami。
     if (watching) {
       const enabled = this.state.data.config.platforms || [];
@@ -417,6 +426,45 @@ export class App {
     } catch (e) {
       return { ok: false, items: [], error: `${e?.name || "Error"}: ${e?.message || e}` };
     }
+  }
+
+  /**
+   * 群的「关注程度」一档三态，一次写 watching / timer / wake_mode 三个字段，
+   * 面板不用再记两套开关的组合。off 会取消在飞 turn，与 unwatch 一致。
+   */
+  async chatMode(q, body = {}) {
+    const platform = pick(q, body, "platform");
+    const chatId = pick(q, body, "chat_id");
+    const mode = String(pick(q, body, "mode") || "");
+    if (!platform || !chatId) return { ok: false, reason: "bad_request" };
+    if (!["off", "mention", "all"].includes(mode)) {
+      return { ok: false, reason: "mode 必须是 off / mention / all" };
+    }
+    if (!this.supported(platform)) return this.unsupported(platform);
+    const chat = this.state.ensureChat(platform, chatId, {
+      name: pick(q, body, "name"), kind: pick(q, body, "kind"),
+    });
+    if (mode === "all" && chat.kind !== "group") {
+      return { ok: false, reason: "全部消息模式只对群生效" };
+    }
+    const on = mode !== "off";
+    chat.watching = on;
+    chat.timer = on ? 1 : -1;
+    chat.wake_mode = mode === "all" ? "all" : "mention";
+    if (chat.wake_mode !== "all") chat.last_wake_at = 0;
+    if (on) {
+      chat.target = true;
+      const enabled = this.state.data.config.platforms || [];
+      if (!enabled.includes(platform)) {
+        this.state.data.config.platforms =
+          SUPPORTED_PLATFORMS.filter((p) => p === platform || enabled.includes(p));
+      }
+      try { this.profiles.ensure(platform, chatId, chat.name); } catch { /* profile is best effort */ }
+    } else {
+      this.turns.cancel(platform, chatId, "mode_off");
+    }
+    this.state.save();
+    return { ok: true, chat: this.publicChat(chat), poll: this.poller.pollInfo() };
   }
 
   async chatTimer(q, body = {}) {

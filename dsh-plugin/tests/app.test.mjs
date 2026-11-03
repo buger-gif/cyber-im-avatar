@@ -310,3 +310,48 @@ test("dingtalk joins watch and auto-enables; unknown platforms are rejected", as
   assert.equal(bad.body.ok, false);
   assert.match(bad.body.reason, /不支持/);
 });
+
+test("chat mode writes watching/timer/wake_mode in one call and refuses non-groups", async () => {
+  const { app, state, calls } = makeApp();
+  let out = await app.handle("/api/chat/mode", "POST", null, {
+    platform: "feishu", chat_id: "oc_grp", name: "示例群", kind: "group", mode: "all",
+  });
+  assert.equal(out.body.ok, true);
+  const chat = state.getChat("feishu", "oc_grp");
+  assert.equal(chat.watching, true);
+  assert.equal(chat.timer, 1);
+  assert.equal(chat.wake_mode, "all");
+  assert.equal(out.body.chat.wake_mode, "all");
+
+  out = await app.handle("/api/chat/mode", "POST", null, {
+    platform: "feishu", chat_id: "oc_grp", mode: "mention",
+  });
+  assert.equal(chat.wake_mode, "mention");
+  assert.equal(chat.timer, 1);
+
+  out = await app.handle("/api/chat/mode", "POST", null, {
+    platform: "feishu", chat_id: "oc_grp", mode: "off",
+  });
+  assert.equal(chat.watching, false);
+  assert.equal(chat.timer, -1);
+  assert.deepEqual(calls.cancel, ["oc_grp"]);
+
+  out = await app.handle("/api/chat/mode", "POST", null, {
+    platform: "feishu", chat_id: "oc_dm", kind: "p2p", mode: "all",
+  });
+  assert.equal(out.body.ok, false);
+  assert.match(out.body.reason, /只对群/);
+});
+
+test("joining watch on a group defaults to mention mode and starts polling", async () => {
+  const { app, state } = makeApp();
+  const out = await app.handle("/api/watch", "POST", null, {
+    platform: "feishu", chat_id: "oc_g9", name: "示例群", kind: "group", watching: true,
+  });
+  assert.equal(out.body.ok, true);
+  const chat = state.getChat("feishu", "oc_g9");
+  assert.equal(chat.watching, true);
+  assert.equal(chat.timer, 1, "群加入值守应当真的拉起来");
+  assert.equal(chat.wake_mode, "mention", "默认只盯 @我");
+  assert.equal(out.body.chat.wake_mode, "mention");
+});

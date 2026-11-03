@@ -16,6 +16,7 @@ import { fileURLToPath } from "node:url";
 import { isMention, PLATFORM_META } from "./im.js";
 import { chatKey, RECENT_LIMIT, SUPPORTED_PLATFORMS } from "./state.js";
 
+
 function nowSec() {
   return Date.now() / 1000;
 }
@@ -412,6 +413,7 @@ export class Poller {
         : (Number(m.ts_epoch) || 0) > floorEpoch);
       if (isNew) newIds.add(String(m.msg_id));
       const isSelf = !!selfId && m.sender_id === selfId;
+      const allMode = chat.kind === "group" && chat.wake_mode === "all";
       let kind;
       if (isSelf) kind = "out";
       else if (chat.kind === "group") kind = isMention(m, selfId, names) ? "mention" : "fyi";
@@ -424,12 +426,12 @@ export class Poller {
       } else if (selfEpoch && (Number(m.ts_epoch) || 0) < selfEpoch) {
         state = kind === "fyi" ? "ignored" : "replied";
       } else if (kind === "fyi") {
-        state = "ignored";
+        // 全量模式：群里的非 @ 消息也要叫醒 agent（只看不回），所以记 new。
+        state = allMode ? "new" : "ignored";
       } else {
         state = "new";
       }
-      const keepBody = (state === "new" || state === "opened") &&
-        (kind === "dm" || kind === "mention" || kind === "service");
+      const keepBody = (state === "new" || state === "opened") && kind !== "out";
       classified.push({
         msg_id: String(m.msg_id),
         sender_id: String(m.sender_id || ""),
@@ -459,22 +461,55 @@ export class Poller {
         chat.last_ts = "";
       }
     }
-    const batch = classified.filter((m) => {
-      if (!newIds.has(m.msg_id)) return false;
-      if (m.kind !== "dm" && m.kind !== "mention" && m.kind !== "service") return false;
-      const row = chat.recent.find((x) => x.msg_id === m.msg_id);
-      return !!row && row.state === "new";
-    });
+    const batch = this.collectBatch(chat, classified, newIds);
     return { batch, selfEpoch };
+  }
+
+  /**
+   * 唤醒批次。
+   * · mention 模式：只收本轮新到、仍是 new 的待回消息（水位已推进，天然不重复）。
+   * · all 模式：合并窗口内的消息留在本地等下一轮，所以按 last_wake_epoch 去重，
+   *   把积压的一次性给过去。上限就是本地保留的 10 条指针，更大的突发量按 skill 在线拉。
+   */
+  collectBatch(chat, classified, newIds) {
+    const pendings = new Set(["dm", "mention", "service", "fyi"]);
+    const allMode = chat.kind === "group" && chat.wake_mode === "all";
+    if (!allMode) {
+      return classified.filter((m) => {
+        if (!newIds.has(m.msg_id)) return false;
+        if (m.kind !== "dm" && m.kind !== "mention" && m.kind !== "service") return false;
+        const row = chat.recent.find((x) => x.msg_id === m.msg_id);
+        return !!row && row.state === "new";
+      });
+    }
+    const floor = Number(chat.last_wake_epoch) || 0;
+    return (chat.recent || [])
+      // opened 也算：点开看过不等于 agent 已经处理过，靠 last_wake_epoch 去重即可。
+      .filter((m) => pendings.has(m.kind) && (m.state === "new" || m.state === "opened") &&
+        (Number(m.ts_epoch) || 0) > floor)
+      .sort((a, b) => (a.ts_epoch - b.ts_epoch))
+      .slice(-RECENT_LIMIT);
   }
 
   async maybeWake(chat, batch) {
     if (!chat.watching || chat.blocked) return false;
     const key = chatKey(chat.platform, chat.chat_id);
     const active = !!this.turns?.isActive(chat.platform, chat.chat_id);
+    const allMode = chat.kind === "group" && chat.wake_mode === "all";
+    if (allMode && batch.length) {
+      // 合并窗口：窗口内攒着，下一轮一次给过去。窗口 0 = 不合并。
+      const win = Math.max(0, Number(this.cfg.poll?.group_wake_sec ?? 60) || 0);
+      const since = nowSec() - (Number(chat.last_wake_at) || 0);
+      if (win > 0 && chat.last_wake_at && since < win) return false;
+    }
     if (batch.length) {
       if (!this.turns) return false;
       const r = await this.turns.wake(chat, { interrupted: active, batch });
+      if (r.ok && allMode) {
+        chat.last_wake_at = nowSec();
+        chat.last_wake_epoch = Math.max(...batch.map((m) => Number(m.ts_epoch) || 0));
+        this.state.save();
+      }
       return !!r.ok;
     }
     if (chat.wake?.failed && !active && this.state.pendingCount(chat) > 0 && this.turns) {
@@ -552,6 +587,7 @@ export class Poller {
       dm_scope: p.dm_scope || "recent",
       dm_recent: Number(p.dm_recent) || 20,
       cooldown_sec: this.cooldownSec,
+      group_wake_sec: Math.max(0, Number(p.group_wake_sec ?? 60) || 0),
       next_cycle_at: this.nextCycleAt,
       due_in: Math.max(0, Math.floor(this.nextCycleAt - nowSec())),
       timer_dm: targets.filter((t) => (t.kind || "p2p") === "p2p").length,

@@ -601,3 +601,19 @@ test("existing media_paths are reused instead of downloading again", async () =>
   await turns.wake(chat);
   assert.deepEqual(calls, []);
 });
+
+test("all-mode prompt marks mentions and keeps the reply rule explicit", () => {
+  const rows = [
+    { msg_id: "a1", sender_id: "ou_x", sender_name: "同事", content: "进度怎么样",
+      ts: "t1", ts_epoch: 100, kind: "fyi", state: "new" },
+    { msg_id: "a2", sender_id: "ou_y", sender_name: "客户", content: "@我 这个什么时候好",
+      ts: "t2", ts_epoch: 101, kind: "mention", state: "new" },
+  ];
+  const prompt = buildWakePrompt("feishu", "示例群", "oc_grp", rows, {
+    firstTurn: false, wakeMode: "all",
+  });
+  assert.match(prompt, /- \[t2\] 客户（@你）: @我 这个什么时候好/);
+  assert.match(prompt, /- \[t1\] 同事: 进度怎么样/);
+  assert.match(prompt, /非点名的群消息只看不回/);
+  assert.match(prompt, /照常处理，该回就回/);
+});

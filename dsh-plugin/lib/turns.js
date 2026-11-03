@@ -52,7 +52,9 @@ function formatMsgLine(m, mediaInfo = null, platform = "") {
       (m.msg_type === "file" && text.startsWith("[文件:"));
     body = bare ? note : `${text} ${note}`;
   }
-  const tag = sanitizeUntrusted(m.kind === "out" ? "我" : (m.sender_name || "对方"));
+  const who = m.kind === "out" ? "我" : (m.sender_name || "对方");
+  // 点名是事实，不是判断：全量模式下 agent 要能一眼分清哪条是 @ 它。
+  const tag = sanitizeUntrusted(m.kind === "mention" ? `${who}（@你）` : who);
   return `- [${m.ts || ""}] ${tag}: ${body}`;
 }
 
@@ -136,7 +138,7 @@ function payloadNote(count) {
  * 画像正文由 agent 自己按路径读，插件不注入、不解析、不回写。
  */
 export function buildWakePrompt(platform, chatName, chatId, messages, {
-  profilePath = "", interrupted = false, firstTurn = false, mediaMap = null,
+  profilePath = "", interrupted = false, firstTurn = false, mediaMap = null, wakeMode = "mention",
 } = {}) {
   const label = PLAT_LABEL[platform] || platform;
   const safeName = sanitizeUntrusted(chatName || chatId);
@@ -145,9 +147,15 @@ export function buildWakePrompt(platform, chatName, chatId, messages, {
     .sort((a, b) => (a.ts_epoch - b.ts_epoch))
     .map((m) => formatMsgLine(m, mediaFor(mediaMap, m.msg_id), platform));
 
+  // 全量模式的回复口径每轮都带一行：模式可以在会话中途切换，不能只靠首轮记住。
+  const allMode = wakeMode === "all";
+  const modeNote = allMode
+    ? "（全量模式：非点名的群消息只看不回，要本人表态的写进当日日报等用户拍板；" +
+      "标了「（@你）」的消息照常处理，该回就回。）"
+    : "";
   // 已有会话：只列本次新消息。chat_id / 运行形态 / 画像路径 / 媒体说明都已在本会话里，
   // 不再每一轮重复；新增媒体消息的本地路径与降级提示仍由 formatMsgLine 带在行内。
-  if (!firstTurn) return lines.join("\n");
+  if (!firstTurn) return [lines.join("\n"), modeNote].filter(Boolean).join("\n");
 
   const parts = ["/cyber-im-avatar"];
   if (interrupted) {
@@ -160,6 +168,7 @@ export function buildWakePrompt(platform, chatName, chatId, messages, {
     parts.push(`画像文件：${profilePath}（起草前自己读；学到长期事实就直接改这个文件，插件不代写。）`);
   }
   parts.push(...lines);
+  if (modeNote) parts.push(modeNote);
   if (mediaSize(mediaMap)) parts.push(MEDIA_HINT);
   parts.push(payloadNote(messages.length));
   parts.push("按 skill 处理这通会话；画像只改当前对象这一份，不要写 state.json / env.json / media。");
@@ -316,6 +325,7 @@ export class Turns {
       const media = await this.resolveMedia(current, messages, agent);
       const prompt = buildWakePrompt(current.platform, current.name, current.chat_id, messages, {
         profilePath, interrupted, firstTurn, mediaMap: media.map,
+        wakeMode: current.wake_mode || "mention",
       });
       const message = await makeUserMessage(prompt, media.parts);
       handle.promptId = message.id;

@@ -911,7 +911,8 @@ window.__ModuleLoader__.load({
           return r;
         }
         if (ws) rememberWs(ws);
-        say("已加入值守 · 工作区 " + (ws ? wsTitle(ws) : "跟随 DSH 默认"));
+        say("已加入值守" + (kind === "group" ? "（只盯 @我）" : "") +
+            " · 工作区 " + (ws ? wsTitle(ws) : "跟随 DSH 默认"));
         if (after) after(r);
         else { loadChats(); loadTargets(); }
         return r;
@@ -1205,10 +1206,7 @@ window.__ModuleLoader__.load({
         h("span", { class: "ims-name", title: d.chat_id ? "会话 ID（排障用）：" + d.chat_id : "",
                     text: chat.name || "未命名会话" }),
         h("span", { class: "ims-tag", style: "color:" + (p.color || "var(--fg3)"), text: p.label }),
-        chat.kind === "group"
-          ? h("span", { class: "ims-tag", style: "color:" + (chat.timer === 1 ? "var(--ok)" : "var(--fg3)"),
-                        text: chat.timer === 1 ? "定时拉" : "点开才拉" })
-          : null,
+
         stateChip(chat),
         h("span", { class: "ims-grow" }),
         chat.dsh_session ? goSessionBtn(d.platform, d.chat_id, true) : null,
@@ -1267,7 +1265,8 @@ window.__ModuleLoader__.load({
               .catch(function (e) { say("拉取失败：" + shortReason(e)); });
           }
         }, h("span", { class: "ims-ico", html: icon("sync", 13) }), "拉一次"),
-        h("label", { class: "ims-switch", title: "值守：这个会话的新消息会唤醒 agent" },
+        chat.kind === "group" ? modeSelect(chat) : null,
+        chat.kind === "group" ? null : h("label", { class: "ims-switch", title: "值守：这个会话的新消息会唤醒 agent" },
           h("input", {
             type: "checkbox", checked: watched,
             onchange: function (e) {
@@ -1446,6 +1445,43 @@ window.__ModuleLoader__.load({
       return wrap;
     }
 
+    // 群的「关注程度」：一档三态，后端一次写 watching / timer / wake_mode。
+    function setChatMode(c, mode) {
+      api("/api/chat/mode", { body: { platform: c.platform, chat_id: c.chat_id,
+                                      name: c.name, kind: c.kind, mode: mode } })
+        .then(function (r) {
+          if (!r.ok) return say("没改成：" + (r.reason || ""));
+          c.watching = !!r.chat.watching;
+          c.timer = r.chat.timer;
+          c.wake_mode = r.chat.wake_mode;
+          say(mode === "off" ? "已改为不盯：不再拉这个群"
+            : (mode === "all" ? "已改为全部消息：非 @ 只看不回，@ 你照常回"
+            : "已改为只盯 @我"));
+          loadChats(); loadStatus();
+        });
+    }
+
+    function chatModeOf(c) {
+      // timer 没起来 = 实际一条都不拉，按「不盯」显示，别让卡片说谎。
+      if (!c.watching || c.timer !== 1) return "off";
+      return c.wake_mode === "all" ? "all" : "mention";
+    }
+
+    // 群卡片/详情头部共用：不盯 / 只盯 @我 / 全部消息
+    function modeSelect(c) {
+      var cur = chatModeOf(c);
+      var sel = h("select", {
+        class: "ims-select ims-mode", title: "关注程度：不盯=一条不拉；只盯 @我=只有 @你的消息唤醒 agent；" +
+          "全部消息=非 @ 也唤醒（只看不回、要你表态的进日报），@ 你照常回",
+        onchange: function (e) { setChatMode(c, e.target.value); }
+      },
+        h("option", { value: "off", text: "不盯" }),
+        h("option", { value: "mention", text: "只盯 @我" }),
+        h("option", { value: "all", text: "全部消息" }));
+      sel.value = cur;
+      return sel;
+    }
+
     // 单个会话的定时拉取开关（群默认 -1 = 点开才拉）
     function setChatTimer(c, timer) {
       api("/api/chat/timer", { body: { platform: c.platform, chat_id: c.chat_id,
@@ -1579,7 +1615,7 @@ window.__ModuleLoader__.load({
             h("span", { class: "ims-note-body", text: prof }))
             : h("div", { class: "ims-hint", text: "还没画像，去「服务对象」补一份；agent 起草时会更像你" }),
           h("div", { class: "ims-rowline" },
-            h("label", { class: "ims-switch" },
+            c.kind === "group" ? modeSelect(c) : h("label", { class: "ims-switch" },
               h("input", {
                 type: "checkbox", checked: true,
                 onchange: function (e) {
@@ -1588,13 +1624,6 @@ window.__ModuleLoader__.load({
                     .then(loadChats);
                 }
               }), "值守"),
-            c.kind === "group" ? h("label", {
-              class: "ims-switch", title: "开=按设置间隔定时检测这个群的 @我；关=只在点开时拉一次"
-            },
-              h("input", {
-                type: "checkbox", checked: c.timer === 1,
-                onchange: function (e) { setChatTimer(c, e.target.checked ? 1 : -1); }
-              }), "定时检测 @我") : null,
             h("span", { class: "ims-grow" }),
             c.last_error ? h("span", { class: "ims-hint ims-err", text: String(c.last_error).slice(0, 36) }) : null,
             h("button", {
@@ -2162,9 +2191,13 @@ window.__ModuleLoader__.load({
       var recent = h("input", { class: "ims-inp ims-num", type: "number", min: "1", max: "200" });
       recent.value = S.pollDraft.dm_recent !== undefined ? S.pollDraft.dm_recent
         : String(pcfg.dm_recent || 20);
+      var gwin = h("input", { class: "ims-inp ims-num", type: "number", min: "0", max: "3600", step: "30" });
+      gwin.value = S.pollDraft.group_wake_sec !== undefined ? S.pollDraft.group_wake_sec
+        : String(pcfg.group_wake_sec == null ? 60 : pcfg.group_wake_sec);
       fast.addEventListener("input", function () { S.pollDraft.fast_sec = fast.value; });
       mins.addEventListener("input", function () { S.pollDraft.interval_min = mins.value; });
       recent.addEventListener("input", function () { S.pollDraft.dm_recent = recent.value; });
+      gwin.addEventListener("input", function () { S.pollDraft.group_wake_sec = gwin.value; });
       var dueText = (pollInfo.fast_sec > 0 ? "值守 " + pollInfo.fast_sec + " 秒" : "快车道已关") +
         (pollInfo.due_in > 0 ? " · 发现约 " + Math.ceil(pollInfo.due_in / 60) + " 分钟后" : " · 发现马上就到");
       scroll.appendChild(h("div", { class: "ims-card" },
@@ -2179,6 +2212,8 @@ window.__ModuleLoader__.load({
             h("span", { class: "ims-hint", text: "发现间隔(分钟)" }), mins),
           h("span", { class: "ims-field" },
             h("span", { class: "ims-hint", text: "私聊取前 N 个" }), recent),
+          h("span", { class: "ims-field" },
+            h("span", { class: "ims-hint", text: "群唤醒合并(秒)" }), gwin),
           h("span", { class: "ims-grow" }),
           h("button", {
             class: "ims-btn primary", type: "button",
@@ -2191,7 +2226,8 @@ window.__ModuleLoader__.load({
               api("/api/config", { body: { poll: {
                 interval_min: v,
                 fast_sec: f,
-                dm_recent: Math.max(1, parseInt(recent.value, 10) || 20)
+                dm_recent: Math.max(1, parseInt(recent.value, 10) || 20),
+                group_wake_sec: Math.max(0, Math.min(3600, parseInt(gwin.value, 10) || 0))
               } } }).then(function (c) {
                 S.cfg = c;
                 S.pollDraft = {};
@@ -2199,6 +2235,7 @@ window.__ModuleLoader__.load({
                 mins.value = String(cp.interval_min || 10);
                 fast.value = String(cp.fast_sec);
                 recent.value = String(cp.dm_recent || 20);
+                gwin.value = String(cp.group_wake_sec == null ? 60 : cp.group_wake_sec);
                 say(cp.fast_sec > 0
                   ? "已保存：值守 " + cp.fast_sec + " 秒一拉 · 发现每 " + cp.interval_min + " 分钟"
                   : "已保存：快车道关闭，只有每 " + cp.interval_min + " 分钟一轮");
@@ -2210,7 +2247,9 @@ window.__ModuleLoader__.load({
         h("div", { class: "ims-hint", text: "值守会话按「值守间隔」拉，发现新会话按「发现间隔」；" +
           "0 = 关闭快车道，退回只跑发现间隔。" +
           "每个候选每次都是一次 IM 接口调用：N 个会话约 N×86400÷秒数 次/天，体检页有估算。" +
-          "定时只拉「私聊」+ 你逐个勾了定时检测的群，群默认一律不碰。" }),
+          "群按「关注程度」逐个定：不盯 = 一条不拉；只盯 @我 = 只有 @你的消息唤醒 agent；" +
+          "全部消息 = 非 @ 也唤醒（只看不回、要你表态的进日报；@ 你的照常回），" +
+          "同群最多每「群唤醒合并」秒唤醒一次。" }),
         h("div", { class: "ims-rowline" },
           h("button", {
             class: "ims-btn", type: "button",
@@ -2232,12 +2271,13 @@ window.__ModuleLoader__.load({
         h("div", { class: "ims-kv" },
           h("span", { text: "群聊" }),
           h("span", { text: (pollInfo.groups || 0) + " 个已知 · " + groupTimerCount +
-            " 个勾了定时检测 · 其余点开才拉" })),
+            " 个在盯 · 其余点开才拉" })),
         h("div", { class: "ims-kv" },
           h("span", { text: "已屏蔽" }),
           h("span", { text: (pollInfo.blocked || 0) + " 个 · 不同步、不进收件箱" })),
-        h("div", { class: "ims-hint", text: "群聊默认完全不进定时轮询：想看哪个群，点进去拉一次就够。" +
-          "要做群客服的，在「分身」值守卡片上勾「定时检测 @我」，它才会按上面的间隔轮询。" }),
+        h("div", { class: "ims-hint", text: "群聊默认不盯：想看哪个群，点进去拉一次就够。" +
+          "要它自动盯，在「分身」的群卡片上选「只盯 @我」或「全部消息」；选「不盯」会从这一页移走，" +
+          "从收件箱点开这个群还能改回来。" }),
         h("div", { class: "ims-hint", text: "屏蔽 = 彻底不同步：定时、点开、手动单会话都拒拉，收件箱里也没有它。" +
           "屏蔽时该会话的待回会被标成忽略；正文不删，在下面逐个取消。" }),
         blockedList.length ? h("div", null,

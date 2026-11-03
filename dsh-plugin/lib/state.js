@@ -19,6 +19,8 @@ export const RECENT_LIMIT = 10;
 /** 插件壳支持的平台；config.platforms 是启用开关，缺省只开飞书 / 企微。 */
 export const SUPPORTED_PLATFORMS = ["feishu", "wecom", "dingtalk"];
 const DM_SCOPES = ["recent", "all", "watched"];
+/** 群唤醒策略：mention=只 @ 唤醒；all=非 @ 也进批次（只看不回）。 */
+export const WAKE_MODES = ["mention", "all"];
 
 export const DEFAULT_CONFIG = {
   poll: {
@@ -30,6 +32,7 @@ export const DEFAULT_CONFIG = {
     backfill_hours: 72,
     refresh_chatlist: true,
     cooldown_sec: 20,
+    group_wake_sec: 60,
   },
   platforms: ["feishu", "wecom"],
   dsh: { timeout: 600, full_access: false },
@@ -93,6 +96,7 @@ export function normalizeConfig(input) {
   p.per_chat_limit = int(p.per_chat_limit, 1, 50, 10);
   p.backfill_hours = int(p.backfill_hours, 0, 24 * 30, 72);
   p.cooldown_sec = int(p.cooldown_sec, 0, 600, 20);
+  p.group_wake_sec = int(p.group_wake_sec, 0, 3600, 60);
   if (!DM_SCOPES.includes(p.dm_scope)) p.dm_scope = "recent";
   p.refresh_chatlist = p.refresh_chatlist !== false;
   const d = cfg.dsh || (cfg.dsh = {});
@@ -143,8 +147,9 @@ const RECENT_STATES = ["new", "opened", "replied", "ignored"];
 function normalizeMessage(m) {
   const kind = RECENT_KINDS.includes(m.kind) ? m.kind : "fyi";
   const state = RECENT_STATES.includes(m.state) ? m.state : "new";
-  const keepBody = (state === "new" || state === "opened") &&
-    (kind === "dm" || kind === "mention" || kind === "service");
+  // 正文只在「还没处理」时保留；全量模式的 fyi 也要能带给 agent，
+  // 所以按 state 收口而不是按 kind。mention 模式下 fyi 恒为 ignored，不会多存。
+  const keepBody = (state === "new" || state === "opened") && kind !== "out";
   return {
     msg_id: String(m.msg_id),
     sender_id: String(m.sender_id || ""),
@@ -243,6 +248,10 @@ export class State {
       timer: Number.isFinite(Number(input.timer))
         ? Number(input.timer)
         : (input.kind === "group" ? -1 : 0),
+      // 群唤醒策略：缺省 mention = 现状，老数据不会突然开始全量唤醒。
+      wake_mode: WAKE_MODES.includes(input.wake_mode) ? input.wake_mode : "mention",
+      last_wake_at: Number(input.last_wake_at) || 0,
+      last_wake_epoch: Number(input.last_wake_epoch) || 0,
       workspace: typeof input.workspace === "string" ? input.workspace : "",
       dsh_session: typeof input.dsh_session === "string" ? input.dsh_session : "",
       session_turns: Math.max(0, Number(input.session_turns) || 0),
@@ -331,16 +340,13 @@ export class State {
 
   pendingMessages(chat, limit = RECENT_LIMIT) {
     return (chat?.recent || [])
-      .filter((m) => (m.kind === "dm" || m.kind === "mention" || m.kind === "service") &&
-        (m.state === "new" || m.state === "opened"))
+      .filter((m) => isPendingMessage(m, chat))
       .sort((a, b) => (a.ts_epoch - b.ts_epoch))
       .slice(-Math.max(1, limit));
   }
 
   pendingCount(chat) {
-    return (chat?.recent || []).filter((m) =>
-      (m.kind === "dm" || m.kind === "mention" || m.kind === "service") &&
-      (m.state === "new" || m.state === "opened")).length;
+    return (chat?.recent || []).filter((m) => isPendingMessage(m, chat)).length;
   }
 
   counts() {
@@ -348,8 +354,7 @@ export class State {
     for (const chat of Object.values(this.data.chats)) {
       if (chat.blocked) continue;
       for (const m of chat.recent) {
-        const pending = m.kind === "dm" || m.kind === "mention" || m.kind === "service";
-        if (!pending) continue;
+        if (!isPendingMessage(m, chat)) continue;
         if (m.state === "new") {
           out.unread += 1;
           if (m.kind === "dm") out.unread_dm += 1;
@@ -540,6 +545,17 @@ export class State {
 
 export function chatKey(platform, chatId) {
   return `${platform}:${chatId}`;
+}
+
+/**
+ * 一条消息算不算「待回」。待回口径一处定义：
+ * 私聊/点名/服务消息，以及全量模式群里的非点名消息。
+ */
+export function isPendingMessage(m, chat = null) {
+  if (!m) return false;
+  if (!(m.state === "new" || m.state === "opened")) return false;
+  if (m.kind === "dm" || m.kind === "mention" || m.kind === "service") return true;
+  return !!chat && chat.kind === "group" && chat.wake_mode === "all" && m.kind === "fyi";
 }
 
 export function messageMatches(m, kind) {

@@ -30,6 +30,9 @@
 | blocked | bool | 1=屏蔽：不拉、不进收件箱、不计未读 |
 | blocked_at | number | 屏蔽时刻（epoch 秒）；取消屏蔽归 0 |
 | timer | number | 定时拉：-1 明确不拉 / 0 跟随默认 / 1 强制拉；群默认 -1 |
+| wake_mode | string | 群唤醒策略：`mention`=只 @ 唤醒（默认，等同老行为）/ `all`=非 @ 也进批次（只看不回）；私聊恒为 `mention`，不读 |
+| last_wake_at | number | 上一次成功唤醒的墙钟时刻（epoch 秒）；`all` 模式用它做合并窗口，失败不写 |
+| last_wake_epoch | number | 上一次唤醒批次里最大的 `ts_epoch`；`all` 模式按它去重，同一批不会投递两次 |
 | workspace | string | 显式绑定的工作区路径；空=未绑定，turn 跟随 DSH 默认工作区 |
 | dsh_session | string | 这通会话在 DSH 里的 session id；空=还没跑过 |
 | session_turns | number | 当前 dsh_session 上累计跑完的 turn 数；换会话时归 0 |
@@ -52,7 +55,7 @@
 | msg_id | string | 平台消息 ID；企微无 ID 时是复合指纹 |
 | sender_id | string | 发送者 ID |
 | sender_name | string | 发送者展示名 |
-| content | string | 正文；仅 `new` / `opened` 的 `dm` / `mention` / `service` 保留，其余为空 |
+| content | string | 正文；仅 `new` / `opened` 的非 `out` 消息保留，其余为空（mention 模式下群里的 `fyi` 恒为 `ignored`，实际不会多存）|
 | ts | string | 平台时间戳原样 |
 | ts_epoch | number | 归一 epoch |
 | kind | string | `dm` / `mention` / `fyi` / `out`（`service` 仅存量数据） |
@@ -64,6 +67,8 @@
 
 老 state 缺字段时按默认补：`last_msg_id` 为空串、`msg_type` / `app_link` / `media_id` 为空串、
 `media_paths` 为空数组；不改变存量会话行为。
+
+待回口径：`dm` / `mention` / `service`，以及 `wake_mode="all"` 群里的 `fyi`；`isPendingMessage()` 一处定义，`pendingCount` / `pendingMessages` / `counts()` 共用。
 
 正文清理：`setMessageState(..., replied|ignored)`、`markEarlierReplied()`、
 `chatBlock()`、`ignoreUnwatched()` 都会把 `content` 置空。指针行不按时间删除——

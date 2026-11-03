@@ -5,13 +5,14 @@
 
 ## 更新时间
 
-2026-11-03（0.9.0 已发布：npm latest=0.9.0，`v0.9.0` tag 指向发布代码，市场索引随后
-单独提交；真实客户命中与真实平台媒体待命中；插件壳已支持钉钉（dws），真发仍只到 dry-run）
+2026-11-03（spec 0024「群聊关注程度」已实现、测试全绿，待在桌面 DSH 重启后验收面板；
+0.9.0 已发布：npm latest=0.9.0，`v0.9.0` tag 指向发布代码；真实客户命中与真实平台媒体待命中）
 
 ## 最近批次
 
 | 日期 | 主题 | 证据 |
 | --- | --- | --- |
+| 2026-11-03 | 群聊关注程度（spec 0024）：`wake_mode` / `last_wake_at` / `last_wake_epoch`、合并窗口、`/api/chat/mode`、三态控件 | `lib/state.js`、`lib/poller.js`、`lib/app.js`、`web/panel.js`、契约 01–03 |
 | 2026-11-03 | 面板体验加固（spec 0021）：草稿进内存、失败不装空、窄栏、密度、确认、可达、隐藏 imid | `web/panel.js`、`scripts/demo/fixture.mjs` |
 | 2026-11-03 | 已有会话续跑只追加消息行，不再重复平台/chat_id/运行形态/画像路径/媒体说明 | `lib/turns.js`、`tests/turns.test.mjs`、`SKILL.md` |
 | 2026-11-03 | 0013 / 0017 / 0018 / 0019 / 0020 / 0021 / 0022 逐条验收并归档；ADR 0006 转 implemented | `docs/specs/archive/README.md`、`docs/decisions/README.md` |

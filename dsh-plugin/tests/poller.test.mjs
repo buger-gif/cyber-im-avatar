@@ -361,3 +361,76 @@ test("paused stops both lanes", async () => {
   assert.equal(adapter.calls.length, 0);
   assert.ok(poller.nextCycleAt > Date.now() / 1000);
 });
+
+test("all-mode group wakes on non-mention and keeps the body", async () => {
+  const { state, poller, adapter, turns } = setup();
+  state.data.config.poll.group_wake_sec = 0;
+  const chat = state.ensureChat("feishu", "oc_all", { name: "群", kind: "group" });
+  chat.watching = true;
+  chat.timer = 1;
+  chat.wake_mode = "all";
+  adapter.messages = [msg("a1", 3010)];
+  await poller.pollChat("feishu", "oc_all");
+
+  adapter.messages = [msg("a2", 3020), msg("a1", 3010)];
+  const r = await poller.pollChat("feishu", "oc_all", { force: true });
+  assert.equal(r.woke, true);
+  assert.equal(turns.wakes.length, 1);
+  const row = chat.recent.find((m) => m.msg_id === "a2");
+  assert.equal(row.kind, "fyi");
+  assert.equal(row.state, "new");
+  assert.equal(row.content, "正文-a2");
+  assert.equal(turns.wakes[0].opts.batch.at(-1).msg_id, "a2");
+  assert.equal(chat.last_wake_epoch, 3020);
+
+  // 同一批消息不会再投递一次
+  const again = await poller.pollChat("feishu", "oc_all", { force: true });
+  assert.equal(again.woke, false);
+  assert.equal(turns.wakes.length, 1);
+});
+
+test("all-mode merges inside the window and flushes the backlog afterwards", async () => {
+  const { state, poller, adapter, turns } = setup();
+  state.data.config.poll.group_wake_sec = 60;
+  const chat = state.ensureChat("feishu", "oc_all", { name: "群", kind: "group" });
+  chat.watching = true;
+  chat.timer = 1;
+  chat.wake_mode = "all";
+  adapter.messages = [msg("b1", 4010)];
+  await poller.pollChat("feishu", "oc_all");
+
+  adapter.messages = [msg("b2", 4020), msg("b1", 4010)];
+  await poller.pollChat("feishu", "oc_all", { force: true });
+  assert.equal(turns.wakes.length, 1);
+  assert.ok(chat.last_wake_at > 0);
+
+  adapter.messages = [msg("b3", 4030), msg("b2", 4020), msg("b1", 4010)];
+  const win = await poller.pollChat("feishu", "oc_all", { force: true });
+  assert.equal(win.woke, false, "窗口内不唤醒");
+  const b3 = chat.recent.find((m) => m.msg_id === "b3");
+  assert.equal(b3.state, "new");
+  b3.state = "opened"; // 点开看过不等于处理过，也要补投
+
+  chat.last_wake_at = 1; // 模拟窗口过去
+  const flush = await poller.pollChat("feishu", "oc_all", { force: true });
+  assert.equal(flush.woke, true);
+  const first = turns.wakes[0].opts.batch.map((m) => m.msg_id);
+  assert.deepEqual(first, ["b2"], "第一次唤醒只带 b2");
+  const ids = turns.wakes.at(-1).opts.batch.map((m) => m.msg_id);
+  assert.deepEqual(ids, ["b3"], "窗口过去只补没投递过的 b3");
+});
+
+test("mention-mode groups still ignore non-mentions (regression)", async () => {
+  const { state, poller, adapter, turns } = setup();
+  const chat = state.ensureChat("feishu", "oc_m", { name: "群", kind: "group" });
+  chat.watching = true;
+  chat.timer = 1;
+  adapter.messages = [msg("c1", 5010)];
+  await poller.pollChat("feishu", "oc_m");
+  adapter.messages = [msg("c2", 5020), msg("c1", 5010)];
+  const r = await poller.pollChat("feishu", "oc_m", { force: true });
+  assert.equal(r.woke, false);
+  assert.equal(turns.wakes.length, 0);
+  assert.equal(chat.recent.find((m) => m.msg_id === "c2").state, "ignored");
+  assert.equal(chat.wake_mode, "mention");
+});
