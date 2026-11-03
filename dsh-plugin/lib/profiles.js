@@ -3,7 +3,7 @@
  *
  * 文件是唯一事实源：面板、agent、插件都读写它；env.json 不再存画像。
  * 目录 700、文件 600，写入走临时文件 + rename；上限 12KB，拒绝而不是静默截断。
- * 超过 8KB 视为「该整理了」：prompt 会要求 agent 压缩，缩小时旧版归档到 .history.md。
+ * DSH 壳内由 agent 直接读/写（配合 dsh.full_access）；插件只负责建模板和面板 I/O。
  */
 import fs from "node:fs";
 import os from "node:os";
@@ -11,7 +11,6 @@ import path from "node:path";
 import crypto from "node:crypto";
 
 export const MAX_PROFILE = 12 * 1024;
-export const SOFT_PROFILE = 8 * 1024;
 const PLATFORM_LABEL = { feishu: "飞书", wecom: "企业微信", dingtalk: "钉钉" };
 const SAFE = /[^0-9A-Za-z._\-\u4e00-\u9fff]+/g;
 
@@ -28,26 +27,6 @@ export function profileRel(platform, chatId = "", name = "") {
     file = `${base}-${digest}`;
   }
   return path.join("profiles", plat, `${file}.md`);
-}
-
-/** 画像是否该整理：体积、历史结论条数、日期流水条数，任一超线。 */
-export function profileNeedsCompact(text) {
-  const raw = String(text || "");
-  const bytes = Buffer.byteLength(raw, "utf8");
-  const section = raw.split(/^##\s*历史结论\s*$/m)[1] || "";
-  const bullets = section.split(/\r?\n/).filter((line) => line.trim().startsWith("- "));
-  const dated = bullets.filter((line) =>
-    /^-\s*(\d{1,2}-\d{1,2}|\d{4}-\d{2}-\d{2})\b/.test(line.trim()));
-  if (bytes > SOFT_PROFILE) {
-    return { needed: true, reason: "size", bytes, bullets: bullets.length, dated: dated.length };
-  }
-  if (bullets.length > 20) {
-    return { needed: true, reason: "bullets", bytes, bullets: bullets.length, dated: dated.length };
-  }
-  if (dated.length > 8) {
-    return { needed: true, reason: "dated", bytes, bullets: bullets.length, dated: dated.length };
-  }
-  return { needed: false, bytes, bullets: bullets.length, dated: dated.length };
 }
 
 export function profileTemplate(name, platform, chatId, notes = []) {
@@ -150,38 +129,16 @@ export class Profiles {
     }
   }
 
-  historyPath(file) {
-    return file.endsWith(".md") ? `${file.slice(0, -3)}.history.md` : `${file}.history.md`;
-  }
-
-  /** 整理缩小时把旧画像追加到 .history.md，保留可追溯性。 */
-  archive(file, text) {
-    const body = String(text || "").trim();
-    if (!body) return "";
-    const dest = this.historyPath(file);
-    this.ensureDir(path.dirname(dest));
-    const stamp = new Date().toISOString();
-    fs.appendFileSync(dest, `\n\n<!-- archived ${stamp} -->\n${body}\n`, { mode: 0o600 });
-    try { fs.chmodSync(dest, 0o600); } catch { /* best effort */ }
-    return dest;
-  }
-
   /**
-   * 写画像。expectedMtime > 0 时做一次 CAS：用户期间改过就放弃 agent 回写。
-   * @returns {{ok: boolean, reason?: string, path?: string, text?: string, mtime?: number, conflict?: boolean}}
+   * 面板覆盖写画像。agent 直接改文件时走自己的文件工具，不经过这里。
+   * @returns {{ok: boolean, reason?: string, path?: string, text?: string, mtime?: number}}
    */
-  write(platform, chatId, name, text, expectedMtime = 0) {
+  write(platform, chatId, name, text) {
     if (typeof text !== "string") return { ok: false, reason: "text 必须是字符串" };
     const bytes = Buffer.byteLength(text, "utf8");
     if (bytes > MAX_PROFILE) return { ok: false, reason: "画像超过 12KB" };
     const file = this.pathFor(platform, chatId, name);
     if (!file) return { ok: false, reason: "画像路径不合法" };
-    if (expectedMtime > 0) {
-      const current = this.mtime(file);
-      if (current && Math.abs(current - expectedMtime) > 0.001) {
-        return { ok: false, reason: "profile_conflict", conflict: true, path: file };
-      }
-    }
     const body = text.trim() ? text : profileTemplate(name, platform, chatId);
     this.writeRaw(file, body.endsWith("\n") ? body : body + "\n");
     return { ok: true, path: file, text: this.readPath(file), mtime: this.mtime(file) };

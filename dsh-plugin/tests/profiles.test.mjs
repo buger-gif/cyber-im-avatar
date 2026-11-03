@@ -36,29 +36,10 @@ test("write rejects over 12KB and accepts ordinary text", () => {
   const ok = profiles.write("feishu", "oc_abc", "示例对象 A", "# 示例对象 A\n\n只写结论。\n");
   assert.equal(ok.ok, true);
   assert.match(fs.readFileSync(ok.path, "utf8"), /只写结论/);
-});
-
-test("mtime CAS skips agent write when the user edited in the meantime", async () => {
-  const { profiles } = tempProfiles();
-  const first = profiles.write("feishu", "oc_abc", "示例对象 A", "# 旧\n");
-  const expected = first.mtime;
-  await new Promise((r) => setTimeout(r, 15));
-  profiles.write("feishu", "oc_abc", "示例对象 A", "# 用户手改\n");
-  const stale = profiles.write("feishu", "oc_abc", "示例对象 A", "# agent 回写\n", expected);
-  assert.equal(stale.ok, false);
-  assert.equal(stale.reason, "profile_conflict");
-  assert.match(fs.readFileSync(first.path, "utf8"), /用户手改/);
-});
-
-test("archive appends the old profile to .history.md with private permissions", () => {
-  const { profiles } = tempProfiles();
-  const first = profiles.ensure("feishu", "oc_abc", "示例对象 A");
-  const dest = profiles.archive(first.path, "# 旧画像\n\n- 旧结论\n");
-  assert.equal(dest, first.path.replace(/\.md$/, ".history.md"));
-  const text = fs.readFileSync(dest, "utf8");
-  assert.match(text, /<!-- archived /);
-  assert.match(text, /旧结论/);
-  assert.equal(fs.statSync(dest).mode & 0o777, 0o600);
+  // 面板覆盖写不带 CAS；agent 直接改文件，冲突由 skill 的“写前重读”处理。
+  const again = profiles.write("feishu", "oc_abc", "示例对象 A", "# 覆盖\n");
+  assert.equal(again.ok, true);
+  assert.match(fs.readFileSync(again.path, "utf8"), /覆盖/);
 });
 
 test("delete removes only that profile", () => {

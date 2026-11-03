@@ -16,11 +16,14 @@ import path from "node:path";
 export const MIN_INTERVAL_MIN = 10;
 export const MAX_INTERVAL_MIN = 240;
 export const RECENT_LIMIT = 10;
+/** 插件壳只加载这两个平台；钉钉等存量会话保留但不拉取。 */
+export const SUPPORTED_PLATFORMS = ["feishu", "wecom"];
 const DM_SCOPES = ["recent", "all", "watched"];
 
 export const DEFAULT_CONFIG = {
   poll: {
     interval_min: MIN_INTERVAL_MIN,
+    fast_sec: 60,
     dm_scope: "recent",
     dm_recent: 20,
     per_chat_limit: 10,
@@ -29,7 +32,7 @@ export const DEFAULT_CONFIG = {
     cooldown_sec: 20,
   },
   platforms: ["feishu", "wecom"],
-  dsh: { timeout: 600 },
+  dsh: { timeout: 600, full_access: false },
 };
 
 /** 退役配置键：旧 panel.json 里有，也不许混进运行配置。 */
@@ -81,6 +84,11 @@ export function normalizeConfig(input) {
   }
   const p = cfg.poll || (cfg.poll = {});
   p.interval_min = int(p.interval_min, MIN_INTERVAL_MIN, MAX_INTERVAL_MIN, MIN_INTERVAL_MIN);
+  // 快车道：0=关闭；非 0 时抬到 ≥20，且不超过慢车道间隔。
+  p.fast_sec = int(p.fast_sec, 0, 600, 60);
+  if (p.fast_sec > 0) {
+    p.fast_sec = Math.max(20, Math.min(p.fast_sec, p.interval_min * 60));
+  }
   p.dm_recent = int(p.dm_recent, 1, 200, 20);
   p.per_chat_limit = int(p.per_chat_limit, 1, 50, 10);
   p.backfill_hours = int(p.backfill_hours, 0, 24 * 30, 72);
@@ -89,8 +97,11 @@ export function normalizeConfig(input) {
   p.refresh_chatlist = p.refresh_chatlist !== false;
   const d = cfg.dsh || (cfg.dsh = {});
   d.timeout = int(d.timeout, 30, 3600, 600);
+  d.full_access = d.full_access === true || d.full_access === "true" || d.full_access === 1;
   if (!Array.isArray(cfg.platforms) || cfg.platforms.length === 0) cfg.platforms = ["feishu", "wecom"];
-  cfg.platforms = cfg.platforms.filter((x) => typeof x === "string" && x);
+  cfg.platforms = cfg.platforms
+    .filter((x) => typeof x === "string" && x)
+    .filter((x) => SUPPORTED_PLATFORMS.includes(x));
   // 退役键：不让它们从旧 panel.json 混进运行配置。
   for (const k of RETIRED_KEYS) delete cfg[k];
   if (cfg.dsh) {
@@ -105,6 +116,8 @@ export function publicConfig(cfg, hostReady = false) {
   out.poll.interval_sec = out.poll.interval_min * 60;
   out.poll.min_interval_min = MIN_INTERVAL_MIN;
   out.poll.max_interval_min = MAX_INTERVAL_MIN;
+  out.poll.min_fast_sec = 20;
+  out.poll.max_fast_sec = 600;
   out.resolved = {
     dsh_ready: !!hostReady,
     label: hostReady ? "跟随 DSH 配置" : "DSH 宿主未就绪",
@@ -118,6 +131,35 @@ function safeReadJson(file) {
   } catch {
     return null;
   }
+}
+
+const RECENT_KINDS = ["dm", "mention", "service", "fyi", "out"];
+const RECENT_STATES = ["new", "opened", "replied", "ignored"];
+
+/**
+ * 一条消息指针的归一化。字段顺序就是契约 02 的顺序：新字段只能往后追加。
+ * media_paths 只存插件下载后的本地绝对路径，不存二进制。
+ */
+function normalizeMessage(m) {
+  const kind = RECENT_KINDS.includes(m.kind) ? m.kind : "fyi";
+  const state = RECENT_STATES.includes(m.state) ? m.state : "new";
+  const keepBody = (state === "new" || state === "opened") &&
+    (kind === "dm" || kind === "mention" || kind === "service");
+  return {
+    msg_id: String(m.msg_id),
+    sender_id: String(m.sender_id || ""),
+    sender_name: String(m.sender_name || ""),
+    content: keepBody ? String(m.content || "") : "",
+    ts: String(m.ts || ""),
+    ts_epoch: Number(m.ts_epoch) || 0,
+    kind,
+    state,
+    msg_type: String(m.msg_type || ""),
+    app_link: String(m.app_link || ""),
+    media_id: String(m.media_id || ""),
+    media_paths: (Array.isArray(m.media_paths) ? m.media_paths : [])
+      .filter((p) => typeof p === "string" && p && path.isAbsolute(p)),
+  };
 }
 
 export class State {
@@ -207,6 +249,7 @@ export class State {
       session_bound_at: Number(input.session_bound_at) || 0,
       last_epoch: Number(input.last_epoch) || 0,
       last_ts: typeof input.last_ts === "string" ? input.last_ts : "",
+      last_msg_id: typeof input.last_msg_id === "string" ? input.last_msg_id : "",
       last_sync: Number(input.last_sync) || 0,
       last_error: typeof input.last_error === "string" ? input.last_error : "",
       last_turn: input.last_turn && typeof input.last_turn === "object"
@@ -223,20 +266,7 @@ export class State {
     for (const m of (Array.isArray(input.recent) ? input.recent : [])) {
       if (!m || !m.msg_id || seen.has(m.msg_id)) continue;
       seen.add(m.msg_id);
-      const kind = ["dm", "mention", "service", "fyi", "out"].includes(m.kind) ? m.kind : "fyi";
-      const state = ["new", "opened", "replied", "ignored"].includes(m.state) ? m.state : "new";
-      const keepBody = (state === "new" || state === "opened") &&
-        (kind === "dm" || kind === "mention" || kind === "service");
-      chat.recent.push({
-        msg_id: String(m.msg_id),
-        sender_id: String(m.sender_id || ""),
-        sender_name: String(m.sender_name || ""),
-        content: keepBody ? String(m.content || "") : "",
-        ts: String(m.ts || ""),
-        ts_epoch: Number(m.ts_epoch) || 0,
-        kind,
-        state,
-      });
+      chat.recent.push(normalizeMessage(m));
     }
     chat.recent.sort((a, b) => (b.ts_epoch - a.ts_epoch) || String(b.msg_id).localeCompare(String(a.msg_id)));
     chat.recent = chat.recent.slice(0, RECENT_LIMIT);
@@ -359,13 +389,52 @@ export class State {
 
   mergeRecent(chat, messages) {
     const byId = new Map(chat.recent.map((m) => [m.msg_id, m]));
-    for (const m of messages) {
-      if (!byId.has(m.msg_id)) byId.set(m.msg_id, m);
+    for (const raw of messages) {
+      if (!raw || !raw.msg_id) continue;
+      const id = String(raw.msg_id);
+      const next = normalizeMessage(raw);
+      const cur = byId.get(id);
+      if (!cur) {
+        byId.set(id, next);
+        continue;
+      }
+      // 已有指针只补空着的媒体元数据，不回退 state/content 的判定。
+      if (!cur.msg_type && next.msg_type) cur.msg_type = next.msg_type;
+      if (!cur.app_link && next.app_link) cur.app_link = next.app_link;
+      if (!cur.media_id && next.media_id) cur.media_id = next.media_id;
+      if ((!cur.media_paths || !cur.media_paths.length) && next.media_paths.length) {
+        cur.media_paths = next.media_paths;
+      }
     }
     chat.recent = [...byId.values()]
       .sort((a, b) => (b.ts_epoch - a.ts_epoch) || String(b.msg_id).localeCompare(String(a.msg_id)))
       .slice(0, RECENT_LIMIT);
     return chat.recent;
+  }
+
+  /**
+   * 清掉 recent.media_paths 里已经不存在的文件（媒体清理/用户手删之后）。
+   * 不传 paths 就检查全部；返回是否有改动。
+   */
+  pruneMediaPaths(paths = null) {
+    const wanted = paths ? new Set(paths) : null;
+    let changed = false;
+    for (const chat of Object.values(this.data.chats)) {
+      for (const m of chat.recent) {
+        const list = Array.isArray(m.media_paths) ? m.media_paths : [];
+        if (!list.length) continue;
+        const kept = list.filter((p) => {
+          if (wanted && !wanted.has(p)) return true;
+          try { return fs.existsSync(p); } catch { return false; }
+        });
+        if (kept.length !== list.length) {
+          m.media_paths = kept;
+          changed = true;
+        }
+      }
+    }
+    if (changed) this.save();
+    return changed;
   }
 
   inboxGroups(kind = "todo", limit = 40, preview = 3) {
@@ -389,6 +458,8 @@ export class State {
         msg_id: last.msg_id || "",
         sender_name: last.sender_name || "",
         content: last.content || "",
+        msg_type: last.msg_type || "",
+        app_link: last.app_link || "",
         kinds: [...new Set(matches.map((m) => m.kind))],
         preview: latestFirst.slice(0, preview).map((m) => ({ ...m })),
       });

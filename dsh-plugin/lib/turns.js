@@ -7,119 +7,174 @@
  */
 import crypto from "node:crypto";
 import fs from "node:fs";
+import path from "node:path";
 
 import { chatKey } from "./state.js";
+import { MEDIA_ADAPTERS, MEDIA_LABELS, imageMediaType } from "./im.js";
 import * as workspaces from "./workspaces.js";
-import { MAX_PROFILE, SOFT_PROFILE, profileNeedsCompact } from "./profiles.js";
 
-const PROFILE_RE = /<!--\s*im-profile-update\s*\r?\n([\s\S]*?)\r?\n\s*-->/g;
 const PLAT_LABEL = { feishu: "飞书", wecom: "企业微信", dingtalk: "钉钉" };
 
 function nowSec() {
   return Date.now() / 1000;
 }
 
-function makeUserMessage(text) {
+/**
+ * 聊天正文/昵称是不可信数据：DSH 会扫描 source.kind === "user" 的整段文本，
+ * 空白边界的 `/name` 会被当成 skill 手势；客户正文不能触发别的 skill。
+ * 只改手势形状与 HTML 注释起始标记，URL、路径、分数不动。
+ */
+export function sanitizeUntrusted(text) {
+  return String(text == null ? "" : text)
+    .replace(/<!--/g, "<\u200b!--")
+    .replace(/(^|\s)\/([A-Za-z][A-Za-z0-9_-]*)(?=\s|$)/g, "$1\uFF0F$2");
+}
+
+async function makeUserMessage(text, extraParts = []) {
   return Object.freeze({
     id: crypto.randomUUID(),
     role: "user",
-    content: [{ type: "text", text }],
+    content: [{ type: "text", text }, ...extraParts],
     source: { kind: "user" },
   });
 }
 
-function textOfContent(content) {
-  if (typeof content === "string") return content;
-  if (!Array.isArray(content)) return "";
-  return content.map((c) => (c && c.type === "text" ? String(c.text || "") : "")).join("");
-}
-
-function formatMsgLine(m) {
+function formatMsgLine(m, mediaInfo = null, platform = "") {
   let text = String(m.content || "").replace(/\s+/g, " ").trim();
   if (!text) text = "（正文在线查）";
   if (text.length > 800) text = text.slice(0, 800) + "…";
-  const tag = m.kind === "out" ? "我" : (m.sender_name || "对方");
-  return `- [${m.ts || ""}] ${tag}: ${text}`;
+  text = sanitizeUntrusted(text);
+  const note = mediaNote(m, mediaInfo, platform);
+  let body = text;
+  if (note) {
+    const label = MEDIA_LABELS[m.msg_type] || "";
+    const bare = (label && text === label) || text === "（正文在线查）" ||
+      (m.msg_type === "file" && text.startsWith("[文件:"));
+    body = bare ? note : `${text} ${note}`;
+  }
+  const tag = sanitizeUntrusted(m.kind === "out" ? "我" : (m.sender_name || "对方"));
+  return `- [${m.ts || ""}] ${tag}: ${body}`;
 }
 
-export function buildPrompt(platform, chatName, chatId, recent, {
-  profilePath = "", profileText = "", interrupted = false,
-} = {}) {
-  const label = PLAT_LABEL[platform] || platform;
-  const parts = ["/cyber-im-avatar"];
-  if (interrupted) {
-    parts.push("（上一轮被新消息打断，以最新上下文为准；未完成的事重新判断。）");
+const ATTACH_REASON = {
+  over_limit: "超出本次附带上限",
+  too_large: "图片过大，未随载荷附带",
+  model_no_image: "当前模型不可读图",
+  no_attachments: "DSH 附件服务不可用",
+  unsupported_format: "图片格式不支持直接附带",
+  admit_failed: "附带失败",
+  missing_file: "本地文件已不存在",
+};
+
+function mediaRef(m, info, platform) {
+  if (info?.fp || (platform === "wecom" && String(m.msg_id || "").startsWith("fp_"))) {
+    return "按时间/发送者回查";
   }
-  parts.push("");
-  parts.push(`值守命中 · ${label} · ${chatName || chatId}`);
-  parts.push(`chat_id：${chatId}`);
-  parts.push("运行形态：DSH 插件壳（宿主内会话）。不要运行 listen_cli/bootstrap.py，不要写 ~/.im-standin。");
-  if (profilePath) parts.push(`画像文件：${profilePath}`);
-  if (String(profileText || "").trim()) {
-    let text = String(profileText).trim();
-    const compact = profileNeedsCompact(text);
-    if (compact.needed) {
-      const detail = compact.reason === "size"
-        ? `画像 ${(compact.bytes / 1024).toFixed(1)}KB`
-        : `历史结论 ${compact.bullets} 条（日期流水 ${compact.dated} 条）`;
-      parts.push(`（${detail}，需要整理：保留四段结构，合并重复，删除一次性/已失效，` +
-        "把按日期的流水改写成结论，历史结论控制在 20 条内；先整理到 8KB 以下，" +
-        "仍超 12KB 会被拒写。）");
-    }
-    parts.push("当前画像：");
-    parts.push(text);
+  const parts = [];
+  if (m.msg_id) parts.push(`msg_id: ${m.msg_id}`);
+  if (m.media_id) parts.push(`media_id: ${m.media_id}`);
+  return parts.join("，") || "msg_id 不可用";
+}
+
+function mediaNote(m, info, platform = "") {
+  if (!info || info.sticker) return "";
+  const label = MEDIA_LABELS[m.msg_type] || "[媒体]";
+  if (info.status === "unsupported") {
+    return `${label}（未适配；可用 CLI 取，${mediaRef(m, info, platform)}）`;
   }
-  parts.push("最近 10 条（本地只留指针，完整上下文在线查）：");
-  for (const m of recent.slice().sort((a, b) => (a.ts_epoch - b.ts_epoch))) {
-    parts.push(formatMsgLine(m));
+  if (info.status === "failed") {
+    return `${label}（下载失败；可用 CLI 取，${mediaRef(m, info, platform)}）`;
   }
-  parts.push("");
-  parts.push("按 skill 处理这通会话。监听、水位、唤醒由插件负责，不要挂监听。");
-  const needAttach = profileNeedsCompact(profileText).needed;
-  parts.push(needAttach
-    ? "画像更新：当前画像需要整理；本轮即使没有新事实，也要在最终回复末尾附整理后的完整画像，格式："
-    : "画像更新：本轮若学到长期有效的新事实，在最终回复末尾附一个完整的新画像 Markdown，格式：");
-  parts.push("<!-- im-profile-update\n<完整画像>\n-->");
-  parts.push(needAttach
-    ? "只写结论，不写聊天原文、其他会话的事实或凭据。"
-    : "没有新事实就不要附；不要写聊天原文、其他会话的事实或凭据。");
-  parts.push("画像维护：历史结论只放仍然有效的结论，不按日期记流水；同一事实合并/覆盖，" +
-    "旧结论被推翻就改原句；历史结论控制在 20 条内。");
-  return parts.join("\n");
+  const files = (info.files || []).filter((f) => f && f.path);
+  if (!files.length) return `${label}（未适配；可用 CLI 取，${mediaRef(m, info, platform)}）`;
+  const images = files.filter((f) => f.kind === "image");
+  const others = files.filter((f) => f.kind !== "image");
+  const pieces = [];
+  const attached = images.filter((f) => f.attached);
+  const detached = images.filter((f) => !f.attached);
+  if (attached.length) {
+    pieces.push(`[图片]（已随载荷附带；本地：${attached.map((f) => f.path).join("、")}）`);
+  }
+  if (detached.length) {
+    const why = ATTACH_REASON[detached[0].reason] || "未随载荷附带";
+    pieces.push(`[图片]（本地：${detached.map((f) => f.path).join("、")}；${why}）`);
+  }
+  if (others.length) {
+    const labels = others.map((f) => {
+      if (f.kind === "audio") return "[语音]";
+      if (f.kind === "video") return "[视频]";
+      return f.name ? `[文件: ${f.name}]` : label;
+    });
+    pieces.push(`${[...new Set(labels)].join("、")}（本地：${others.map((f) => f.path).join("、")}）`);
+  }
+  return pieces.join("；") || `${label}（本地：${files.map((f) => f.path).join("、")}）`;
+}
+
+const MEDIA_HINT = "媒体说明：已适配的图片随载荷附带，文件/音视频给了本地路径；" +
+  "标注“未适配/下载失败”的再按 skill 用 CLI 取，拿不到就如实说，不要猜。";
+
+function mediaFor(map, msgId) {
+  if (!map) return null;
+  if (typeof map.get === "function") return map.get(msgId) || null;
+  return map[msgId] || null;
+}
+
+function mediaSize(map) {
+  if (!map) return 0;
+  if (typeof map.size === "number") return map.size;
+  return Object.keys(map).length;
+}
+
+function payloadNote(count) {
+  return `本次只追加这 ${Math.max(1, Number(count) || 0)} 条新消息；更早上下文按 skill 在线拉。`;
 }
 
 /**
- * 同一会话的后续唤醒：只追加这次触发的新消息。
- * skill 入口、画像正文、最近 10 条与完整监听说明已在首轮载荷里，不重复；
- * 只留一行运行形态，避免会话被压缩后误挂监听。
+ * 一次唤醒 = 只追加本次新到的消息。首轮多一行 `/cyber-im-avatar` 入口；
+ * 后续不带入口，但始终带平台/对象、chat_id、运行形态与画像路径。
+ * 画像正文由 agent 自己按路径读，插件不注入、不解析、不回写。
  */
-export function buildDeltaPrompt(platform, chatName, chatId, messages, {
-  interrupted = false, profileNote = "",
+export function buildWakePrompt(platform, chatName, chatId, messages, {
+  profilePath = "", interrupted = false, firstTurn = false, mediaMap = null,
 } = {}) {
   const label = PLAT_LABEL[platform] || platform;
+  const safeName = sanitizeUntrusted(chatName || chatId);
   const parts = [];
+  if (firstTurn) parts.push("/cyber-im-avatar");
   if (interrupted) {
     parts.push("（上一轮被新消息打断，以最新上下文为准；未完成的事重新判断。）");
   }
-  parts.push(`值守命中 · ${label} · ${chatName || chatId} · 新消息`);
+  parts.push(`值守命中 · ${label} · ${safeName} · 新消息`);
   parts.push(`chat_id：${chatId}`);
-  parts.push("运行形态：DSH 插件壳；不要挂监听，不要写 ~/.im-standin。");
-  if (profileNote) parts.push(profileNote);
+  parts.push("运行形态：DSH 插件壳；监听、水位、唤醒由插件负责，不要挂监听，不要运行 listen_cli/bootstrap.py。");
+  if (profilePath) {
+    parts.push(`画像文件：${profilePath}（起草前自己读；学到长期事实就直接改这个文件，插件不代写。）`);
+  }
   for (const m of messages.slice().sort((a, b) => (a.ts_epoch - b.ts_epoch))) {
-    parts.push(formatMsgLine(m));
+    parts.push(formatMsgLine(m, mediaFor(mediaMap, m.msg_id), platform));
+  }
+  if (mediaSize(mediaMap)) parts.push(MEDIA_HINT);
+  parts.push(payloadNote(messages.length));
+  if (firstTurn) {
+    parts.push("按 skill 处理这通会话；画像只改当前对象这一份，不要写 state.json / env.json / media。");
   }
   return parts.join("\n");
 }
 
 export class Turns {
-  constructor({ state, profiles, poller = null, logger = console }) {
+  constructor({ state, profiles, poller = null, im = null, media = null, logger = console }) {
     this.state = state;
     this.profiles = profiles;
     this.poller = poller;
+    this.im = im;
+    this.media = media;
     this.logger = logger;
     this.sessionController = null;
     this.sessions = null;
     this.registry = null;
+    this.attachments = null;
+    this.llm = null;
+    this.permissionPresets = null;
     this.ctx = null;
     this.active = new Map();
     this.starting = new Map();
@@ -128,7 +183,29 @@ export class Turns {
   setHost(hostCtx, rootCtx = null) {
     this.sessionController = hostCtx.sessionController || hostCtx.get?.("sessionController") || null;
     this.sessions = hostCtx.sessions || hostCtx.get?.("sessions") || null;
+    this.attachments = hostCtx.attachments || hostCtx.get?.("attachments") || null;
+    this.llm = hostCtx.llm || hostCtx.get?.("llm") || null;
+    this.permissionPresets = hostCtx.permissionPresets || hostCtx.get?.("permissionPresets") || null;
     this.ctx = rootCtx || hostCtx;
+  }
+
+  /**
+   * 画像由 agent 自己写，但 DSH 默认的 workspace-write 只允许写会话工作区。
+   * 只有显式开启 dsh.full_access 时才把当前会话切到内置的 danger-full-access
+   *（完整文件访问 + 不弹审批）；失败不阻塞 turn，由 agent 如实报告写不进去。
+   */
+  applySessionPermission(agent) {
+    if (!this.state.data.config?.dsh?.full_access) return;
+    if (!agent?.session) return;
+    if (!this.permissionPresets?.set) {
+      this.logger.warn?.("[im-standin] dsh.full_access=true，但宿主没有 permissionPresets；画像可能写不进去");
+      return;
+    }
+    try {
+      this.permissionPresets.set(agent.session, "danger-full-access");
+    } catch (e) {
+      this.logger.warn?.(`[im-standin] 设置 danger-full-access 失败: ${e?.message || e}`);
+    }
   }
 
   setRegistry(registry) {
@@ -155,7 +232,7 @@ export class Turns {
     return this.active.has(chatKey(platform, chatId));
   }
 
-  async wake(chat, { interrupted = false, retry = false, postTurn = false, batch = null } = {}) {
+  async wake(chat, { interrupted = false, batch = null } = {}) {
     if (!this.hostReady()) {
       return { ok: false, reason: "host_unavailable" };
     }
@@ -173,7 +250,7 @@ export class Turns {
     if (starting) {
       try { await starting; } catch { /* 上一次启动失败也继续 */ }
     }
-    const run = this._wake(chat, { interrupted, retry, postTurn, batch });
+    const run = this._wake(chat, { interrupted, batch });
     this.starting.set(key, run);
     try {
       return await run;
@@ -188,6 +265,9 @@ export class Turns {
     if (!current.watching || current.blocked) {
       return { ok: false, reason: "not_watching" };
     }
+    // 插件只追加消息：没有新消息/待回就不起 turn，也不生成空载荷。
+    const messages = this.wakeMessages(current, batch);
+    if (!messages.length) return { ok: false, reason: "no_pending" };
     const old = this.active.get(key);
     if (old) {
       old.cancelled = true;
@@ -224,23 +304,20 @@ export class Turns {
       this.state.setSession(current, sid);
       this.state.save();
 
-      const prof = this.profiles.read(current.platform, current.chat_id, current.name);
-      // 同一 session 已经吃过完整载荷：后续只追加新消息。skill 入口、画像和
-      // 最近 10 条都在会话历史里，不重复注入。
-      const delta = current.prompt_session === sid
-        ? this.deltaMessages(current, batch) : [];
-      const prompt = delta.length
-        ? buildDeltaPrompt(current.platform, current.name, current.chat_id, delta, {
-          interrupted, profileNote: this.profileNote(prof),
-        })
-        : buildPrompt(current.platform, current.name, current.chat_id, current.recent, {
-          profilePath: prof.path, profileText: prof.text, interrupted,
-        });
+      // 配置开启时才把会话放进 danger-full-access；agent 需要它直接写画像。
+      this.applySessionPermission(agent);
+      const profilePath = this.profiles.pathFor(current.platform, current.chat_id, current.name);
+      const firstTurn = current.prompt_session !== sid;
+      const media = await this.resolveMedia(current, messages, agent);
+      const prompt = buildWakePrompt(current.platform, current.name, current.chat_id, messages, {
+        profilePath, interrupted, firstTurn, mediaMap: media.map,
+      });
+      const message = await makeUserMessage(prompt, media.parts);
+      handle.promptId = message.id;
       const effective = session.cwd || "";
       this.active.set(key, handle);
       handle.done = this.runTurn(handle, {
-        chat: current, agent, sid, cwd: effective, prompt,
-        profile: { path: prof.path, mtime: prof.mtime, name: current.name },
+        chat: current, agent, sid, cwd: effective, message,
       });
       this.state.save();
       return { ok: true, started: true, turn_id: turnId, state: "running" };
@@ -258,7 +335,7 @@ export class Turns {
     }
   }
 
-  deltaMessages(chat, batch) {
+  wakeMessages(chat, batch) {
     const seen = new Set();
     const out = [];
     const add = (m) => {
@@ -275,14 +352,212 @@ export class Turns {
     return out.sort((a, b) => (Number(a.ts_epoch) || 0) - (Number(b.ts_epoch) || 0));
   }
 
-  profileNote(prof) {
-    const compact = profileNeedsCompact(prof?.text);
-    if (!compact.needed) return "";
-    const detail = compact.reason === "size"
-      ? `${(compact.bytes / 1024).toFixed(1)}KB`
-      : `历史结论 ${compact.bullets} 条（日期流水 ${compact.dated} 条）`;
-    return `（画像 ${detail}，需要整理；回写前按 skill「服务对象画像」整理到 8KB 以下、` +
-      "历史结论 ≤20 条）";
+  imageLimits() {
+    const lim = this.attachments?.imageLimits || {};
+    const maxOne = Number(lim.maxImageBytes) || 10 * 1024 * 1024;
+    return {
+      maxImages: Number(lim.maxImagesPerMessage) || 4,
+      maxOne,
+      maxTotal: Number(lim.maxMessageImageBytes) || maxOne,
+      mediaTypes: Array.isArray(lim.mediaTypes) ? lim.mediaTypes : null,
+    };
+  }
+
+  existingFiles(row) {
+    const out = [];
+    for (const p of (row?.media_paths || [])) {
+      try {
+        if (fs.statSync(p).isFile()) out.push(p);
+      } catch { /* 已清理/手删，下面重下 */ }
+    }
+    return out;
+  }
+
+  kindForPath(file, msgType) {
+    if (imageMediaType(file)) return "image";
+    if (msgType === "audio" || msgType === "voice") return "audio";
+    if (msgType === "media" || msgType === "video") return "video";
+    return "file";
+  }
+
+  infoFromPaths(message, row, paths) {
+    const msgType = String(row.msg_type || message.msg_type || "");
+    const files = paths.map((p) => {
+      let size = 0;
+      try { size = fs.statSync(p).size; } catch { /* size unknown */ }
+      return {
+        path: p, kind: this.kindForPath(p, msgType), name: path.basename(p),
+        size, attached: false, reason: "",
+      };
+    });
+    return {
+      status: "ok", files,
+      fp: (String(message.platform || "") === "wecom" || String(row.platform || "") === "wecom")
+        && String(message.msg_id || "").startsWith("fp_"),
+    };
+  }
+
+  /** 4 张图 / 10MB 上限（优先用 DSH attachments.imageLimits）；超出的只给路径。 */
+  applyBudget(files, budget, limits, candidates) {
+    for (const f of files) {
+      if (f.kind === "image") {
+        if (budget.images >= limits.maxImages) f.reason = "over_limit";
+        else if (f.size > limits.maxOne) f.reason = "too_large";
+        else if (budget.imageBytes + f.size > limits.maxTotal) f.reason = "over_limit";
+        else {
+          budget.images += 1;
+          budget.imageBytes += f.size;
+          candidates.push(f);
+        }
+      }
+      budget.totalBytes += f.size;
+    }
+    if (budget.totalBytes > limits.maxTotal * 2) budget.exhausted = true;
+  }
+
+  async modelSupportsImages(agent) {
+    if (!this.llm?.resolveModelInfo) return false;
+    let sel = null;
+    // 首选 DSH 给这个 agent 装配 prompt 时用的 exact selection；新建会话也拿得到。
+    try {
+      const picked = this.sessionController?.selectionFor?.(agent)?.current;
+      if (picked?.provider && picked?.model) sel = { provider: picked.provider, model: picked.model };
+    } catch { /* fall through */ }
+    if (!sel) {
+      try {
+        const header = agent?.session?.requestHeader?.();
+        const cfg = header?.config;
+        if (cfg?.provider && cfg?.model) sel = { provider: cfg.provider, model: cfg.model };
+      } catch { /* fall through */ }
+    }
+    if (!sel) {
+      try {
+        const dm = this.ctx?.get?.("agentDefaultModel");
+        const picked = dm?.currentSelection?.();
+        if (picked?.provider && picked?.model) sel = { provider: picked.provider, model: picked.model };
+      } catch { /* fall through */ }
+    }
+    if (!sel) return false;
+    try {
+      const info = await this.llm.resolveModelInfo(sel.provider, sel.model);
+      return Array.isArray(info?.inputModalities) && info.inputModalities.includes("image");
+    } catch {
+      return false;
+    }
+  }
+
+  async admitImages(candidates, agent) {
+    if (!candidates.length) return [];
+    if (!this.attachments?.admitPromptContent) {
+      for (const f of candidates) f.reason = "no_attachments";
+      return [];
+    }
+    if (!(await this.modelSupportsImages(agent))) {
+      for (const f of candidates) f.reason = "model_no_image";
+      return [];
+    }
+    const limits = this.imageLimits();
+    const parts = [];
+    for (const f of candidates) {
+      const mediaType = imageMediaType(f.path);
+      if (!mediaType || (limits.mediaTypes && !limits.mediaTypes.includes(mediaType))) {
+        f.reason = "unsupported_format";
+        continue;
+      }
+      let data;
+      try {
+        data = fs.readFileSync(f.path).toString("base64");
+      } catch {
+        f.reason = "missing_file";
+        continue;
+      }
+      try {
+        const admitted = await this.attachments.admitPromptContent([{
+          type: "image", mediaType, data, name: f.name,
+        }]);
+        const image = (admitted || []).find((p) => p?.type === "image");
+        if (!image) throw new Error("no_image_part");
+        parts.push(image);
+        f.attached = true;
+      } catch (e) {
+        f.reason = "admit_failed";
+        this.logger.warn?.(`[im-standin] image admit failed: ${e?.message || e}`);
+      }
+    }
+    return parts;
+  }
+
+  /**
+   * 只处理本次唤醒要交给 agent 的消息：sticker 只标表情；适配类型下载并
+   * 复用已有 media_paths；未适配/失败只留标记。图片在模型支持时转成
+   * DSH image block，其余给本地路径。
+   */
+  async resolveMedia(chat, messages, agent) {
+    const map = new Map();
+    const list = (messages || []).filter((m) => m && m.msg_type && m.msg_type !== "text");
+    if (!list.length) return { map, parts: [] };
+    const limits = this.imageLimits();
+    const budget = { images: 0, imageBytes: 0, totalBytes: 0, exhausted: false };
+    const candidates = [];
+    let changed = false;
+    for (const m of list) {
+      const msgType = String(m.msg_type || "");
+      if (msgType === "sticker") {
+        map.set(m.msg_id, { sticker: true });
+        continue;
+      }
+      const row = chat.recent.find((x) => x.msg_id === m.msg_id) || m;
+      const fp = chat.platform === "wecom" && String(m.msg_id || "").startsWith("fp_");
+      if (!MEDIA_ADAPTERS[chat.platform]?.types.includes(msgType)) {
+        map.set(m.msg_id, { status: "unsupported", fp });
+        continue;
+      }
+      const existing = this.existingFiles(row);
+      if (existing.length) {
+        if (existing.length !== (row.media_paths || []).length) {
+          row.media_paths = existing;
+          changed = true;
+        }
+        const info = this.infoFromPaths(m, row, existing);
+        info.fp = fp;
+        this.applyBudget(info.files, budget, limits, candidates);
+        map.set(m.msg_id, info);
+        continue;
+      }
+      if (budget.exhausted) {
+        map.set(m.msg_id, { status: "failed", fp, error: "budget" });
+        continue;
+      }
+      const download = await this.im?.downloadMedia?.(chat.platform, chat.chat_id, m, {
+        timeoutMs: 20000,
+      }) || { ok: false, files: [], error: "im_unavailable" };
+      if (download.sticker) {
+        map.set(m.msg_id, { sticker: true });
+        continue;
+      }
+      if (download.no_media) continue; // 纯文字 post：不下载也不提示 CLI
+      if (download.unsupported) {
+        map.set(m.msg_id, { status: "unsupported", fp, error: download.error });
+        continue;
+      }
+      if (!download.ok || !download.files?.length) {
+        map.set(m.msg_id, { status: "failed", fp, error: download.error });
+        continue;
+      }
+      const files = download.files.map((f) => {
+        let size = 0;
+        try { size = fs.statSync(f.path).size; } catch { /* unknown */ }
+        return { ...f, size, attached: false, reason: "" };
+      });
+      this.applyBudget(files, budget, limits, candidates);
+      const info = { status: "ok", files, fp, error: download.error || "" };
+      map.set(m.msg_id, info);
+      row.media_paths = files.map((f) => f.path);
+      changed = true;
+    }
+    if (changed) this.state.save();
+    const parts = await this.admitImages(candidates, agent);
+    return { map, parts };
   }
 
   async agentFromCreated(created) {
@@ -368,7 +643,7 @@ export class Turns {
     return { agent, sessionId: sid, cwd: effective };
   }
 
-  runTurn(handle, { chat, agent, sid, cwd, prompt, profile }) {
+  runTurn(handle, { chat, agent, sid, cwd, message }) {
     return new Promise((resolve) => {
       const key = chatKey(chat.platform, chat.chat_id);
       const timeoutSec = Math.max(30, Number(this.state.data.config?.dsh?.timeout) || 600);
@@ -377,7 +652,6 @@ export class Turns {
       let lastTurnStart = null;
       let turnStarted = false;
       let turnNumber = null;
-      const texts = [];
       let settled = false;
       let timer = null;
       let stop = () => {};
@@ -413,15 +687,13 @@ export class Turns {
           if (chat.prompt_session !== sid) {
             chat.prompt_session = sid;
           }
-          try { this.applyProfile(chat, result.text, profile); }
-          catch (e) { this.logger.warn?.(`[im-standin] profile write failed: ${e?.message || e}`); }
           this.state.bumpTurn(chat, true);
           handle.lastOk = true;
           handle.lastReason = "";
           handle.lastAt = nowSec();
           // 跑完立刻补拉一次：把 agent 自己发出的消息收回来，pending 才能闭合。
           setTimeout(() => {
-            this.poller?.pollChat(chat.platform, chat.chat_id, { force: true, postTurn: true })
+            this.poller?.pollChat(chat.platform, chat.chat_id, { force: true })
               .catch((e) => this.logger.warn?.(`[im-standin] post-turn poll: ${e?.message || e}`));
           }, 1500).unref?.();
         } else {
@@ -470,24 +742,17 @@ export class Turns {
           }
           return;
         }
-        if (type === "assistant/message") {
-          if (!turnStarted) return;
-          if (turnNumber != null && event.data?.turn !== undefined && event.data.turn !== turnNumber) return;
-          texts.push(textOfContent(event.data?.message?.content ?? event.data?.content));
-          return;
-        }
         if (type === "turn/end") {
           if (!turnStarted || event.data?.turn !== turnNumber) return;
           const reason = event.data?.reason || { kind: "completed" };
           const kind = reason.kind || "completed";
-          const text = texts.join("\n").trim();
           if (kind === "completed") {
-            finish({ ok: true, reason: "", text, session_id: sid, cwd, ms: Date.now() - startedAt });
+            finish({ ok: true, reason: "", session_id: sid, cwd, ms: Date.now() - startedAt });
           } else if (kind === "error") {
             const error = reason.error?.message || reason.error?.code || "error";
-            finish({ ok: false, reason: `error: ${error}`, text, session_id: sid, cwd, ms: Date.now() - startedAt });
+            finish({ ok: false, reason: `error: ${error}`, session_id: sid, cwd, ms: Date.now() - startedAt });
           } else {
-            finish({ ok: false, reason: kind, text, session_id: sid, cwd, ms: Date.now() - startedAt });
+            finish({ ok: false, reason: kind, session_id: sid, cwd, ms: Date.now() - startedAt });
           }
         }
       };
@@ -506,8 +771,6 @@ export class Turns {
         finish({ ok: false, reason: "cancelled" });
         return;
       }
-      const message = makeUserMessage(prompt);
-      handle.promptId = message.id;
       try {
         agent.followup(message);
       } catch (e) {
@@ -544,33 +807,6 @@ export class Turns {
     try {
       handle.agent?.cancel?.({ kind: "user" }, { keepInbox: true });
     } catch { /* best effort */ }
-  }
-
-  applyProfile(chat, text, profile) {
-    const hits = [...String(text || "").matchAll(PROFILE_RE)];
-    if (!hits.length) return;
-    const body = (hits[hits.length - 1][1] || "").trim();
-    if (!body) return;
-    const newBytes = Buffer.byteLength(body, "utf8");
-    if (newBytes > MAX_PROFILE) {
-      this.logger.warn?.(`[im-standin] profile ${chat.platform}:${chat.chat_id}: 超过 12KB，未写入（请先整理）`);
-      return;
-    }
-    const current = this.profiles.read(chat.platform, chat.chat_id, chat.name);
-    const oldBytes = Buffer.byteLength(current.text || "", "utf8");
-    const res = this.profiles.write(chat.platform, chat.chat_id, chat.name, body, profile?.mtime || 0);
-    if (!res.ok) {
-      this.logger.warn?.(`[im-standin] profile ${chat.platform}:${chat.chat_id}: ${res.reason}`);
-      return;
-    }
-    if (current.path && oldBytes > SOFT_PROFILE && newBytes < oldBytes) {
-      try {
-        const dest = this.profiles.archive(current.path, current.text);
-        if (dest) this.logger.info?.(`[im-standin] profile archived -> ${dest}`);
-      } catch (e) {
-        this.logger.warn?.(`[im-standin] profile archive failed: ${e?.message || e}`);
-      }
-    }
   }
 
   cancel(platform, chatId, reason = "cancelled") {
