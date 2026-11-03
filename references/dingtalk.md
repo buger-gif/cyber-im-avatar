@@ -1,5 +1,8 @@
 # 钉钉平台指南（dws / DingTalk Workspace CLI）
 
+> **DSH 插件壳不支持钉钉。** 插件只加载飞书 / 企微 adapter；存量钉钉会话保留在 state 里
+> 但不会拉取、不会唤醒。要用钉钉请走独立 skill 形态（下面的命令仍然有效）。
+>
 > 出问题先看 [troubleshooting.md](troubleshooting.md)（§B 未登录最常见），
 > 或 `dws doctor --json`（自带 `hint` 字段，按提示做即可）/ `python3 scripts/doctor.py dingtalk`。
 

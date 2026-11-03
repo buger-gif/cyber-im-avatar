@@ -41,8 +41,9 @@
 | 编号 | 标题 | 状态 |
 | --- | --- | --- |
 | 0001 | 不开本地端口：宿主同源路由 + stdio（传输层由 0005 修订） | implemented |
-| 0002 | 拉取节奏：分钟级下限 10 分钟，群默认不拉 | implemented |
+| 0002 | 拉取节奏：分钟级下限 10 分钟，群默认不拉（快车道由 0007 修订） | implemented |
 | 0003 | 收件箱按会话聚合，不逐条堆叠 | implemented |
 | 0004 | 服务对象画像用文件，消息只留指针 | implemented |
 | 0005 | Node 单进程：file state + 宿主 live turn | implemented |
 | 0006 | 富媒体由插件取回，图片随唤醒载荷交付 | proposed |
+| 0007 | 值守快车道：候选 60 秒，发现仍 10 分钟 | implemented |

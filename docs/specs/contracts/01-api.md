@@ -15,7 +15,7 @@
 | GET | `/api/status` | — | 总状态：counts、poll、platforms、dsh、instances、turns、running |
 | GET | `/api/inbox` | `filter`、`limit`、`group` | 收件箱；默认按会话聚合，`group=msg` 逐条；只从每会话最近 10 条派生 |
 | GET | `/api/inbox/cleanup` | — | 把未值守会话的待回批量标成 ignored |
-| GET | `/api/thread` | `platform`、`chat_id`、`fetch`、`limit` | 会话正文：默认在线拉 30 条；`fetch=1` 先补拉分类；失败回退本地 10 条并带 `offline` / `error` |
+| GET | `/api/thread` | `platform`、`chat_id`、`fetch`、`limit` | 会话正文：默认在线拉 30 条；`fetch=1` 先补拉分类（**只读，不唤醒**；冷却中直接用本地指针）；失败回退本地 10 条并带 `offline` / `error` |
 | GET | `/api/chats` | — | 会话清单，含 `blocked` / `timer` / `timed` / `watching` / `dsh_session` / `session_turns` / `turn_state`；工作区字段见下 |
 | GET | `/api/send` | `platform`、`chat_id`、`text`、`msg_id` | 以本人身份发出；不写发送历史 |
 | GET | `/api/state` | `platform`、`msg_id`、`state`、`chat_id` | 改最近 10 条里的一条：new / opened / replied / ignored；更早的返回 `not_cached` |
@@ -25,7 +25,7 @@
 | GET | `/api/search/chats` | `platform`、`q` | 按名字搜会话（找群用）；`name` 为空时表示没有可读群名，不回退 `chat_id` |
 | GET | `/api/chat/timer` | `platform`、`chat_id`、`timer` | 定时拉开关：-1 / 0 / 1；群默认 -1 |
 | GET | `/api/chat/block` | `platform`、`chat_id`、`blocked` | 屏蔽 / 取消屏蔽（屏蔽即不同步） |
-| GET | `/api/poll` | `platform`、`chat_id` | 立即拉一轮；带会话=只拉它并同步返回，不带=后台跑整轮，结果从 `/api/status` 的 `poll.last_result` 读 |
+| GET | `/api/poll` | `platform`、`chat_id` | 立即拉一轮；带会话=只拉它并同步返回，不带=后台跑整轮，结果从 `/api/status` 的 `poll.last_result` 读。受 `cooldown_sec` 约束；post-turn 补拉是唯一 `force` 例外 |
 | GET | `/api/pause` | `paused` | 暂停 / 恢复定时轮询（不取消在飞 turn） |
 | GET | `/api/doctor` | — | 体检：身份、拉取通路、DSH 宿主、skill 路径、拉取节奏 |
 | GET | `/api/config` | — | 读配置；模型/凭据全在 DSH，插件无 api_key 可回传 |
@@ -34,6 +34,7 @@
 | GET | `/api/chat/workspace` | `platform`、`chat_id`、`workspace`（别名 `path`） | 给值守会话绑 / 解绑工作区；必须显式给键，空串=解绑 |
 | GET | `/api/chat/session` | `platform`、`chat_id` | 查当前绑定的 DSH 会话与工作区 |
 | GET | `/api/logs` | — | 最近轮询错误与在飞 turn 快照（不落盘、不进日志正文） |
+| GET | `/api/digest` | `date`（`YYYY-MM-DD`，默认今天） | 只读 `~/.im-standin/digest/<date>.md`（agent 维护）：`{ok, date, exists, text, mtime}`；日期非法 `bad_date`；不建目录、不解析、不统计 |
 
 ### `/api/chats` 的工作区字段
 

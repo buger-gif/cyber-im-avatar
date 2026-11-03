@@ -44,7 +44,7 @@ for (const [k, v] of Object.entries(DEFAULT_CONFIG)) {
     for (const [k2, v2] of Object.entries(v)) flat[`${k}.${k2}`] = v2;
   } else flat[k] = v;
 }
-const RANGE_KEYS = ["poll.interval_min", "poll.dm_recent", "poll.per_chat_limit",
+const RANGE_KEYS = ["poll.interval_min", "poll.fast_sec", "poll.dm_recent", "poll.per_chat_limit",
   "poll.backfill_hours", "poll.cooldown_sec", "dsh.timeout"];
 function extreme(value) {
   const cfg = { poll: {}, dsh: {} };

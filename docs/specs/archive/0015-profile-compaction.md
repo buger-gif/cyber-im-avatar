@@ -4,6 +4,9 @@
 > 编号: 0015
 > 版本: 0.8.x
 > 关联: `docs/specs/archive/0012-profile-file-and-message-pointers.md`
+>
+> 后续：DSH 插件已由 `docs/specs/active/0018-agent-owned-profile.md` 改为 agent 直接读写
+> 画像；插件不再在 prompt 里强制整理、不代写、不归档。独立形态与 `--compact` 不变。
 
 ## 背景
 

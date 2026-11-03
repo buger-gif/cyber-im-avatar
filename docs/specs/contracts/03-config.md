@@ -13,15 +13,17 @@
 
 | 键 | 默认 | 取值 | 说明 |
 | --- | --- | --- | --- |
-| `poll.interval_min` | `10` | 整数 10–240 | 定时轮间隔（分钟）。低于 10 一律抬到 10 |
-| `poll.dm_scope` | `"recent"` | `recent` / `all` / `watched` | 保留的展示口径；实际候选只看 `watching` 私聊 |
-| `poll.dm_recent` | `20` | 1–200 | 会话列表扫描条数 |
-| `poll.per_chat_limit` | `10` | 1–50 | 单会话每轮拉多少条；本地仍只留最新 10 条 |
-| `poll.backfill_hours` | `72` | 0–720 | 首次见到会话时的回看窗口（在线拉取用） |
+| `poll.interval_min` | `10` | 整数 10–240 | 慢车道：会话发现与 `whoami` 的间隔（分钟），也是快车道的上限。低于 10 一律抬到 10 |
+| `poll.fast_sec` | `60` | `0` 或 20–600 | 快车道：只拉值守候选的间隔（秒）；`0` = 关闭，退回单一慢车道；不超过 `interval_min*60` |
+| `poll.dm_scope` | `"recent"` | `recent` / `all` / `watched` | **legacy no-op**：只为老配置可加载；候选规则固定为只看 `watching` 私聊 |
+| `poll.dm_recent` | `20` | 1–200 | 会话列表扫描条数；飞书 `--page-size` 实际夹到 100 |
+| `poll.per_chat_limit` | `10` | 1–50 | 单会话每轮拉多少条；飞书走原生 `--limit`，企微只有时间窗、拿到后客户端截断；本地仍只留最新 10 条 |
+| `poll.backfill_hours` | `72` | 0–720 | 首次见到会话时的回看窗口；企微 `fetchThread` 用它（上限 7 天），飞书没有时间回看参数、不传 |
 | `poll.refresh_chatlist` | `true` | true / false | 每轮刷一次会话列表（只取元数据） |
-| `poll.cooldown_sec` | `20` | 0–600 | 点开 / 手动的冷却，防连点 |
-| `platforms` | `["feishu", "wecom"]` | 平台名数组 | 值守哪些平台 |
+| `poll.cooldown_sec` | `20` | 0–600 | 点开 / 手动 `/api/poll` 都生效，防连点；post-turn 补拉例外 |
+| `platforms` | `["feishu", "wecom"]` | 平台名数组 | 插件壳只接受 `feishu` / `wecom`；其他值被忽略，存量钉钉会话保留但不拉取 |
 | `dsh.timeout` | `600` | 30–3600 秒 | 单轮 live turn 最长等多久；超时按失败处理并取消 |
+| `dsh.full_access` | `false` | true / false | 为 true 时把值守会话切到 DSH 内置 `danger-full-access`，agent 可直接写 `~/.im-standin/profiles`；默认关闭，开启后 agent 能写整个 home |
 
 > 退役：`llm.*`、`reply.*`、`reply_guard`、`ui.*`、`seed_targets`、`dsh.profile`、
 > `dsh.pre_draft` 不再有消费者，`normalizeConfig()` 直接丢掉；老 `panel.json` 里残留不影响行为。
@@ -34,6 +36,7 @@
 | 键 | 下限 | 上限 |
 | --- | --- | --- |
 | `poll.interval_min` | 10 | 240 |
+| `poll.fast_sec` | 0 | 600 |
 | `poll.dm_recent` | 1 | 200 |
 | `poll.per_chat_limit` | 1 | 50 |
 | `poll.backfill_hours` | 0 | 720 |

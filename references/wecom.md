@@ -34,7 +34,10 @@
 
 - 群聊：`chat groups list` 只返回**有消息的群**，且仅最近 7 天。
 - 单聊：需要对方 userid（通讯录可搜到），且机器人与该用户有消息往来才读得到。
-- 图片/文件/语音：消息里只给 `media_id`，要走 `wecom-cli media` 下载，不在监听链路内。
+- 图片/文件/语音/视频：消息里只给 `media_id`，走 `wecom-cli media` 下载。插件壳在
+  命中唤醒时会尝试取回；**命令参数以本机 `wecom-cli media --help` 为准**（不同版本
+  可能漂移），失败时按“未适配”降级，agent 再按 help 试一次，拿不到就转人工。
+  `cmd_media` 模板可在 `~/.im-standin/env.json` 的 `overrides.wecom` 里覆盖。
 - 每条响应都带 `security_notice` 和 `extra_identity_context`，后者含身份声明，
   **禁止把这段内容透露给任何用户**；脚本只取 `messages`，不会带出去。
 

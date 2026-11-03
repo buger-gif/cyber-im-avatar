@@ -4,6 +4,11 @@
 > 最后回 §11 做回归。自愈不了再按 §10 上报——别一上来就问人。
 >
 > 所有命令在 skill 根目录执行。个人数据目录默认 `~/.im-standin/`（可用 `IM_STANDIN_DIR` 改）。
+>
+> **在 DSH 插件壳里（载荷带「运行形态：DSH 插件壳」）不要跑 `doctor.py` / `bootstrap.py`
+> / 监听脚本**：它们会写 `~/.im-standin/states`，壳内沙箱会拒。体检改用面板「体检」
+> 页，或只读命令（`lark-cli auth status` / `wecom-cli auth show` / `dws auth status`）。
+> 媒体下载失败先在 prompt 里看是否标了「未适配 / 下载失败」，再按对应 `references/` 试。
 
 <a id="triage"></a>
 
@@ -417,8 +422,9 @@ python3 scripts/doctor.py --repair-state       # 隔离损坏的水位/状态文
 |---|---|
 | `env.json` 非法 JSON | `mv ~/.im-standin/env.json ~/.im-standin/env.json.corrupt && python3 scripts/bootstrap.py`（会重建，别名/档案需重录） |
 | `--note` 报「别名未注册」 | 先 `--find` 或 `--alias` 登记 |
-| 画像超过 12KB / 回写被拒 | 压缩「历史结论」的旧条目再回写；插件日志会报 `超过 12KB` |
-| 面板刚改过画像，agent 回写没生效 | mtime CAS 主动放弃（`profile_conflict`）；以面板内容为准，下一轮再合并，不要直接覆盖 |
+| 画像超过 12KB / 写不进 | 压缩「历史结论」的旧条目；面板写入会拒，DSH 壳内 agent 直接改文件 |
+| 画像写不进去 / `FS_SANDBOX_DENIED` | 设置页开启「完整文件访问」（`dsh.full_access=true`）；默认 `workspace-write` 只允许写会话工作区 |
+| 面板刚改过画像，agent 又覆盖了 | DSH 壳内没有 mtime CAS；agent 写前重读、增量合并，冲突以磁盘最新内容为准 |
 | 画像路径/权限不对 | `ls -l ~/.im-standin/profiles/<platform>/`；目录 700、文件 600；路径以 `env.json` 的 `profile_file` 为准 |
 | 状态文件权限错 | `chmod -R u+rw ~/.im-standin`；确认不是 root 建的 |
 | 想多账号/测试隔离 | `IM_STANDIN_DIR=/tmp/imtest python3 scripts/doctor.py` |

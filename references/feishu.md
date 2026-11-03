@@ -23,7 +23,22 @@
 | 拉会话历史 | `lark-cli im +chat-messages-list --chat-id oc_xxx --order desc --limit 10 --as user` |
 | 按人拉历史 | `lark-cli im +chat-messages-list --user-id ou_xxx --order desc --limit 10 --as user` |
 | 批量补正文 | `lark-cli im +messages-mget --message-ids om_aaa,om_bbb --as user` |
+| 下载图片/文件 | `lark-cli im +messages-resources-download --message-id om_xxx --file-key img_xxx --type image` |
+| 一次取回附图 | `lark-cli im +messages-mget --message-ids om_xxx --download-resources --as user` |
 | 回复 | `lark-cli im +messages-send --chat-id oc_xxx --msg-type text --as user --text "..."` |
+
+## 媒体资源
+
+- 正文里的资源标记：图片是 `img_xxx`（可能显示为图片标记或 `[image: img_xxx]`），文件/音频/视频
+  `<file key="file_xxx" .../>`；`+messages-resources-download` 的 `--type` 只有
+  `image` 和 `file`，音频/视频也走 `file`。sticker 不能下载。
+- `--output` 只允许落在 **cwd、`/tmp`、`~/files`** 之内；插件把子进程 cwd 指到媒体目录，
+  用相对路径落盘，不把任意绝对路径直接传给 CLI。
+- 解析不到资源键时用 `+messages-mget --message-ids <om_...> --download-resources`
+  只取这一条；资源会写进 `./lark-im-resources/`，输出里的 `resources[]` 带
+  `{message_id,key,type,local_path,size_bytes}`。合并转发的资源必须用顶层容器
+  消息 ID 取，子项 ID 会被拒。
+- 下载需要 `im:message:readonly`；权限不足时单条资源失败，不阻断消息拉取。
 
 ## 三条"不要"
 

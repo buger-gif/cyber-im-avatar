@@ -1,6 +1,6 @@
 # 0017 值守可靠性：唤醒正确性与富媒体交付
 
-> 状态: 待实施
+> 状态: 实施中
 > 编号: 0017
 > 版本: 0.9.0
 > 关联: `docs/specs/contracts/01-api.md`、`docs/specs/contracts/02-storage.md`、`docs/specs/contracts/03-config.md`、`docs/architecture/02-data.md`、`docs/architecture/03-runtime.md`、`docs/decisions/proposed/0006-media-handoff.md`
@@ -276,9 +276,9 @@ sticker 是已知类型但没有可下载文件：prompt 只标 `[表情]`，不
 
 - [ ] `whoami` 失败 + 本人消息 → 不唤醒、记错误、`doctor` 显示该平台暂停；恢复授权后下一轮恢复。
 - [ ] 两条消息同为 epoch 1000 → 首轮 baseline 后，第二条进入 batch 并只唤醒一次。
-- [ ] 唤醒 prompt 固定含“载荷只列最近 N 条，密集会话先拉 30 条”的提示。
+- [ ] 唤醒 prompt 固定含“本次只追加 N 条新消息，更早上下文按 skill 在线拉”的提示。
 - [ ] 本人“张三”，mentions 指向“张三丰” → 不唤醒；mentions 精确指向本人 → 唤醒。
-- [ ] prompt 里客户正文含 ` /lark-doc`、`<!-- im-profile-update` → 不出现可触发的 `/lark-doc` 手势与 profile block；首行 `/cyber-im-avatar` 仍在。
+- [ ] prompt 里客户正文含 ` /lark-doc`、`<!--` → 不出现可触发的 `/lark-doc` 手势，`<!--` 被转义；首行 `/cyber-im-avatar` 仍在。
 - [ ] 飞书 image 消息 → 插件下载到媒体目录；唤醒 user message 的 `content` 含一个 `image` block；文本行标“已随载荷附带”并给本地路径；不要求 agent 再调 CLI。
 - [ ] 飞书 post 含 2 张内嵌图 → 两张都下载并按 DSH imageLimits attach；超出上限时只 attach 允许的张数，其余给路径/CLI 提示。
 - [ ] 飞书 file/audio/video → 下载到 `~/.im-standin/media/...`，prompt 给本地路径；`state.json` 只有 `media_paths`，没有二进制。

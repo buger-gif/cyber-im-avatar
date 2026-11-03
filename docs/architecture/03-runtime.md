@@ -13,9 +13,9 @@ dsh web                     # 侧边栏底部出现「IM 值守」
 dsh plugin --profile web add dsh-cyber-im-avatar
 ```
 
-插件只在**带 `webServer` 能力的 profile**（`web` / 桌面）里挂路由并启动轮询；
-`headless` 里 `mount()` 不挂路由，也不起轮询。宿主服务通过 `ctx.inject` 拿：
-`workspaceRegistry`、`sessionController`、`sessions`、`webServer`。
+插件只在**带 `webServer` 能力的 profile**（`web` / 桌面）里挂路由并启动轮询；`headless`
+不挂路由也不起轮询。宿主服务通过 `ctx.inject` 拿 `workspaceRegistry`、`sessionController`、
+`sessions`、`webServer`，以及可选的 `attachments` / `llm`（缺了按文本+本地路径降级）。
 
 ## 唤醒：同一个 agent，不再起子进程
 
@@ -24,32 +24,38 @@ poller 判定命中
   └─ turns.wake(chat)
        ├─ 先取消同会话在飞 turn（agent.inbox.remove / agent.cancel）
        ├─ resolveAgent(dsh_session) 或 create({workspaceId|cwd})
-       ├─ 首轮/换会话 → 完整载荷；同会话后续 → 只追加新消息（buildDeltaPrompt）
-       ├─ agent.followup(createUserMessage(prompt))
+       ├─ 每次唤醒只追加本次新消息（首轮多一行 skill 入口，buildWakePrompt）
+       ├─ 只对本批待回消息下载媒体：图片 → attachments image block，
+       │  文件/音视频 → 本地路径；未适配/失败只留标记
+       ├─ agent.followup(createUserMessage(prompt, imageParts))
        ├─ ctx.sessions.flush(agent.session)
-       └─ 听 session/event：turn/start → user/message(id 匹配) → assistant/message → turn/end
+       └─ 听 session/event：turn/start → user/message(id 匹配) → turn/end
 ```
 
 - 一通 IM 会话 ↔ 一个 DSH 会话（`chats.dsh_session`），默认永久复用；
   用户点「新建会话」才换。显式工作区目录存在但未在 DSH 登记时，仍先尝试恢复旧会话，
   只有 cwd 漂移才在正确工作区重开。
-- 会话已经消费过完整载荷（`chats.prompt_session == dsh_session`）后，后续唤醒只把
-  本次 `batch` 里的新消息追加进去；画像、最近 10 条与 skill 入口留在会话历史里。
-  换会话或重置会清空 `prompt_session`，下一次重新发完整载荷。
+- 每次唤醒只发本次新消息；`chats.prompt_session == dsh_session` 时省掉
+  `/cyber-im-avatar` 入口，换会话/重置会清空，下一次重新带入口。
+- 画像只给路径：`~/.im-standin/profiles/<platform>/<chat_id>.md` 由 agent 自己读、自己改；
+  插件不解析回复、不代写。`dsh.full_access=true` 时插件在 followup 前把会话切到
+  `danger-full-access`，否则 `workspace-write` 会拒绝写画像目录。
 - 因为就是宿主里的 live agent，DSH UI 打开同一会话不再是锁问题；只有**另一个
   DSH 宿主持有写锁**时才报 `session_locked_other_host`。所以同一份 state 只让一个宿主写。
-- `turn/start` 在 `user/message` 之前到达是 DSH 的正常顺序；匹配 prompt id 后
-  取当前 turn 号，等同一 turn 的 `turn/end`。assistant 正文取 `event.data.message.content`。
-- 单轮上限 `dsh.timeout`（默认 600s）；超时/取消都 `agent.cancel`，失败下一轮有新消息再喊。
-- turn 成功后在回复末尾找 `im-profile-update` 块，12KB 上限 + mtime CAS 写回画像。
+- `turn/start` 先于 `user/message` 是正常顺序；匹配 prompt id 后取 turn 号，等同一 turn 的 `turn/end`；不再收集 assistant 正文。
+- 单轮上限 `dsh.timeout`（默认 600s），超时/取消都 `agent.cancel`；没有 pending 的手动唤醒返回 `no_pending`。
+- **点开只读**：`/api/thread?fetch=1` 只补拉分类，不唤醒、不推进水位；显式唤醒只走
+  `POST /api/chat/wake`。手动 `/api/poll` 受 `cooldown_sec` 约束，post-turn 补拉是唯一 `force` 例外。
+- 富媒体失败只降级：下载超时/失败/未适配写进 prompt；媒体 7 天/单会话 200MB 清理。
 
 ## 配置
 
 键、默认值、取值范围以 `docs/specs/contracts/03-config.md` 为准（测试对账）。
-这里只说三件容易误解的：
 
 - `poll.interval_min` 有硬下限 10 分钟，填 1 会被夹回 10——不是在防备谁，是不想把 IM 接口当靶子打。
-- `poll.dm_scope` 是保留的展示口径；实际候选只看 `watching` 私聊，群只有 `timer=1`。
+- `poll.dm_scope` 是 legacy no-op：老配置还能加载，实际候选只看 `watching` 私聊，群只有 `timer=1`。
+- `dsh.full_access` 默认 `false`；为 `true` 时插件把值守会话切到 `danger-full-access`，agent 才能写工作区外的画像。这是唯一放开沙箱的开关。
+- 平台白名单只有 `feishu` / `wecom`；`platforms` 里其他值被忽略，存量钉钉会话保留不拉取。
 - 风险拦截在 skill 铁律里（钱、承诺、对外群由 agent 停下等本人），插件不再有 `reply_guard` 开关。
 
 ## 日志与排障入口

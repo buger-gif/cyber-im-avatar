@@ -5,14 +5,18 @@
 
 ## 更新时间
 
-2026-11-03（v0.8.0 已发布；分身页签收敛 + 面板配色 + 监听缓存续期 + 画像整理 + 唤醒增量，未发版）
+2026-11-03（v0.8.0 已发布；值守可靠性、画像归 agent、每日关注摘要、重开会话入口、值守快车道，均未发版）
 
 ## 最近批次
 
 | 日期 | 主题 | 证据 |
 | --- | --- | --- |
-| 2026-11-03 | 唤醒载荷增量追加：首轮完整，同会话后续只发新消息（spec 0016） | `lib/turns.js`、`lib/state.js`、`lib/poller.js` |
-| 2026-11-03 | 画像 8KB/12KB 上限 + 整理归档（spec 0015） | `lib/profiles.js`、`lib/turns.js`、`scripts/bootstrap.py` |
+| 2026-11-03 | 每日关注摘要：插件只读 `GET /api/digest`，面板「关注」页签，日报归 agent（spec 0019） | `lib/app.js`、`web/panel.js`、`SKILL.md`、`docs/architecture/02-data.md` |
+| 2026-11-03 | 值守快车道：候选 60 秒、发现 10 分钟；`poll.fast_sec` 可关（spec 0022 / ADR 0007） | `lib/poller.js`、`lib/state.js`、`web/panel.js`、`tests/poller.test.mjs` |
+| 2026-11-03 | 设计铁律 8「插件只做确定性搬运」+ 重开会话入口（spec 0020） | `AGENTS.md`、`web/panel.js`、`lib/client.js` |
+| 2026-11-03 | SKILL.md 去重：只留运行时协议，排障/字段漂移指回 references | `SKILL.md`、`scripts/doc_budgets.json`、`docs/audits/2026-11-03-skill-md.md` |
+| 2026-11-03 | 插件只追加消息，画像由 agent 自己读写；`dsh.full_access`（spec 0018） | `lib/turns.js`、`lib/state.js`、`lib/profiles.js`、`lib/index.js`、`tests/turns.test.mjs` |
+| 2026-11-03 | 值守可靠性：last_msg_id、whoami 暂停、@ 判定、富媒体交付（spec 0017） | `lib/poller.js`、`lib/im.js`、`lib/turns.js`、`lib/media.js`、`tests/*.test.mjs` |
 | 2026-11-03 | 监听脚本 55 分钟主动退出续上下文缓存（skill 形态） | `scripts/listen_core.py`、`README.md`、`tests/run_tests.py` |
 | 2026-11-03 | 面板配色改用 DSH 语义 token（浅/深两套跟随宿主） | `web/panel.js`、`lib/client.js` |
 | 2026-11-03 | 分身页签只留守值会话 + 搜人/搜群合并（spec 0014） | `web/panel.js`、`lib/im.js`、`tests/im.test.mjs` |
@@ -21,28 +25,32 @@
 | 2026-11-02 | 工作区接线修正（spec 0011）：加入值守带工作区、换区即解绑 | `lib/workspaces.js`、`tests/turns.test.mjs` |
 | 2026-11-02 | 插件收缩为分身壳（spec 0004）：命中唤醒 DSH 会话、示例永久复用 | `docs/specs/archive/0004-skill-shell.md` |
 | 2026-11-02 | 外观跟随 DSH 浅/深色 + 删除浮层只留右侧栏（spec 0007/0008） | `lib/client.js`、`docs/specs/archive/0007-*.md` |
-| 2026-11-01 | v0.7.0 发版：bypass token 手动发布 + 索引切 npm 源 | 历史发版提交、registry latest=0.7.0 |
-| 2026-11-01 | 文档体系 + 防劣化闸门（spec 0002） | `scripts/gate.sh`、`tests/test_docs.py` |
 
 ## 当前断点
 
-- 唤醒载荷改为增量（spec 0016）：`chats.prompt_session` 标记已消费完整载荷的 session；同会话后续只发新消息，换会话/重置回到完整载荷。
-- 画像新增软上限 8KB / 硬上限 12KB（spec 0015）：超 8KB、历史结论 >20 条或日期流水
-  >8 条时，prompt 要求当轮整理成结论；缩小时旧版归档到 `<画像>.history.md`；
-  独立形态用 `bootstrap.py --compact` 兜底。
-- 监听脚本新增 55 分钟缓存续期（未发版，仅 skill 形态）：到点退出 3，agent 重挂那次
-  模型调用续上下文缓存；`--cache-refresh-min 0` 关闭。DSH 插件形态不走脚本，暂未加心跳。
-- 分身页签已收敛（spec 0014，未发版）：只列 `watching && !blocked` 的会话；顶部一个
-  输入框同时搜人/搜群，结果只显示名称、部门与「群/私聊」，不再出现 `open_id` / `chat_id`。
-  飞书搜人的可读字段是 `localized_name`，已在 `lib/im.js` 映射；`/api/search` 新增
-  `chat_id`（优先 `p2p_chat_id`）与 `department` 两个兼容字段。`lib/client.js` 已重建，
-  截图走查 `/tmp/im-service-search.png`（演示假数据）。
-- 面板配色已改跟 DSH 主题 token（未发版）：`--bg/--panel/--fg/--line/--accent/--danger/
-  --warn/--ok` 都取 `--dsw-alias-*`，深色只换 fallback；主按钮、焦点环、消息气泡、
-  toast、平台头像一并换到 DSH 调色板。独立预览页注入真实 token 后浅色解析
-  `bg=#fff fg=#0f1115`、深色 `bg=#151517 panel=#232324`；窄栏截图
-  `/tmp/im-narrow-light.png`、`/tmp/im-narrow-dark.png`。`lib/client.js` 已重建，
-  3080 刷新后生效。
+- 每日关注摘要（0019）与重开会话入口（0020），均未发版：插件只有 `GET /api/digest` 一次
+  只读（日期校验、不建目录、不解析），摘要归 agent 按 `SKILL.md §值守日报` 写
+  `~/.im-standin/digest/`，面板「关注」页签显示原文；按钮改「重开会话」并移到 DSH 会话行。
+  视觉与真实写盘演练待人工验（沙箱起不了临时 DSH：`~/.dsh/profiles` EPERM）。
+- 未发版改动已按 turns / poller / panel / docs 四个主题提交，工作区干净、未 push；
+  下一步是发版评审（0.9.0、Trusted Publisher、market 索引），见 `docs/implementation/runbooks/publish.md`。
+- 值守快车道（spec 0022 / ADR 0007，未发版）：快车道每 `fast_sec`（默认 60 秒）只拉候选，
+  不刷会话列表、不写 runtime；慢车道仍 10 分钟做发现。`fast_sec=0` 可关；体检页给候选数与
+  调用量估算。`node --test` 101 条全过。
+- 值守可靠性（spec 0017，未发版）：`chats.last_msg_id` 与 epoch 双水位（同秒不漏）、
+  `whoami` 失败暂停该平台、有 mentions 只认 ID、聊天正文过 `sanitizeUntrusted()`；
+  命中唤醒时下载本批媒体，图片经 DSH `attachments.admitPromptContent()` 成 image block，
+  文件/音视频给本地路径，未适配/失败才提示 CLI；媒体落 `~/.im-standin/media/`，
+  4 张图/10MB/单条 20 秒上限，7 天/200MB 清理。点开只读、手动 poll 受冷却、
+  插件壳只留飞书/企微；`node --test` 97 条全过。真实客户媒体命中仍待验。
+- 插件只追加消息（spec 0018）：每次唤醒只发本次新消息；首轮多一行 `/cyber-im-avatar`，
+  之后不再重复入口。画像正文不再进 prompt，插件不解析 `im-profile-update`、不代写、
+  不压缩、不归档；agent 按载荷里的画像路径自己读写。`dsh.full_access`（默认 false）开启后
+  插件把值守会话切到 `danger-full-access`。进程被杀后 `prompt_session`/`recent` 落盘，
+  下一轮继续追加 pending/新消息，不重建完整载荷。
+- 监听脚本 55 分钟主动退出续缓存（仅 skill 形态，未发版）：退出码 3，重挂续上下文；DSH 形态未加心跳。
+- 分身页签收敛（spec 0014）：只列 `watching && !blocked`；搜人/搜群一个框；飞书搜人用 `localized_name`。
+- 面板配色已改跟 DSH 主题 token（未发版）：浅/深只换 fallback，`lib/client.js` 已重建。
 - 工作区代码 = **v0.8.0（已 push + npm 发布 + tag 已推；历史已压成单提交并脱敏）**：插件只剩 DSH 宿主里的 Node 模块
   `lib/index.js`（同源路由/token/skill 安装/服务注入）→ `app.js`（API）→
   `poller.js` + `im.js`（拉取）→ `turns.js`（live turn）→ `state.js` / `profiles.js`
@@ -59,7 +67,7 @@
   （旧 `session-****` 清空，`watching`/工作区 `业务工作区` 保留），等下一条客户
   消息命中时由 live turn 创建新会话；示例对象 A当前 `pending=0`。inbox 有 50 条历史待回
   （旧库迁移存量，未逐条清理）。
-- 测试：`node --test` 51 条全过（state/profiles/im/poller/turns/app/migration）；
+- 测试：`node --test` 97 条全过（state/profiles/im/poller/turns/app/migration）；
   `tests/test_docs.py` 契约对账已改为 Node 探针。
 - `main` 已 push，公开历史是一根脱敏提交；`v0.8.0` 指向 npm 发布后的收尾提交。
   npm 线上 latest 已是 `dsh-cyber-im-avatar@0.8.0`（发布后约 3 分钟可查），
@@ -82,8 +90,9 @@
 
 ## 下一步
 
-1. 等示例对象 A下一条消息命中 → live turn（新会话）→ post-turn 拉取闭环；期间不要主动给
-   真实客户发消息，除非用户在草稿确认流里同意。
+1. 等示例对象 A下一条消息命中 → live turn（新会话）→ post-turn 拉取闭环；确认 agent
+   直接改画像、会话权限已是 `danger-full-access`。期间不要主动给真实客户发消息，
+   除非用户在草稿确认流里同意。
 2. 下一版发版前登记 Trusted Publisher；本次 token 到期后不要再依赖它。
 3. 按需把 0011/0012/0013 归档；改文档时保持 `CHANGELOG.md`、README 与 market 索引一致。
 

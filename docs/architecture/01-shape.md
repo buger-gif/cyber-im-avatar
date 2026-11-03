@@ -87,7 +87,7 @@ token 用 `randomBytes(24)` 在进程启动时生成，经 `webserver/index-inje
 | `lib/state.js` | `state.json` 归一化、收件箱派生、原子写 | 网络与轮询 |
 | `lib/poller.js` | 轮询调度、拉取节奏、分类、唤醒判定 | 平台命令拼装 |
 | `lib/im.js` | 平台适配（拉列表 / 拉消息 / 发消息 / 搜索 / 身份） | 调度策略 |
-| `lib/turns.js` | live turn 状态机、prompt、画像回写、取消 | 平台命令行细节 |
+| `lib/turns.js` | live turn 状态机、append-only prompt、会话权限、取消 | 平台命令行细节、画像内容 |
 | `lib/profiles.js` / `workspaces.js` / `sessions.js` | 画像文件、DSH 工作区只读适配、会话路径换算 | 轮询 |
 
 依赖方向是单向的：`app → poller → {state, im, turns}`；`turns → profiles/workspaces`。
