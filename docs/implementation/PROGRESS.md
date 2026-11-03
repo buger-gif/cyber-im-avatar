@@ -5,8 +5,8 @@
 
 ## 更新时间
 
-2026-11-03（0.9.0 的实现与验收已全部完成，未发版；真实客户命中与真实平台媒体待命中；
-钉钉已真机命中，发送只到 dry-run）
+2026-11-03（0.9.0 已定稿并推 main，等 v0.9.0 tag 与 CI 发布；真实客户命中与真实平台
+媒体待命中；插件壳已支持钉钉（dws），真发仍只到 dry-run）
 
 ## 最近批次
 
@@ -24,16 +24,18 @@
 | 2026-11-03 | 插件只追加消息、画像归 agent、`dsh.full_access`（spec 0018） | `lib/turns.js`、`lib/state.js`、`lib/profiles.js` |
 | 2026-11-03 | 值守可靠性：双水位、whoami 暂停、@ 判定、富媒体交付（spec 0017） | `lib/poller.js`、`lib/im.js`、`lib/turns.js`、`lib/media.js` |
 | 2026-11-03 | 钉钉真机：登录 → 取 userId → 真实会话命中 → 起草（发送未执行）；修 `+recent-conversations` 的 `data.conversations` 路径 | `scripts/bootstrap.py`、`references/dingtalk.md` |
+| 2026-11-03 | 插件壳支持钉钉（spec 0023）：dws adapter、平台开关、体检页三平台与手动刷新 | `lib/im.js`、`lib/app.js`、`web/panel.js` |
 | 2026-11-02 | 插件重写为 Node 单进程（spec 0013）：state.json + live turn | `dsh-plugin/lib/`、`scripts/migrate-state.mjs` |
 
 ## 当前断点
 
 - **0.9.0 代码面已完成**：`docs/specs/active/` 已清空；本轮按 panel / 验收归档 / 收尾
-  三组主题本地提交（含后续修正），工作区干净、未 push；已有会话的后续醒来只发消息行，
-  完整上下文只在首轮载荷里出现。0013、0017–0022 全部逐条对勾后
+  三组主题本地提交（含后续修正），工作区干净、已推 main；已有会话的后续醒来只发消息行，
+  完整上下文只在首轮载荷里出现。0013、0017–0023 全部逐条对勾后
   `git mv` 进 `docs/specs/archive/`，归档表已登记。ADR 0006 已从 proposed 移到 implemented。
-- **未发版**：`dsh-plugin/package.json` 仍是 0.8.0；`CHANGELOG.md` 的「未发布」已记录
-  0013/0017–0022 的用户可见变化。不要在没有发版动作时改版本号。
+- **发版进行中**：`dsh-plugin/package.json`、`CHANGELOG.md` 顶部小节与 `v0.9.0` tag
+  统一为 0.9.0；npm 走 Trusted Publisher，推 tag 后由 CI 发布。npm 上确认 0.9.0
+  之后才提交 `market/index.json`，顺序不能反。
 - **验证环境**：3080 使用 `IM_STANDIN_DIR=/tmp/im-standin-accept` 的隔离状态，只有合成会话
   `oc_e2e_local_only`；web profile 已 link 本地插件。**没有向真实客户外发**，也没有拉真实消息。
 - **合成 live turn**：`chatWake` 创建 `session-76a20026…` → turn/end → `session_turns=1`、
@@ -62,22 +64,23 @@
 
 ## 挂账（按优先级）
 
-1. **0.9.0 发版**：登记 Trusted Publisher（`buger-gif/cyber-im-avatar` + `publish.yml`），
-   按 `docs/implementation/runbooks/publish.md` 改版本、跑全量 gate、tag、推 npm，
-   再单独提交 `market/index.json`。本次不提前动 `package.json`。
+1. **0.9.0 发布收尾**：Trusted Publisher 已登记；推 `v0.9.0` 后确认 CI 发布成功、
+   `npm view` 拿到 0.9.0，再单独提交 `market/index.json` 指向该版本。
 2. **真实客户 live turn / 真实平台媒体**：0013 与 0017 的合成验证已做，但真实飞书/企微
    图片、文件、语音、视频尚未命中；等用户在场或指定测试会话时补，不要主动外发。
 3. **历史待回清理**：旧库迁移带来的约 50 条 pending 是否在「收件箱 → 清理」一次，待用户拍板。
 4. **0.5.0 屏蔽的 UI 端到端截图**：功能已过测试，截图验证仍中断。
-5. **钉钉发送与真人闭环**：只到 dry-run。真发前要定 `--ai-tag` 口径（默认给消息打 AI 标识）；
-   再找一个真人会话跑完「命中 → 草稿 → 发送 → 重挂」。
+5. **钉钉真发与真人闭环**：插件已支持轮询 / 唤醒 / 发送，但真实发送仍只到 dry-run。
+   真发前要定 `--ai-tag` 口径（默认给消息打 AI 标识）；再找一个真人会话跑完
+   「命中 → 草稿 → 发送 → 重挂」。
 
 ## 下一步
 
-1. 按发版 runbook 发 0.9.0；发版前再跑 `bash scripts/gate.sh` 全量。
+1. 推 `v0.9.0` tag，等 CI 发布；npm 上可见后更新 `market/index.json`。
 2. 等真实客户消息/媒体命中；只观察，不主动给真实客户发消息。
 3. 用户确认后清理历史待回；清理前不要当作用户已同意。
-4. 钉钉补完真人闭环：给一个真人会话跑「命中 → 草稿 → 发送 → 重挂」，先定 `--ai-tag` 口径。
+4. 钉钉补完真人闭环：在环境里启用钉钉，给一个真人会话跑「命中 → 草稿 → 发送 → 重挂」，
+   先定 `--ai-tag` 口径。
 
 ## 规则性提醒
 

@@ -105,6 +105,44 @@ export const ADAPTERS = {
     order: "asc",
     lookback_min: 120,
   },
+  dingtalk: {
+    cli: "dws",
+    // profile list 未登录时返回空数组，必须把「拿不到 ID」当未登录，不能吃缓存。
+    cmd_whoami: ["profile", "list"],
+    f_self_id: [["profiles", 0, "userId"], ["data", "profiles", 0, "userId"],
+      ["current", "userId"]],
+    f_self_name: [["profiles", 0, "name"], ["profiles", 0, "nick"], ["current", "name"]],
+    require_fresh_self: true,
+    cmd_list: ["chat", "+chat-messages", "--group", "{chat_id}", "--limit", "{limit}"],
+    cmd_list_user: ["chat", "+chat-messages", "--user", "{chat_id}", "--limit", "{limit}"],
+    cmd_chats: ["chat", "+recent-conversations"],
+    f_chats: [["data", "conversations"], ["conversations"], ["items"], ["chats"]],
+    f_chat_id: [["conversationId"], ["openConversationId"], ["chat_id"]],
+    f_chat_name: [["name"], ["title"]],
+    f_chat_mode: [["type"], ["conversationType"], ["chat_type"]],
+    cmd_search: ["contact", "user", "search", "--query", "{q}"],
+    f_search_items: [["result"], ["users"], ["data", "result"], ["data", "users"]],
+    f_search_id: [["userId"], ["userid"], ["openDingTalkId"]],
+    f_search_name: [["name"], ["nick"], ["displayName"]],
+    // 钉钉单聊按 userId 读，会话列表里拿到的 conversationId 才走 --group。
+    f_search_chat: [["userId"], ["userid"]],
+    cmd_chat_search: ["chat", "+chat-search", "--query", "{q}"],
+    f_search_chats: [["chats"], ["conversations"], ["data", "conversations"],
+      ["result"], ["items"]],
+    cmd_send: ["chat", "+messages-send", "--as", "user", "--chat-id", "{chat_id}",
+      "--text", "{text}"],
+    cmd_send_user: ["chat", "+messages-send", "--as", "user", "--user", "{chat_id}",
+      "--text", "{text}"],
+    f_items: [["messages"], ["data", "messages"], ["result", "messages"]],
+    f_msg_id: [["messageId"], ["msgId"], ["message_id"], ["id"]],
+    f_sender: [["senderId"], ["sender", "userId"], ["sender", "id"], ["sender"]],
+    f_sender_name: [["senderName"], ["sender", "name"]],
+    f_content: [["text", "content"], ["text"], ["content"]],
+    f_time: [["createTime"], ["sendTime"], ["create_time"]],
+    f_type: [["msgType"], ["msgtype"], ["type"]],
+    f_mentions: [["mentions"], ["atUsers"]],
+    order: "desc",
+  },
 };
 
 export function loadEnv() {
@@ -148,6 +186,11 @@ export function parseTs(value) {
   const n = Number(s);
   if (Number.isFinite(n) && n > 0) return n / (s.length >= 13 ? 1000 : 1);
   return 0;
+}
+
+/** 钉钉会话 ID 形如 cidr…=（单聊 / 群都可能是它）；其它一律当 userId 走 --user。 */
+export function dingtalkIsConversation(chatId) {
+  return /^cidr/i.test(String(chatId || ""));
 }
 
 function timeWindow(lookbackMin) {
@@ -527,7 +570,12 @@ export class Adapter {
     let name = null;
     const { rc, json, raw } = await this.run(this.ad.cmd_whoami);
     if (rc === 0 && json) {
-      selfId = dig(json, this.ad.f_self_id) || selfId;
+      const fresh = dig(json, this.ad.f_self_id);
+      // 钉钉未登录时 profile list 返回空数组：不能拿缓存 self_id 冒充已登录。
+      if (this.ad.require_fresh_self && !fresh) {
+        return { ok: false, self_id: null, name, detail: redact(raw || "未登录", 300) };
+      }
+      selfId = fresh || selfId;
       name = dig(json, this.ad.f_self_name) || null;
       const tok = dig(json, this.ad.f_token_status);
       return { ok: true, self_id: selfId, name, detail: tok ? `token=${tok}` : "" };
@@ -541,8 +589,13 @@ export class Adapter {
   async fetchMessages(chatId, { limit = 10, lookbackMin } = {}) {
     const kw = { chat_id: chatId, limit: String(limit) };
     if (this.platform === "wecom") Object.assign(kw, timeWindow(lookbackMin || this.ad.lookback_min || 120));
-    const tmpl = this.platform === "feishu" && String(chatId).startsWith("ou_") && this.ad.cmd_list_user
-      ? this.ad.cmd_list_user : this.ad.cmd_list;
+    const id = String(chatId || "");
+    let tmpl = this.ad.cmd_list;
+    if (this.platform === "feishu" && id.startsWith("ou_") && this.ad.cmd_list_user) {
+      tmpl = this.ad.cmd_list_user;
+    } else if (this.platform === "dingtalk" && !dingtalkIsConversation(id) && this.ad.cmd_list_user) {
+      tmpl = this.ad.cmd_list_user;
+    }
     const { rc, json, raw } = await this.run(this.argv(tmpl, kw));
     if (rc !== 0 || !json) return { ok: false, messages: [], error: redact(raw || `rc=${rc}`) };
     const items = dig(json, this.ad.f_items);
@@ -598,7 +651,7 @@ export class Adapter {
     const chats = dig(json, this.ad.f_chats) || [];
     const out = [];
     for (const c of chats) {
-      const cid = c?.chat_id;
+      const cid = dig(c, this.ad.f_chat_id) || c?.chat_id;
       if (!cid) continue;
       const mode = String(dig(c, this.ad.f_chat_mode) || "");
       out.push({
@@ -614,6 +667,10 @@ export class Adapter {
     let args;
     if (this.platform === "wecom") {
       args = this.argv(this.ad.cmd_send, { chat_id: chatId, text: JSON.stringify({ content: text }) });
+    } else if (this.platform === "dingtalk") {
+      const tmpl = dingtalkIsConversation(chatId)
+        ? this.ad.cmd_send : (this.ad.cmd_send_user || this.ad.cmd_send);
+      args = this.argv(tmpl, { chat_id: chatId, text });
     } else if (String(chatId).startsWith("ou_") && this.ad.cmd_send_user) {
       args = this.argv(this.ad.cmd_send_user, { chat_id: chatId, text });
     } else {
@@ -628,14 +685,17 @@ export class Adapter {
   async search(q) {
     const { rc, json, raw } = await this.run(this.argv(this.ad.cmd_search, { q }));
     if (rc !== 0 || !json) return { ok: false, items: [], error: redact(raw || `rc=${rc}`) };
-    const items = dig(json, [["data", "users"], ["users"], ["data", "items"], ["items"]]) || [];
+    const items = dig(json, this.ad.f_search_items
+      || [["data", "users"], ["users"], ["data", "items"], ["items"]]) || [];
     // 飞书返回的是 localized_name；只回可读名称，找不到就留空，由面板隐藏，
     // 不把 open_id 当名字展示。
     const out = items.map((u) => ({
-      id: String(u?.open_id || u?.userid || u?.user_id || u?.id || ""),
-      chat_id: String(u?.p2p_chat_id || ""),
-      name: String(u?.localized_name || u?.name || u?.user_name || u?.nickname || ""),
-      department: String(u?.department || ""),
+      id: String(dig(u, this.ad.f_search_id)
+        || u?.open_id || u?.userid || u?.user_id || u?.id || ""),
+      chat_id: String(dig(u, this.ad.f_search_chat) || u?.p2p_chat_id || ""),
+      name: String(dig(u, this.ad.f_search_name)
+        || u?.localized_name || u?.name || u?.user_name || u?.nickname || ""),
+      department: String(dig(u, [["department"]]) || u?.department || ""),
     })).filter((x) => x.id);
     return { ok: true, items: out, error: "" };
   }
@@ -644,13 +704,14 @@ export class Adapter {
     if (!this.ad.cmd_chat_search) return { ok: false, items: [], error: "该平台不支持按群名搜索，请直接填 chat_id" };
     const { rc, json, raw } = await this.run(this.argv(this.ad.cmd_chat_search, { q, limit: String(limit) }));
     if (rc !== 0 || !json) return { ok: false, items: [], error: redact(raw || `rc=${rc}`) };
-    const chats = dig(json, this.ad.f_chats) || [];
+    const chats = dig(json, this.ad.f_search_chats || this.ad.f_chats) || [];
     const out = [];
     for (const c of chats) {
-      if (!c?.chat_id) continue;
+      const cid = dig(c, this.ad.f_chat_id) || c?.chat_id;
+      if (!cid) continue;
       const mode = String(dig(c, this.ad.f_chat_mode) || "");
       out.push({
-        chat_id: String(c.chat_id),
+        chat_id: String(cid),
         name: String(dig(c, this.ad.f_chat_name) || ""),
         kind: mode.toLowerCase().includes("p2p") ? "p2p" : "group",
       });

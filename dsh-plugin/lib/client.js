@@ -21,8 +21,7 @@ window.__ModuleLoader__.load({
   var PLAT = {
     feishu: { label: "飞书", short: "飞", color: "#4176e6" },
     wecom: { label: "企业微信", short: "企", color: "#22c55e" },
-    // 只用于显示存量会话：插件壳不加载钉钉 adapter，不提供加入入口。
-    dingtalk: { label: "钉钉（不支持）", short: "钉", color: "var(--fg3)" }
+    dingtalk: { label: "钉钉", short: "钉", color: "#1890FF" }
   };
   var KIND = {
     dm: { label: "私聊", color: "var(--dsw-alias-state-business-primary,#4176e6)" },
@@ -744,6 +743,7 @@ window.__ModuleLoader__.load({
             if (d[0] === "service") loadChats();
             if (d[0] === "targets") loadTargets();
             if (d[0] === "attention") loadDigest();
+            if (d[0] === "status") loadStatus().then(paint);
           }
         },
           h("span", { class: "ims-ico", html: icon(d[2], 15) }),
@@ -1615,7 +1615,7 @@ window.__ModuleLoader__.load({
     // 搜人 + 搜群：一个输入框、一个结果列表；只显示可读名称，不露 imid。
     function searchCard() {
       var sel = h("select", { class: "ims-select" });
-      ["feishu", "wecom"].forEach(function (k) {
+      ["feishu", "wecom", "dingtalk"].forEach(function (k) {
         sel.appendChild(h("option", { value: k, selected: S.search.platform === k }, PLAT[k].label));
       });
       var inp = h("input", { class: "ims-inp", placeholder: "输入名称搜索（如 张三）" });
@@ -1655,7 +1655,9 @@ window.__ModuleLoader__.load({
           result.appendChild(h("div", { class: "ims-hint",
             text: S.search.platform === "wecom"
               ? "没搜到。企业微信只能按名字搜通讯录里的联系人。"
-              : "没搜到。飞书只搜得到你可见的人、你是成员的群。" }));
+              : S.search.platform === "dingtalk"
+                ? "没搜到。钉钉只搜得到本组织通讯录里的同事和你是成员的群。"
+                : "没搜到。飞书只搜得到你可见的人、你是成员的群。" }));
           return;
         }
         items.forEach(function (x) {
@@ -2006,6 +2008,10 @@ window.__ModuleLoader__.load({
           st.paused ? "已暂停" : (st.running ? "值守中" : "未在跑"),
           h("span", { class: "ims-grow" }),
           h("button", {
+            class: "ims-btn ghost", type: "button", title: "重新取一次状态快照",
+            onclick: function () { loadStatus().then(paint); }
+          }, "刷新"),
+          h("button", {
             class: "ims-btn", type: "button",
             onclick: function () { api("/api/doctor").then(function (d) { S.doctor = d; paint(); }); }
           }, "跑一次体检")),
@@ -2032,18 +2038,31 @@ window.__ModuleLoader__.load({
 
       (st.platforms || []).forEach(function (p) {
         var meta = PLAT[p.platform] || {};
+        var enabled = p.enabled !== false;
         scroll.appendChild(h("div", { class: "ims-card" },
           h("div", { class: "ims-card-h" },
-            h("span", { class: "ims-dot", style: "background:" + (p.logged_in ? "var(--ok)" : "var(--danger)") }),
+            h("span", { class: "ims-dot", style: "background:" +
+              (!enabled ? "var(--fg3)" : (p.logged_in ? "var(--ok)" : "var(--danger)")) }),
             meta.label || p.platform,
             h("span", { class: "ims-grow" }),
-            h("span", { class: "ims-hint", text: p.logged_in ? "授权正常" : "需要重新授权" })),
-          h("div", { class: "ims-kv" }, h("span", { text: "本人" }),
+            enabled
+              ? h("span", { class: "ims-hint", text: p.logged_in ? "授权正常" : "需要重新授权" })
+              : h("button", {
+                  class: "ims-btn mini", type: "button",
+                  title: "启用后才会拉取；不启用不占轮询",
+                  onclick: function () {
+                    api("/api/platforms", { body: { platform: p.platform, enabled: true } })
+                      .then(function () { say("已启用" + (meta.label || p.platform)); return loadStatus(); })
+                      .then(paint);
+                  }
+                }, "启用")),
+          enabled ? h("div", { class: "ims-kv" }, h("span", { text: "本人" }),
             h("span", { title: p.self_id ? "本人 ID（排障用）：" + p.self_id : "",
-                        text: p.self_name || "-" })),
-          h("div", { class: "ims-kv" }, h("span", { text: "会话" }), h("span", { text: "发现 " + p.chats + " · 值守 " + p.watched })),
-          h("div", { class: "ims-kv" }, h("span", { text: "CLI" }), h("span", { text: p.cli || "-" })),
-          p.last_error ? h("div", { class: "ims-hint ims-err", text: p.last_error }) : null));
+                        text: p.self_name || "-" })) : null,
+          enabled ? h("div", { class: "ims-kv" }, h("span", { text: "会话" }), h("span", { text: "发现 " + p.chats + " · 值守 " + p.watched })) : null,
+          enabled ? h("div", { class: "ims-kv" }, h("span", { text: "CLI" }), h("span", { text: p.cli || "-" })) : null,
+          !enabled ? h("div", { class: "ims-hint", text: "未启用：不轮询、不唤醒；勾上启用后才检查授权。" }) : null,
+          enabled && p.last_error ? h("div", { class: "ims-hint ims-err", text: p.last_error }) : null));
       });
 
       if (S.doctor) {
@@ -2247,7 +2266,8 @@ window.__ModuleLoader__.load({
     // ---- 事件 -----------------------------------------------------------
     function tick() {
       if (S.dead) return;
-      loadStatus();
+      // 体检页是低频动作：不跟 60 秒轮询刷新，只在切页签或点按钮时取一次。
+      if (S.tab !== "status") loadStatus();
       if (!S.detail && S.tab === "inbox") loadInbox();
       if (S.tab === "service") loadChats();
       if (!S.detail && S.tab === "attention") loadDigest();

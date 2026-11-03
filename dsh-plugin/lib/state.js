@@ -16,8 +16,8 @@ import path from "node:path";
 export const MIN_INTERVAL_MIN = 10;
 export const MAX_INTERVAL_MIN = 240;
 export const RECENT_LIMIT = 10;
-/** 插件壳只加载这两个平台；钉钉等存量会话保留但不拉取。 */
-export const SUPPORTED_PLATFORMS = ["feishu", "wecom"];
+/** 插件壳支持的平台；config.platforms 是启用开关，缺省只开飞书 / 企微。 */
+export const SUPPORTED_PLATFORMS = ["feishu", "wecom", "dingtalk"];
 const DM_SCOPES = ["recent", "all", "watched"];
 
 export const DEFAULT_CONFIG = {

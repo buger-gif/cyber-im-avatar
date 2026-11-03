@@ -41,6 +41,7 @@ export const ROUTES = {
 
 export const POST_ROUTES = {
   "/api/config": "setConfig",
+  "/api/platforms": "setPlatform",
   "/api/targets/profile": "targetProfile",
   "/api/chat/session/reset": "chatSessionReset",
   "/api/chat/wake": "chatWake",
@@ -356,6 +357,14 @@ export class App {
     const watching = rawWatching === undefined || rawWatching === "" ? true : boolValue(rawWatching, true);
     chat.watching = watching;
     chat.target = true;
+    // 加入值守即视为启用该平台：钉钉默认不开，避免没装 dws 的用户每轮白跑一次 whoami。
+    if (watching) {
+      const enabled = this.state.data.config.platforms || [];
+      if (!enabled.includes(platform)) {
+        this.state.data.config.platforms =
+          SUPPORTED_PLATFORMS.filter((p) => p === platform || enabled.includes(p));
+      }
+    }
     if (!watching) this.turns.cancel(platform, chatId, "unwatch");
     try { this.profiles.ensure(platform, chatId, chat.name); } catch { /* profile is best effort */ }
     this.state.save();
@@ -503,6 +512,19 @@ export class App {
       out.notice = `插件壳不支持 ${ignored.join(" / ")}（独立 skill 形态可用），已忽略`;
     }
     return out;
+  }
+
+  async setPlatform(q, body = {}) {
+    const platform = String(pick(q, body, "platform") || "");
+    if (!platform) return { ok: false, reason: "bad_request" };
+    if (!this.supported(platform)) return this.unsupported(platform);
+    const enabled = boolValue(pick(q, body, "enabled"), false);
+    const cur = new Set(this.state.data.config.platforms || []);
+    if (enabled) cur.add(platform); else cur.delete(platform);
+    this.state.data.config.platforms = SUPPORTED_PLATFORMS.filter((p) => cur.has(p));
+    this.state.save();
+    this.poller.reload();
+    return { ok: true, platforms: this.state.data.config.platforms };
   }
 
   async workspaces() {

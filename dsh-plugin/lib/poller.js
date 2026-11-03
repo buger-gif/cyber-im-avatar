@@ -310,7 +310,7 @@ export class Poller {
     return out;
   }
 
-  /** state 里存在、但插件壳不加载的平台（钉钉存量）：保留数据，不拉取。 */
+  /** state 里存在、但插件不认识平台：保留数据，不拉取。 */
   legacyPlatforms() {
     const out = new Set();
     for (const c of this.state.listChats()) {
@@ -565,21 +565,24 @@ export class Poller {
   }
 
   async status() {
-    const platforms = this.cfg.platforms || ["feishu", "wecom"];
+    const enabledList = this.cfg.platforms || ["feishu", "wecom"];
     const pf = [];
-    for (const p of platforms) {
-      const ident = await this.whoami(p);
+    for (const p of SUPPORTED_PLATFORMS) {
+      const enabled = enabledList.includes(p);
       const rows = this.state.listChats().filter((r) => r.platform === p);
       const watched = rows.filter((r) => r.watching);
       const lastSyncs = rows.map((r) => r.last_sync).filter(Boolean);
       const errs = this.errors.filter((e) => e.platform === p);
       const meta = PLATFORM_META[p] || {};
+      // 未启用的平台不跑 whoami：没装 CLI 的人不该在体检页看到一条假的授权失败。
+      const ident = enabled ? await this.whoami(p) : { ok: false, self_id: null, name: null, detail: "未启用" };
       pf.push({
         platform: p, label: meta.label || p, color: meta.color || "#888",
+        enabled,
         cli: this.im.cliPath(p),
-        logged_in: !!ident.ok, self_id: ident.self_id || null,
+        logged_in: enabled && !!ident.ok, self_id: ident.self_id || null,
         self_name: ident.name || null, detail: ident.detail || "",
-        identity_paused: !(ident.ok && ident.self_id),
+        identity_paused: enabled && !(ident.ok && ident.self_id),
         chats: rows.length, watched: watched.length, service: watched.length,
         blocked: rows.filter((r) => r.blocked).length,
         last_sync: lastSyncs.length ? Math.max(...lastSyncs) : 0,
@@ -617,9 +620,17 @@ export class Poller {
 
   async doctor() {
     const checks = [];
-    for (const p of this.cfg.platforms || ["feishu", "wecom"]) {
-      const ident = await this.whoami(p, true);
+    const enabled = this.cfg.platforms || ["feishu", "wecom"];
+    for (const p of SUPPORTED_PLATFORMS) {
       const meta = PLATFORM_META[p] || {};
+      if (!enabled.includes(p)) {
+        checks.push({
+          platform: p, label: meta.label || p, level: "warn", name: "未启用",
+          detail: "在体检页启用后才会拉取；现在不占轮询、不跑 whoami",
+        });
+        continue;
+      }
+      const ident = await this.whoami(p, true);
       const ok = !!ident.ok && !!ident.self_id;
       checks.push({
         platform: p, label: meta.label || p, level: ok ? "ok" : "fail",
@@ -659,7 +670,7 @@ export class Poller {
       checks.push({
         platform: p, label: PLATFORM_META[p]?.label || p, level: "warn",
         name: "插件壳不支持",
-        detail: "插件壳只支持飞书 / 企微；存量会话保留但不拉取、不唤醒。钉钉请用独立 skill 形态。",
+        detail: "插件不认识这个平台；存量会话保留但不拉取、不唤醒。",
       });
     }
     const sp = skillPath();

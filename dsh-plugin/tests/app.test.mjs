@@ -285,24 +285,28 @@ test("wecom group can be added by display name + chat_id", async () => {
   assert.equal(out.body.chat.recent, undefined);
 });
 
-test("dingtalk is rejected by the plugin shell without deleting stored chats", async () => {
+test("dingtalk joins watch and auto-enables; unknown platforms are rejected", async () => {
   const { app, state } = makeApp();
   const legacy = state.ensureChat("dingtalk", "cid_legacy", { name: "钉钉旧会话", kind: "p2p" });
   legacy.watching = true;
   const out = await app.handle("/api/watch", "POST", null, {
     platform: "dingtalk", chat_id: "cid_new", name: "新会话", kind: "p2p",
   });
-  assert.equal(out.body.ok, false);
-  assert.match(out.body.reason, /插件壳不支持/);
-  assert.equal(state.getChat("dingtalk", "cid_new"), null);
-  assert.ok(state.getChat("dingtalk", "cid_legacy"));
-  const send = await app.handle("/api/send", "POST", null, {
-    platform: "dingtalk", chat_id: "cid_legacy", text: "x",
-  });
-  assert.equal(send.body.ok, false);
+  assert.equal(out.body.ok, true);
+  assert.ok(state.getChat("dingtalk", "cid_new"));
+  assert.ok(state.data.config.platforms.includes("dingtalk"));
 
-  const cfg = await app.handle("/api/config", "POST", null, { platforms: ["dingtalk"] });
-  assert.deepEqual(cfg.body.ignored_platforms, ["dingtalk"]);
-  assert.match(cfg.body.notice, /插件壳不支持/);
-  assert.deepEqual(state.data.config.platforms, []);
+  const off = await app.handle("/api/platforms", "POST", null,
+    { platform: "dingtalk", enabled: false });
+  assert.equal(off.body.ok, true);
+  assert.equal(state.data.config.platforms.includes("dingtalk"), false);
+
+  const on = await app.handle("/api/platforms", "POST", null,
+    { platform: "dingtalk", enabled: true });
+  assert.equal(on.body.ok, true);
+  assert.ok(state.data.config.platforms.includes("dingtalk"));
+
+  const bad = await app.handle("/api/watch", "POST", null, { platform: "slack", chat_id: "x" });
+  assert.equal(bad.body.ok, false);
+  assert.match(bad.body.reason, /不支持/);
 });

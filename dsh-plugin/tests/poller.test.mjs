@@ -298,12 +298,16 @@ test("feishu page size and thread limit are clamped to CLI caps", async () => {
   assert.equal(adapter.calls.at(-1).limit, 50);
 });
 
-test("legacy dingtalk chats are reported but never polled", () => {
+test("unknown platforms are reported as legacy; dingtalk waits for the switch", () => {
   const { state, poller } = setup();
-  const old = state.ensureChat("dingtalk", "cid_old", { kind: "p2p" });
+  const old = state.ensureChat("slack", "cid_old", { kind: "p2p" });
   old.watching = true;
-  assert.deepEqual(poller.legacyPlatforms(), ["dingtalk"]);
+  const dm = state.ensureChat("dingtalk", "cid_dm", { kind: "p2p" });
+  dm.watching = true;
+  assert.deepEqual(poller.legacyPlatforms(), ["slack"]);
   assert.deepEqual(poller.candidates(["feishu", "wecom"]).map((c) => c.chat_id), []);
+  assert.deepEqual(
+    poller.candidates(["feishu", "wecom", "dingtalk"]).map((c) => c.chat_id), ["cid_dm"]);
 });
 
 test("fast lane polls watched chats and never refreshes the chat list", async () => {

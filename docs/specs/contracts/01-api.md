@@ -12,7 +12,7 @@
 | 方法 | 路径 | 主要入参 | 说明 |
 | --- | --- | --- | --- |
 | GET | `/api/health` | — | 存活探针，带 pid 与 `transport=node` |
-| GET | `/api/status` | — | 总状态：counts、poll、platforms、dsh、instances、turns、running |
+| GET | `/api/status` | — | 总状态：counts、poll、platforms、dsh、instances、turns、running。`platforms` 恒为三项（feishu / wecom / dingtalk），每项带 `enabled`；未启用的不跑 `whoami` |
 | GET | `/api/inbox` | `filter`、`limit`、`group` | 收件箱；默认按会话聚合，`group=msg` 逐条；只从每会话最近 10 条派生 |
 | GET | `/api/inbox/cleanup` | — | 把未值守会话的待回批量标成 ignored |
 | GET | `/api/thread` | `platform`、`chat_id`、`fetch`、`limit` | 会话正文：默认在线拉 30 条；`fetch=1` 先补拉分类（**只读，不唤醒**；冷却中直接用本地指针）；失败回退本地 10 条并带 `offline` / `error` |
@@ -56,6 +56,7 @@
 | 方法 | 路径 | 说明 |
 | --- | --- | --- |
 | POST | `/api/config` | 写配置；`poll.interval_min` 夹到 ≥10 |
+| POST | `/api/platforms` | 启用 / 停用平台：入参 `platform`、`enabled`；只接受 `feishu` / `wecom` / `dingtalk`，写回 `config.platforms`（按固定顺序去重） |
 | POST | `/api/targets/profile` | 覆盖写一份服务对象画像；入参 `platform`、`name`、`text`（≤12KB，超限拒绝不截断） |
 | POST | `/api/chat/session/reset` | 新建会话：可带 `workspace` 先落工作区；打断在飞 turn、清空 `dsh_session`，下次命中开新会话 |
 | POST | `/api/chat/wake` | 手动唤醒：可带 `workspace` 先落工作区；把该会话最近待回交给 agent，不等新消息；`running` / `blocked` / 未值守时拒绝 |

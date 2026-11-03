@@ -34,8 +34,8 @@
 | Skill | 仓库根目录（`SKILL.md` + `scripts/`） | 挂在 Claude Code / WorkBuddy 里，agent 被消息唤醒后自己跑完整闭环 |
 | DSH 插件 | [`dsh-plugin/`](dsh-plugin/) | 想要一个常驻壳：侧边栏席位、收件箱与通知、手动发送；命中后同样唤醒一个真 DSH 会话，由 agent 自己调 CLI、调研、回复 |
 
-> 插件壳只加载 **飞书 / 企业微信** adapter；存量钉钉会话保留在 state 里但不拉取、不唤醒。
-> 钉钉请用 Skill 形态（`references/dingtalk.md`）。
+> 插件壳默认启用 **飞书 / 企业微信**；钉钉是第三个平台，默认不启用——没装 `dws` 的机器
+> 不会每轮白跑授权检查。在「体检」页点钉钉卡片的「启用」即可纳入轮询与唤醒。
 
 插件形态把轮询、状态、API 放进 `dsh-plugin/lib/`，**直接跑在 DSH 宿主进程里**（Node，只用标准库），
 不监听任何端口：DSH 把自己的 Web 服务上的一条同源路由 `/plugins/im-standin` 交给它，

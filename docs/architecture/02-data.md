@@ -71,8 +71,8 @@
 所以「定时 / 点开补拉 / 手动单会话」三条路都进不来。屏蔽不删消息——
 只是把该会话 `new/opened` 的待回标成 `ignored`，取消屏蔽后指针仍在。
 
-插件壳的 platform 白名单只有 `feishu` / `wecom`。存量 `dingtalk` 会话保留在 state，
-不删除、不拉取、不唤醒；在面板/体检里标“插件壳不支持”，要用请走独立 skill 形态。
+插件壳支持 `feishu` / `wecom` / `dingtalk`，`config.platforms` 是启用开关（默认前两个）。
+没启用的平台不跑 `whoami`、不轮询；存量 `dingtalk` 会话保留在 state，启用后照常拉取。
 
 ## 拉取节奏：快慢两条车道，三条按需路径
 

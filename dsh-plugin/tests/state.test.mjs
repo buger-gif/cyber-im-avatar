@@ -73,9 +73,10 @@ test("old 0.3 config keys translate without leaking into runtime config", () => 
   }
 });
 
-test("plugin platforms whitelist ignores dingtalk but keeps the default otherwise", () => {
-  assert.deepEqual(normalizeConfig({ platforms: ["dingtalk"] }).platforms, []);
-  assert.deepEqual(normalizeConfig({ platforms: ["dingtalk", "feishu"] }).platforms, ["feishu"]);
+test("plugin platforms whitelist keeps the three supported platforms", () => {
+  assert.deepEqual(normalizeConfig({ platforms: ["dingtalk"] }).platforms, ["dingtalk"]);
+  assert.deepEqual(normalizeConfig({ platforms: ["dingtalk", "feishu", "slack"] }).platforms,
+    ["dingtalk", "feishu"]);
   assert.deepEqual(normalizeConfig({}).platforms, ["feishu", "wecom"]);
   assert.deepEqual(normalizeConfig({ platforms: [] }).platforms, ["feishu", "wecom"]);
 });

@@ -49,7 +49,9 @@ dsh plugin --profile web add ~/cyber-im-avatar/dsh-plugin
 https://raw.githubusercontent.com/buger-gif/cyber-im-avatar/main/dsh-plugin/market/index.json
 ```
 
-前置：`lark-cli` / `wecom-cli` 已安装并登录。**skill 不用单独装**：插件首次启动会把
+前置：`lark-cli` / `wecom-cli` 已安装并登录；要用钉钉再装 `dws`（`npm i -g dingtalk-workspace-cli`）。
+钉钉默认不启用：在面板「体检」页点钉钉卡片的「启用」，或加入一个钉钉会话值守，才会开始轮询。
+**skill 不用单独装**：插件首次启动会把
 `cyber-im-avatar` 装到 `~/.agents/skills/cyber-im-avatar/`（npm 包自带副本；本地
 link 安装读仓库根目录）。已经手装过同一份的不会被覆盖，只打一行提示。
 
