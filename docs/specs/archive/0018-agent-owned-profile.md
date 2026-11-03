@@ -1,6 +1,6 @@
 # 0018 插件只追加消息，画像交给 agent 自己维护
 
-> 状态: 实施中
+> 状态: 已验收
 > 编号: 0018
 > 版本: 0.8.x
 > 关联: `docs/specs/active/0015-profile-compaction.md`、`docs/specs/active/0016-wake-payload-incremental.md`、`docs/specs/contracts/02-storage.md`、`docs/specs/contracts/03-config.md`
@@ -114,7 +114,9 @@ DSH 的 `workspace-write` 只允许写会话工作区，画像目录在工作区
 - [x] 手动唤醒无 pending → `no_pending`，不启动 turn
 - [x] `node --test`、`python3 -I tests/run_tests.py`、`bash scripts/gate.sh --quick` 全绿
 
-> 代码与测试已验收；真实值守命中（`danger-full-access` 生效、agent 直接改画像）待观察后归档。
+> 代码、测试与合成 live turn 已验收：2026-11-03 用合成会话 `oc_e2e_local_only`（无效 chat_id，
+> 无外发）在 DSH 3080 上跑通唤醒；会话元数据含 `danger-full-access`，agent 直接写了
+> `profiles/feishu/oc_e2e_local_only.md`。真实客户值守命中待命中。
 
 ## 风险与回滚
 

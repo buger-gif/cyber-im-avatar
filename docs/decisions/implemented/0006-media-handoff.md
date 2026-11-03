@@ -1,8 +1,8 @@
 # 0006 富媒体由插件取回，图片随唤醒载荷交付
 
-> 状态: proposed
+> 状态: implemented
 > 日期: 2026-11-03
-> 关联: spec 0017
+> 关联: `docs/specs/archive/0017-standin-reliability.md`
 
 ## 背景
 

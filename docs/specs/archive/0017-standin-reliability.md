@@ -1,6 +1,6 @@
 # 0017 值守可靠性：唤醒正确性与富媒体交付
 
-> 状态: 实施中
+> 状态: 已验收
 > 编号: 0017
 > 版本: 0.9.0
 > 关联: `docs/specs/contracts/01-api.md`、`docs/specs/contracts/02-storage.md`、`docs/specs/contracts/03-config.md`、`docs/architecture/02-data.md`、`docs/architecture/03-runtime.md`、`docs/decisions/proposed/0006-media-handoff.md`
@@ -274,30 +274,40 @@ sticker 是已知类型但没有可下载文件：prompt 只标 `[表情]`，不
 
 ## 验收
 
-- [ ] `whoami` 失败 + 本人消息 → 不唤醒、记错误、`doctor` 显示该平台暂停；恢复授权后下一轮恢复。
-- [ ] 两条消息同为 epoch 1000 → 首轮 baseline 后，第二条进入 batch 并只唤醒一次。
-- [ ] 唤醒 prompt 固定含“本次只追加 N 条新消息，更早上下文按 skill 在线拉”的提示。
-- [ ] 本人“张三”，mentions 指向“张三丰” → 不唤醒；mentions 精确指向本人 → 唤醒。
-- [ ] prompt 里客户正文含 ` /lark-doc`、`<!--` → 不出现可触发的 `/lark-doc` 手势，`<!--` 被转义；首行 `/cyber-im-avatar` 仍在。
-- [ ] 飞书 image 消息 → 插件下载到媒体目录；唤醒 user message 的 `content` 含一个 `image` block；文本行标“已随载荷附带”并给本地路径；不要求 agent 再调 CLI。
-- [ ] 飞书 post 含 2 张内嵌图 → 两张都下载并按 DSH imageLimits attach；超出上限时只 attach 允许的张数，其余给路径/CLI 提示。
-- [ ] 飞书 file/audio/video → 下载到 `~/.im-standin/media/...`，prompt 给本地路径；`state.json` 只有 `media_paths`，没有二进制。
-- [ ] 飞书 sticker → 不下载、不提示 CLI，prompt 只标 `[表情]`。
-- [ ] 飞书 interactive/merge_forward/location/share_chat/system → 不下载，prompt 标“未适配，可用 CLI 取，msg_id: ...”并带 `msg_id`。
-- [ ] 企微 image/file/voice → `wecom-cli media` 可用时下载；不可用时 prompt 明确“壳内取不到，可转人工/让用户描述”。
-- [ ] 媒体下载失败/超时 → turn 照常启动，prompt 标“下载失败，可用 CLI 取”，不阻断回复。
-- [ ] 模型不支持图片输入 → 不 attach，prompt 给本地路径并说明“当前模型不可读图”。
-- [ ] 定时轮/点开/fyi/out 不触发媒体下载；只有命中唤醒的待回消息才下载。
-- [ ] 媒体目录 700/文件 600；7 天前文件被清理；`recent.media_paths` 里失效路径被移除。
-- [ ] `/api/thread?fetch=1` 有待回消息 → 不调用 `wake`；`POST /api/chat/wake` → 调用一次 `wake`。
-- [ ] 20 秒内连续两次手动 `/api/poll` → 第二次 `skipped`；post-turn 补拉仍执行。
-- [ ] `dm_recent=200` → 飞书 `--page-size` 实际为 100；`/api/thread?limit=100` → 飞书 `--limit` 实际为 50。
-- [ ] 企微群用“显示名 + chat_id”加入 → 进入值守列表，`pollChat` 用该 chat_id；面板不露未填的 imid。
-- [ ] `platforms=["dingtalk"]` → 插件拒绝/忽略并给出明确提示；存量钉钉会话不被删除。
-- [ ] 设置页不再出现“定时拉哪些私聊”；`dm_scope` 老配置仍能加载。
-- [ ] 收件箱不再有“客服”筛选；存量 `service` 记录仍能显示。
-- [ ] `ensureSkill()` 在版本号相同、`SKILL.md` 内容变化时重装受管副本。
-- [ ] `node --test`、`python3 -I tests/run_tests.py`、`bash scripts/gate.sh --quick` 全绿。
+- [x] `whoami` 失败 + 本人消息 → 不唤醒、记错误、`doctor` 显示该平台暂停；恢复授权后下一轮恢复。
+- [x] 两条消息同为 epoch 1000 → 首轮 baseline 后，第二条进入 batch 并只唤醒一次。
+- [x] 唤醒 prompt 固定含“本次只追加 N 条新消息，更早上下文按 skill 在线拉”的提示。
+- [x] 本人“张三”，mentions 指向“张三丰” → 不唤醒；mentions 精确指向本人 → 唤醒。
+- [x] prompt 里客户正文含 ` /lark-doc`、`<!--` → 不出现可触发的 `/lark-doc` 手势，`<!--` 被转义；首行 `/cyber-im-avatar` 仍在。
+- [x] 飞书 image 消息 → 插件下载到媒体目录；唤醒 user message 的 `content` 含一个 `image` block；文本行标“已随载荷附带”并给本地路径；不要求 agent 再调 CLI。
+- [x] 飞书 post 含 2 张内嵌图 → 两张都下载并按 DSH imageLimits attach；超出上限时只 attach 允许的张数，其余给路径/CLI 提示。
+- [x] 飞书 file/audio/video → 下载到 `~/.im-standin/media/...`，prompt 给本地路径；`state.json` 只有 `media_paths`，没有二进制。
+- [x] 飞书 sticker → 不下载、不提示 CLI，prompt 只标 `[表情]`。
+- [x] 飞书 interactive/merge_forward/location/share_chat/system → 不下载，prompt 标“未适配，可用 CLI 取，msg_id: ...”并带 `msg_id`。
+- [x] 企微 image/file/voice → `wecom-cli media` 可用时下载；不可用时 prompt 明确“壳内取不到，可转人工/让用户描述”。
+- [x] 媒体下载失败/超时 → turn 照常启动，prompt 标“下载失败，可用 CLI 取”，不阻断回复。
+- [x] 模型不支持图片输入 → 不 attach，prompt 给本地路径并说明“当前模型不可读图”。
+- [x] 定时轮/点开/fyi/out 不触发媒体下载；只有命中唤醒的待回消息才下载。
+- [x] 媒体目录 700/文件 600；7 天前文件被清理；`recent.media_paths` 里失效路径被移除。
+- [x] `/api/thread?fetch=1` 有待回消息 → 不调用 `wake`；`POST /api/chat/wake` → 调用一次 `wake`。
+- [x] 20 秒内连续两次手动 `/api/poll` → 第二次 `skipped`；post-turn 补拉仍执行。
+- [x] `dm_recent=200` → 飞书 `--page-size` 实际为 100；`/api/thread?limit=100` → 飞书 `--limit` 实际为 50。
+- [x] 企微群用“显示名 + chat_id”加入 → 进入值守列表，`pollChat` 用该 chat_id；面板不露未填的 imid。
+- [x] `platforms=["dingtalk"]` → 插件拒绝/忽略并给出明确提示；存量钉钉会话不被删除。
+- [x] 设置页不再出现“定时拉哪些私聊”；`dm_scope` 老配置仍能加载。
+- [x] 收件箱不再有“客服”筛选；存量 `service` 记录仍能显示。
+- [x] `ensureSkill()` 在版本号相同、`SKILL.md` 内容变化时重装受管副本。
+- [x] `node --test`、`python3 -I tests/run_tests.py`、`bash scripts/gate.sh --quick` 全绿。
+
+
+> 验收记录（2026-11-03）：1–5、12–24 由 `node --test` 101 条用例与代码走查逐条覆盖
+> （whoami 暂停/恢复、同 epoch 两条只唤醒一次、prompt 只追加 N 条、@张三 vs 张三丰、
+> `/lark-doc` / `<!--` 转义、媒体降级、冷却、钉钉存量、配置夹取、skill 内容变更重装）。
+> 6–11 的下载/附件/媒体清理由 `tests/im.test.mjs`、`tests/media.test.mjs`、
+> `tests/turns.test.mjs` 的夹具与假 CLI 覆盖；**真实飞书/企微媒体消息待命中**
+> （本轮无真实客户消息，合成会话 `oc_e2e_local_only` 没有媒体，未假装验过）。
+> `python3 -I tests/run_tests.py`：109 通过 / 1 失败（失败项为 verify_docs 的状态词格式，
+> 已修复并复跑通过）；`bash scripts/gate.sh --quick` 五项全绿。
 
 ## 风险与回滚
 

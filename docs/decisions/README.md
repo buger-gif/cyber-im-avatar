@@ -45,5 +45,5 @@
 | 0003 | 收件箱按会话聚合，不逐条堆叠 | implemented |
 | 0004 | 服务对象画像用文件，消息只留指针 | implemented |
 | 0005 | Node 单进程：file state + 宿主 live turn | implemented |
-| 0006 | 富媒体由插件取回，图片随唤醒载荷交付 | proposed |
+| 0006 | 富媒体由插件取回，图片随唤醒载荷交付 | implemented |
 | 0007 | 值守快车道：候选 60 秒，发现仍 10 分钟 | implemented |

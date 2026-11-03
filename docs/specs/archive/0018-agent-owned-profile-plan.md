@@ -1,6 +1,6 @@
 # 0018 实施计划：插件只追加消息，画像交给 agent
 
-> 关联：`docs/specs/active/0018-agent-owned-profile.md`
+> 关联：`docs/specs/archive/0018-agent-owned-profile.md`
 
 ## 步骤
 

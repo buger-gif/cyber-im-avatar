@@ -5,7 +5,7 @@
 > 版本: 0.8.x
 > 关联: `docs/specs/contracts/02-storage.md`
 >
-> 后续：DSH 插件已由 `docs/specs/active/0018-agent-owned-profile.md` 改为每次唤醒只追加
+> 后续：DSH 插件已由 `docs/specs/archive/0018-agent-owned-profile.md` 改为每次唤醒只追加
 > 新消息，取消「首轮完整载荷 / 后续增量」两套模板；独立 skill 形态不受影响。
 
 ## 背景

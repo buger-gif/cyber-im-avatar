@@ -3,7 +3,7 @@
 > 状态: 待实施
 > 编号: 0019
 > 版本: 0.9.0
-> 关联: `docs/specs/active/0019-daily-digest.md`、`AGENTS.md §设计铁律` 第 8 条
+> 关联: `docs/specs/archive/0019-daily-digest.md`、`AGENTS.md §设计铁律` 第 8 条
 
 一步一验证，每步跑完再做下一步。命令在 `dsh-plugin/` 下执行，标注「根目录」的除外。
 

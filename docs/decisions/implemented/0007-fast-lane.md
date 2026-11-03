@@ -2,7 +2,7 @@
 
 > 状态: implemented
 > 日期: 2026-11-03
-> 关联: `docs/specs/active/0022-fast-lane.md`、`docs/decisions/implemented/0002-poll-rhythm.md`
+> 关联: `docs/specs/archive/0022-fast-lane.md`、`docs/decisions/implemented/0002-poll-rhythm.md`
 
 ## 背景
 

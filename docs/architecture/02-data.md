@@ -47,7 +47,7 @@
 `digest/YYYY-MM-DD.md` 由 agent 按 `SKILL.md §值守日报` 维护：整份覆盖写、一个会话一行、
 问题消失行就消失、跨天把未结项带过来。插件只做一件事：`GET /api/digest` 把文件原样读给面板，
 不建目录、不写、不解析、不统计——判断归 agent（`AGENTS.md §设计铁律` 第 8 条）。格式见
-`SKILL.md`，取舍见 `docs/specs/active/0019-daily-digest.md`。
+`SKILL.md`，取舍见 `docs/specs/archive/0019-daily-digest.md`。
 
 ## 会话状态
 

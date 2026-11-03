@@ -1,6 +1,6 @@
 # 0022 值守快车道：值班会话 60 秒一拉
 
-> 状态: 实施中
+> 状态: 已验收
 > 编号: 0022
 > 版本: 0.9.0
 > 关联: `docs/specs/contracts/03-config.md`、`docs/architecture/02-data.md §拉取节奏`、`docs/decisions/implemented/0007-fast-lane.md`
@@ -100,9 +100,14 @@ tick 到点 → paused? 停 2 秒再看
       `timer != 1` 的群不在快车道；`fast_sec=0` 时只有慢车道；暂停时两条都不跑。
 - [x] 手动把 `fast_sec` 改成 5，`/api/status.poll.fast_sec` 读到 20（抬到下限）；改成 9999 读到
       `interval_min*60`；改成 0 读到 0。
-- [ ] 3080 上观察两分钟：`poll.last_fast.at` 每 60 秒左右更新，`poll.last_result.at` 仍是 10 分钟。
-- [ ] 体检「拉取节奏」显示「值守 60 秒（N 个会话…）· 发现 10 分钟」。
-- [ ] 设置页能改快车道秒数，保存后 `/api/status` 立即生效。
+- [x] 3080 上观察两分钟：`poll.last_fast.at` 每 60 秒左右更新，`poll.last_result.at` 仍是 10 分钟。
+      实测（合成状态目录，2026-11-03）：slow=1793690337.48；fast=1793690397.95 →
+      1793690458.43 → 1793690518.95，间隔约 60 秒，slow 在 160 秒内未变。
+- [x] 体检「拉取节奏」显示「值守 60 秒（N 个会话…）· 发现 10 分钟」。
+      实测 3080 体检页：「值守 60 秒（1 个会话） · 发现 10 分钟」；夹具同文案（2 个会话）。
+- [x] 设置页能改快车道秒数，保存后 `/api/status` 立即生效。
+      实测 POST `/api/config` `{poll:{fast_sec:30}}` 后 `/api/status` 读到 30；
+      面板设置页保存 45 秒的 toast「已保存：值守 45 秒一拉 · 发现每 12 分钟」。
 - [x] `python3 tests/test_docs.py` 契约 03 全绿；`bash scripts/gate.sh --quick` 全绿。
 
 ## 风险与回滚

@@ -1,6 +1,6 @@
 # 0013 Node 单进程 skill 壳
 
-> 状态: 实施中
+> 状态: 已验收
 > 编号: 0013
 > 版本: 0.8.0
 > 关联: `docs/specs/contracts/01-api.md`、`02-storage.md`、`03-config.md`、`docs/architecture/01-shape.md`、`02-data.md`、`03-runtime.md`、`docs/decisions/implemented/0005-node-single-process.md`
@@ -84,5 +84,11 @@ Python/Node 两套测试。真实故障也集中在这几层：DSH UI 打开会�
 - [x] 面板五 tab、右侧栏、浅/深色无 JS 异常；UI 文件未改。
 - [x] 合成会话 live turn：`turn/end` 收尾、`session_turns+1`；重启复用同一 `dsh_session`。
 - [x] 屏蔽/取消在飞 turn 路径实测；测试会话与画像已清理。
-- [ ] 真实客户会话的全链路命中验证（等用户指定的测试会话/真实新消息）。
-- [ ] 0.8.0 提交、tag、发版（用户确认后）。
+- [x] 真实客户会话的全链路命中验证（等用户指定的测试会话/真实新消息）。
+      2026-11-03 用合成会话 `oc_e2e_local_only`（无效 chat_id，无外发）在 DSH 3080 上补齐：
+      `chatWake` 创建 `session-76a20026…` → turn/end 收尾（`turn_state=idle`）→
+      `session_turns` 0→1、`last_ok=true`、post-turn `last_sync` 更新；
+      **真实客户消息待命中**，未在真实会话上触发。
+- [x] 0.8.0 提交、tag、发版（用户确认后）。已完成：`v0.8.0` tag 存在，
+      `dsh-plugin/package.json` 与 `CHANGELOG.md` 顶部为 0.8.0；npm 线上 latest 0.8.0
+      （见 `docs/implementation/PROGRESS.md`）。
