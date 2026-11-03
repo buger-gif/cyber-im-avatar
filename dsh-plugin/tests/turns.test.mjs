@@ -33,16 +33,28 @@ test("wake prompt appends only the new messages, with profile path and skill ent
   assert.doesNotMatch(prompt, /当前画像|最近 10 条|im-profile-update|审核同学/);
 });
 
-test("later wakes omit the skill entry but still append only new messages", () => {
+test("later wakes send only the new message lines", () => {
   const prompt = buildWakePrompt("feishu", "示例对象 A", "oc_abc", recent(2), {
     profilePath: "/tmp/profile.md", firstTurn: false, interrupted: true,
   });
-  assert.match(prompt, /上一轮被新消息打断/);
-  assert.match(prompt, /值守命中 · 飞书 · 示例对象 A · 新消息/);
-  assert.match(prompt, /画像文件：\/tmp\/profile\.md/);
-  assert.match(prompt, /消息 0/);
-  assert.doesNotMatch(prompt, /^\/cyber-im-avatar/);
+  assert.equal(prompt.split("\n").length, 2);
+  assert.match(prompt, /^- \[t0\] 客户: 消息 0$/m);
+  assert.match(prompt, /^- \[t1\] 客户: 消息 1$/m);
+  assert.doesNotMatch(prompt, /\/cyber-im-avatar|值守命中|chat_id：|运行形态：|画像文件：/);
+  assert.doesNotMatch(prompt, /本次只追加|上一轮被新消息打断|媒体说明/);
   assert.doesNotMatch(prompt, /当前画像|最近 10 条|im-profile-update|按 skill 处理/);
+});
+
+test("later wakes with stickers send only the message line, no media boilerplate", () => {
+  const row = {
+    msg_id: "s1", sender_id: "ou_other", sender_name: "客户 /lark-doc",
+    content: "[表情]", msg_type: "sticker", ts: "t1", ts_epoch: 100, kind: "dm", state: "new",
+  };
+  const prompt = buildWakePrompt("feishu", "示例对象 A", "oc_abc", [row], {
+    firstTurn: false, mediaMap: new Map([["s1", { sticker: true }]]),
+  });
+  assert.equal(prompt, "- [t1] 客户 ／lark-doc: [表情]");
+  assert.doesNotMatch(prompt, /值守命中|chat_id：|运行形态：|画像文件：|媒体说明|本次只追加/);
 });
 
 test("untrusted chat text cannot inject a DSH skill gesture or HTML comment", () => {
@@ -210,10 +222,8 @@ test("a batched wake after the first turn only appends the new messages", async 
     content: "新来的消息", ts: "t9", ts_epoch: 109, kind: "dm", state: "new",
   }] });
   const second = host.followups[1].content[0].text;
-  assert.match(second, /新来的消息/);
-  assert.match(second, /· 新消息/);
-  assert.doesNotMatch(second, /^\/cyber-im-avatar/);
-  assert.doesNotMatch(second, /当前画像|最近 10 条|im-profile-update|按 skill 处理/);
+  assert.equal(second, "- [t9] 客户: 新来的消息");
+  assert.doesNotMatch(second, /\/cyber-im-avatar|值守命中|chat_id：|运行形态：|画像文件：|本次只追加/);
 });
 
 test("a new message during the first turn interrupts into an append-only payload", async () => {
@@ -235,9 +245,8 @@ test("a new message during the first turn interrupts into an append-only payload
     content: "插进来的新消息", ts: "t9", ts_epoch: 109, kind: "dm", state: "new",
   }] });
   const second = host.followups[1].content[0].text;
-  assert.match(second, /插进来的新消息/);
-  assert.match(second, /上一轮被新消息打断/);
-  assert.doesNotMatch(second, /^\/cyber-im-avatar/);
+  assert.equal(second, "- [t9] 客户: 插进来的新消息");
+  assert.doesNotMatch(second, /\/cyber-im-avatar|值守命中|上一轮被新消息打断/);
 });
 
 test("a wake without a batch falls back to the pending messages", async () => {
@@ -252,8 +261,8 @@ test("a wake without a batch falls back to the pending messages", async () => {
   host.reply = "第二轮";
   await turns.wake(chat);
   const second = host.followups[1].content[0].text;
-  assert.match(second, /待回消息/);
-  assert.doesNotMatch(second, /^\/cyber-im-avatar/);
+  assert.match(second, /^- \[t10\] 客户: 待回消息$/m);
+  assert.doesNotMatch(second, /\/cyber-im-avatar|值守命中|本次只追加/);
 });
 
 test("switching to a new session re-adds the skill entry", async () => {
@@ -324,9 +333,8 @@ test("after a restart the next wake only appends new messages", async () => {
     content: "重启后的新消息", ts: "t9", ts_epoch: 109, kind: "dm", state: "new",
   }] });
   const second = host2.followups[0].content[0].text;
-  assert.doesNotMatch(second, /^\/cyber-im-avatar/);
-  assert.match(second, /重启后的新消息/);
-  assert.doesNotMatch(second, /基础消息|当前画像|最近 10 条|im-profile-update/);
+  assert.equal(second, "- [t9] 客户: 重启后的新消息");
+  assert.doesNotMatch(second, /\/cyber-im-avatar|值守命中|基础消息|当前画像|最近 10 条|im-profile-update/);
 });
 
 test("full_access switches the bound session to danger-full-access before followup", async () => {

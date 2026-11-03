@@ -12,6 +12,7 @@
 | 日期 | 主题 | 证据 |
 | --- | --- | --- |
 | 2026-11-03 | 面板体验加固（spec 0021）：草稿进内存、失败不装空、窄栏、密度、确认、可达、隐藏 imid | `web/panel.js`、`scripts/demo/fixture.mjs` |
+| 2026-11-03 | 已有会话续跑只追加消息行，不再重复平台/chat_id/运行形态/画像路径/媒体说明 | `lib/turns.js`、`tests/turns.test.mjs`、`SKILL.md` |
 | 2026-11-03 | 0013 / 0017 / 0018 / 0019 / 0020 / 0021 / 0022 逐条验收并归档；ADR 0006 转 implemented | `docs/specs/archive/README.md`、`docs/decisions/README.md` |
 | 2026-11-03 | 合成 live turn：create → turn/end → post-turn；`session_turns+1`、agent 直接写画像 | 3080 + 临时状态目录，`docs/implementation/log/2026-11-03.md` |
 | 2026-11-03 | 关注摘要：连续两次更新不重复、跨天保留「首次」；删除文件显示空态 | 3080 + 临时 `digest/` |
@@ -26,7 +27,8 @@
 ## 当前断点
 
 - **0.9.0 代码面已完成**：`docs/specs/active/` 已清空；本轮按 panel / 验收归档 / 收尾
-  三组主题本地提交（含后续修正），工作区干净、未 push；0013、0017–0022 全部逐条对勾后
+  三组主题本地提交（含后续修正），工作区干净、未 push；已有会话的后续醒来只发消息行，
+  完整上下文只在首轮载荷里出现。0013、0017–0022 全部逐条对勾后
   `git mv` 进 `docs/specs/archive/`，归档表已登记。ADR 0006 已从 proposed 移到 implemented。
 - **未发版**：`dsh-plugin/package.json` 仍是 0.8.0；`CHANGELOG.md` 的「未发布」已记录
   0013/0017–0022 的用户可见变化。不要在没有发版动作时改版本号。
@@ -46,11 +48,10 @@
 - **面板走查**：320 / 360 / 420，浅/深两套，六个页签；`.ims-panel` 各宽度
   `scrollWidth === clientWidth`，越界元素 0；设置页三个数字框均 92px；详情「重开会话」
   在 DSH 会话行右侧不换行。走查截图在本地临时目录（未入库）。
-- **测试**：`node --test` 101/101；`python3 -I tests/run_tests.py` 109 通过 / 1 失败
-  （失败是 verify_docs 对状态词的格式检查，已改成 `已验收` 并复跑通过）；
-  `bash scripts/gate.sh --quick` 五项全绿。
+- **测试**：`node --test` 102/102；`python3 -I tests/run_tests.py` 110/0；
+  `bash scripts/gate.sh` 全量六项全绿。
 - **状态文件**：真实 `~/.im-standin/state.json` 未被本轮写入；所有演练写入
-  `/tmp/im-standin-accept/`。桌面 DSH 与 3080 不要同时写同一份 state。
+  `/tmp/im-standin-accept/`（验收后已清理）。桌面 DSH 与 3080 不要同时写同一份 state。
 
 ## 挂账（按优先级）
 

@@ -24,7 +24,7 @@ poller 判定命中
   └─ turns.wake(chat)
        ├─ 先取消同会话在飞 turn（agent.inbox.remove / agent.cancel）
        ├─ resolveAgent(dsh_session) 或 create({workspaceId|cwd})
-       ├─ 每次唤醒只追加本次新消息（首轮多一行 skill 入口，buildWakePrompt）
+       ├─ 每次唤醒只追加本次新消息（首轮带入口与上下文，之后只发消息行）
        ├─ 只对本批待回消息下载媒体：图片 → attachments image block，
        │  文件/音视频 → 本地路径；未适配/失败只留标记
        ├─ agent.followup(createUserMessage(prompt, imageParts))
@@ -35,8 +35,9 @@ poller 判定命中
 - 一通 IM 会话 ↔ 一个 DSH 会话（`chats.dsh_session`），默认永久复用；
   用户点「新建会话」才换。显式工作区目录存在但未在 DSH 登记时，仍先尝试恢复旧会话，
   只有 cwd 漂移才在正确工作区重开。
-- 每次唤醒只发本次新消息；`chats.prompt_session == dsh_session` 时省掉
-  `/cyber-im-avatar` 入口，换会话/重置会清空，下一次重新带入口。
+- 首轮带 `/cyber-im-avatar`、平台/对象、chat_id、运行形态与画像路径；之后同一
+  `dsh_session` 只发本次新消息行，不再重复这些说明。`chats.prompt_session == dsh_session`
+  时判定为后续轮；换会话/重置会清空，下一次重新带完整上下文。
 - 画像只给路径：`~/.im-standin/profiles/<platform>/<chat_id>.md` 由 agent 自己读、自己改；
   插件不解析回复、不代写。`dsh.full_access=true` 时插件在 followup 前把会话切到
   `danger-full-access`，否则 `workspace-write` 会拒绝写画像目录。

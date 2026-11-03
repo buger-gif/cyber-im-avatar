@@ -5,7 +5,7 @@
 >
 > 所有命令在 skill 根目录执行。个人数据目录默认 `~/.im-standin/`（可用 `IM_STANDIN_DIR` 改）。
 >
-> **在 DSH 插件壳里（载荷带「运行形态：DSH 插件壳」）不要跑 `doctor.py` / `bootstrap.py`
+> **在 DSH 插件壳里（首轮载荷带「运行形态：DSH 插件壳」）不要跑 `doctor.py` / `bootstrap.py`
 > / 监听脚本**：它们会写 `~/.im-standin/states`，壳内沙箱会拒。体检改用面板「体检」
 > 页，或只读命令（`lark-cli auth status` / `wecom-cli auth show` / `dws auth status`）。
 > 媒体下载失败先在 prompt 里看是否标了「未适配 / 下载失败」，再按对应 `references/` 试。

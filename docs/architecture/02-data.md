@@ -37,7 +37,7 @@
 ## 画像文件
 
 每个服务对象一份 `profiles/<platform>/<chat_id>.md`：对方是谁、沟通偏好、
-在意与忌讳、历史结论。DSH 壳内 agent 用唤醒载荷给的路径自己读、自己改；插件不注入
+在意与忌讳、历史结论。DSH 壳内 agent 用首轮唤醒载荷给的路径自己读、自己改；插件不注入
 画像正文、不解析回复、不代写。面板也读写同一份。`dsh.full_access=true` 时插件把会话
 切到 `danger-full-access`，否则 `workspace-write` 会拒绝写工作区外的画像目录。
 `env.json` 只读，画像正文不写回它。

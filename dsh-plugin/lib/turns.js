@@ -130,8 +130,9 @@ function payloadNote(count) {
 }
 
 /**
- * 一次唤醒 = 只追加本次新到的消息。首轮多一行 `/cyber-im-avatar` 入口；
- * 后续不带入口，但始终带平台/对象、chat_id、运行形态与画像路径。
+ * 一次唤醒 = 只追加本次新到的消息。新会话首轮带 `/cyber-im-avatar` 入口、
+ * 平台/对象、chat_id、运行形态、画像路径与媒体说明；已有会话后续唤醒只发
+ * 本次消息行，不重复这些上下文——它们已经在同一 session 的历史里。
  * 画像正文由 agent 自己按路径读，插件不注入、不解析、不回写。
  */
 export function buildWakePrompt(platform, chatName, chatId, messages, {
@@ -139,8 +140,16 @@ export function buildWakePrompt(platform, chatName, chatId, messages, {
 } = {}) {
   const label = PLAT_LABEL[platform] || platform;
   const safeName = sanitizeUntrusted(chatName || chatId);
-  const parts = [];
-  if (firstTurn) parts.push("/cyber-im-avatar");
+  const lines = messages
+    .slice()
+    .sort((a, b) => (a.ts_epoch - b.ts_epoch))
+    .map((m) => formatMsgLine(m, mediaFor(mediaMap, m.msg_id), platform));
+
+  // 已有会话：只列本次新消息。chat_id / 运行形态 / 画像路径 / 媒体说明都已在本会话里，
+  // 不再每一轮重复；新增媒体消息的本地路径与降级提示仍由 formatMsgLine 带在行内。
+  if (!firstTurn) return lines.join("\n");
+
+  const parts = ["/cyber-im-avatar"];
   if (interrupted) {
     parts.push("（上一轮被新消息打断，以最新上下文为准；未完成的事重新判断。）");
   }
@@ -150,14 +159,10 @@ export function buildWakePrompt(platform, chatName, chatId, messages, {
   if (profilePath) {
     parts.push(`画像文件：${profilePath}（起草前自己读；学到长期事实就直接改这个文件，插件不代写。）`);
   }
-  for (const m of messages.slice().sort((a, b) => (a.ts_epoch - b.ts_epoch))) {
-    parts.push(formatMsgLine(m, mediaFor(mediaMap, m.msg_id), platform));
-  }
+  parts.push(...lines);
   if (mediaSize(mediaMap)) parts.push(MEDIA_HINT);
   parts.push(payloadNote(messages.length));
-  if (firstTurn) {
-    parts.push("按 skill 处理这通会话；画像只改当前对象这一份，不要写 state.json / env.json / media。");
-  }
+  parts.push("按 skill 处理这通会话；画像只改当前对象这一份，不要写 state.json / env.json / media。");
   return parts.join("\n");
 }
 
