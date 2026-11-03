@@ -2047,6 +2047,23 @@ window.__ModuleLoader__.load({
             h("span", { class: "ims-grow" }),
             enabled
               ? h("span", { class: "ims-hint", text: p.logged_in ? "授权正常" : "需要重新授权" })
+              : null,
+            enabled
+              ? h("button", {
+                  class: "ims-btn mini ghost", type: "button",
+                  title: "停用后不再轮询 / 唤醒；值守配置与本地消息保留",
+                  onclick: function () {
+                    var label = meta.label || p.platform;
+                    var msg = p.watched > 0
+                      ? "停用" + label + "后，" + p.watched + " 个值守会话不再轮询、不再唤醒；" +
+                        "配置与本地消息保留，随时可以再启用。继续？"
+                      : "停用" + label + "？停用后不再轮询、不唤醒。";
+                    if (typeof window !== "undefined" && window.confirm && !window.confirm(msg)) return;
+                    api("/api/platforms", { body: { platform: p.platform, enabled: false } })
+                      .then(function () { say("已停用" + label + "，值守配置保留"); return loadStatus(); })
+                      .then(paint);
+                  }
+                }, "停用")
               : h("button", {
                   class: "ims-btn mini", type: "button",
                   title: "启用后才会拉取；不启用不占轮询",

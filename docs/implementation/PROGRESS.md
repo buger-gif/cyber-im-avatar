@@ -25,6 +25,7 @@
 | 2026-11-03 | 值守可靠性：双水位、whoami 暂停、@ 判定、富媒体交付（spec 0017） | `lib/poller.js`、`lib/im.js`、`lib/turns.js`、`lib/media.js` |
 | 2026-11-03 | 钉钉真机：登录 → 取 userId → 真实会话命中 → 起草（发送未执行）；修 `+recent-conversations` 的 `data.conversations` 路径 | `scripts/bootstrap.py`、`references/dingtalk.md` |
 | 2026-11-03 | 插件壳支持钉钉（spec 0023）：dws adapter、平台开关、体检页三平台与手动刷新 | `lib/im.js`、`lib/app.js`、`web/panel.js` |
+| 2026-11-03 | 体检页可停用平台：有值守会话先确认，停用只停轮询 / 唤醒 | `web/panel.js`、`lib/client.js` |
 | 2026-11-02 | 插件重写为 Node 单进程（spec 0013）：state.json + live turn | `dsh-plugin/lib/`、`scripts/migrate-state.mjs` |
 
 ## 当前断点
@@ -65,9 +66,11 @@
 ## 挂账（按优先级）
 
 1. **0.9.0 npm 发布**：核对 npm 包页的 Trusted Publisher（User `buger-gif` /
-   Repository `cyber-im-avatar` / Workflow `publish.yml` / Environment 空）。登记好后
-   `gh workflow run publish.yml --ref v0.9.0 -f dry_run=false` 重跑，**不要移动 tag**；
-   `npm view` 看到 0.9.0 再单独提交 `market/index.json`。
+   Repository `cyber-im-avatar` / Workflow `publish.yml` / Environment 空）。
+   `v0.9.0` tag 停在「停用交互」之前的提交且 npm 从未发布；发布前先删掉这个 tag，
+   在最新 `main` 上重打 `v0.9.0`（不是移动已发布 tag），再
+   `gh workflow run publish.yml --ref v0.9.0 -f dry_run=false`。`npm view` 看到 0.9.0
+   后再单独提交 `market/index.json`。
 2. **真实客户 live turn / 真实平台媒体**：0013 与 0017 的合成验证已做，但真实飞书/企微
    图片、文件、语音、视频尚未命中；等用户在场或指定测试会话时补，不要主动外发。
 3. **历史待回清理**：旧库迁移带来的约 50 条 pending 是否在「收件箱 → 清理」一次，待用户拍板。
@@ -78,7 +81,8 @@
 
 ## 下一步
 
-1. 修好 Trusted Publisher 后重跑 publish workflow；npm 上可见后更新 `market/index.json`。
+1. 修好 Trusted Publisher 后删掉旧 `v0.9.0`、在最新 main 重打并重跑 publish workflow；
+   npm 上可见后更新 `market/index.json`。
 2. 等真实客户消息/媒体命中；只观察，不主动给真实客户发消息。
 3. 用户确认后清理历史待回；清理前不要当作用户已同意。
 4. 钉钉补完真人闭环：在环境里启用钉钉，给一个真人会话跑「命中 → 草稿 → 发送 → 重挂」，
