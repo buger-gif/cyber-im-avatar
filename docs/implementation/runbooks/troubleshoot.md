@@ -38,7 +38,7 @@ lsof -nP -iTCP -sTCP:LISTEN                # 只应有 DSH 的 3080；多出来�
 
 1. `running` 是不是 false（被 `/api/pause` 暂停了）。
 2. `platforms` 里有没有该平台；没有 → 装对应 CLI 并重跑 bootstrap，或检查 `env.json`。
-3. 该会话是不是被屏蔽了：`GET /api/chats` 看 `blocked`。「分身 → 已屏蔽」能找回来。
+3. 该会话是不是被屏蔽了：`GET /api/chats` 看 `blocked`。「设置 → 值守范围 → 已屏蔽的会话」能找回来。
 4. 私聊：只有 `watching=1` 才进定时轮；点开会话补拉不受此限。
 5. 群：默认**不拉**。要它进轮询必须 `timer=1`（面板上勾「定时检测 @我」）。
 6. 冷却：20 秒内刚拉过会 skip，`poll.last_result` 里有 `xxxs 内刚拉过`。
