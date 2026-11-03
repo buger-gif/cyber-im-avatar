@@ -6,7 +6,7 @@ import test from "node:test";
 
 import { State } from "../lib/state.js";
 import { Profiles } from "../lib/profiles.js";
-import { Turns, buildWakePrompt, sanitizeUntrusted } from "../lib/turns.js";
+import { Turns, buildOpenPrompt, buildWakePrompt, sanitizeUntrusted } from "../lib/turns.js";
 
 function recent(n = 2) {
   const out = [];
@@ -616,4 +616,25 @@ test("all-mode prompt marks mentions and keeps the reply rule explicit", () => {
   assert.match(prompt, /- \[t1\] 同事: 进度怎么样/);
   assert.match(prompt, /非点名的群消息只看不回/);
   assert.match(prompt, /照常处理，该回就回/);
+});
+
+test("open prompt works with no messages and tells the agent not to send anything", () => {
+  const prompt = buildOpenPrompt("feishu", "示例群", "oc_grp", [], {
+    profilePath: "/tmp/profile.md",
+  });
+  assert.match(prompt, /^\/cyber-im-avatar/);
+  assert.match(prompt, /值守已开启 · 飞书 · 示例群 · 会话开场（人工开启，不是新消息唤醒）/);
+  assert.match(prompt, /最近 30 分钟没有新消息/);
+  assert.match(prompt, /没有需要回的就不要往会话里发任何消息/);
+});
+
+test("open prompt carries the recent context and the group mode rule", () => {
+  const rows = [
+    { msg_id: "o1", sender_id: "ou_x", sender_name: "同事", content: "这个谁看下",
+      ts: "t1", ts_epoch: 100, kind: "fyi", state: "ignored" },
+  ];
+  const prompt = buildOpenPrompt("feishu", "示例群", "oc_grp", rows, { wakeMode: "all" });
+  assert.match(prompt, /最近上下文（最近 30 分钟，共 1 条）/);
+  assert.match(prompt, /- \[t1\] 同事: 这个谁看下/);
+  assert.match(prompt, /非点名的群消息只看不回/);
 });

@@ -338,6 +338,31 @@ export class App {
     return { ok: true, counts: this.state.counts() };
   }
 
+  /**
+   * 「加入值守」= 现在就开始盯：补拉一次拿正文，再起一轮开场会话。
+   * 任何失败都不影响 watching 已保存的事实，只把原因回给面板。
+   */
+  async openAfterJoin(chat) {
+    const platform = chat.platform;
+    const chatId = chat.chat_id;
+    if (chat.blocked) return { ok: false, reason: "blocked" };
+    if (!this.turns) return { ok: false, reason: "host_unavailable" };
+    if (typeof this.turns.isActive === "function" && this.turns.isActive(platform, chatId)) {
+      return { ok: true, skipped: "running" };
+    }
+    try {
+      await this.poller.pollChat(platform, chatId, {
+        name: chat.name, kind: chat.kind, force: true, wake: false,
+      });
+    } catch { /* 拉不到就用本地最近消息开场 */ }
+    try {
+      const r = await this.turns.open(chat, { reason: "join" });
+      return { ok: !!r.ok, reason: r.reason || "", skipped: r.skipped || "" };
+    } catch (e) {
+      return { ok: false, reason: String(e?.message || e?.name || e).slice(0, 160) };
+    }
+  }
+
   async watch(q, body = {}) {
     const platform = pick(q, body, "platform");
     const chatId = pick(q, body, "chat_id");
@@ -377,7 +402,8 @@ export class App {
     if (!watching) this.turns.cancel(platform, chatId, "unwatch");
     try { this.profiles.ensure(platform, chatId, chat.name); } catch { /* profile is best effort */ }
     this.state.save();
-    return { ok: true, chat: this.publicChat(chat) };
+    const open = watching ? await this.openAfterJoin(chat) : null;
+    return { ok: true, chat: this.publicChat(chat), open };
   }
 
   async unwatch(q, body = {}) {
@@ -448,6 +474,7 @@ export class App {
       return { ok: false, reason: "全部消息模式只对群生效" };
     }
     const on = mode !== "off";
+    const wasOn = !!chat.watching;
     chat.watching = on;
     chat.timer = on ? 1 : -1;
     chat.wake_mode = mode === "all" ? "all" : "mention";
@@ -464,7 +491,8 @@ export class App {
       this.turns.cancel(platform, chatId, "mode_off");
     }
     this.state.save();
-    return { ok: true, chat: this.publicChat(chat), poll: this.poller.pollInfo() };
+    const open = on && !wasOn ? await this.openAfterJoin(chat) : null;
+    return { ok: true, chat: this.publicChat(chat), open, poll: this.poller.pollInfo() };
   }
 
   async chatTimer(q, body = {}) {

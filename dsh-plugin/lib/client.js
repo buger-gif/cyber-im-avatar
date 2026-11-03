@@ -911,8 +911,14 @@ window.__ModuleLoader__.load({
           return r;
         }
         if (ws) rememberWs(ws);
-        say("已加入值守" + (kind === "group" ? "（只盯 @我）" : "") +
-            " · 工作区 " + (ws ? wsTitle(ws) : "跟随 DSH 默认"));
+        var base = "已加入值守" + (kind === "group" ? "（只盯 @我）" : "") +
+          " · 工作区 " + (ws ? wsTitle(ws) : "跟随 DSH 默认");
+        // 加入即开会话：成功就明说，失败也别让用户以为在盯了。
+        if (r.open && r.open.ok) say(base + " · 会话已开");
+        else if (r.open && r.open.skipped === "running") say(base + " · 会话正在处理");
+        else if (r.open && r.open.ok === false) {
+          say(base + "；会话没起来：" + (r.open.reason || "未知原因") + "，下一条消息会重试");
+        } else say(base);
         if (after) after(r);
         else { loadChats(); loadTargets(); }
         return r;
@@ -1282,7 +1288,14 @@ window.__ModuleLoader__.load({
               api("/api/watch", { body: { platform: d.platform, chat_id: d.chat_id,
                                           watching: e.target.checked, name: chat.name,
                                           kind: chat.kind } })
-                .then(function () { say(e.target.checked ? "已加入值守" : "已移出值守"); })
+                .then(function (r) {
+                  if (!e.target.checked) return say("已移出值守");
+                  if (r && r.open && r.open.ok === false) {
+                    return say("已加入值守；会话没起来：" + (r.open.reason || "未知原因") +
+                               "，下一条消息会重试");
+                  }
+                  say(r && r.open && r.open.ok ? "已加入值守 · 会话已开" : "已加入值守");
+                })
                 .then(loadChats)
                 .then(refreshDetail);
             }
@@ -1454,9 +1467,11 @@ window.__ModuleLoader__.load({
           c.watching = !!r.chat.watching;
           c.timer = r.chat.timer;
           c.wake_mode = r.chat.wake_mode;
-          say(mode === "off" ? "已改为不盯：不再拉这个群"
+          var opened = r.open && r.open.ok ? " · 会话已开"
+            : (r.open && r.open.ok === false ? "；会话没起来：" + (r.open.reason || "未知原因") : "");
+          say((mode === "off" ? "已改为不盯：不再拉这个群"
             : (mode === "all" ? "已改为全部消息：非 @ 只看不回，@ 你照常回"
-            : "已改为只盯 @我"));
+            : "已改为只盯 @我")) + opened);
           loadChats(); loadStatus();
         });
     }

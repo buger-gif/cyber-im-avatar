@@ -9,7 +9,7 @@ import crypto from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 
-import { chatKey } from "./state.js";
+import { chatKey, RECENT_LIMIT } from "./state.js";
 import { MEDIA_ADAPTERS, MEDIA_LABELS, imageMediaType } from "./im.js";
 import * as workspaces from "./workspaces.js";
 
@@ -175,6 +175,39 @@ export function buildWakePrompt(platform, chatName, chatId, messages, {
   return parts.join("\n");
 }
 
+/**
+ * 人工开启值守时的开场载荷：不是命中唤醒，没有新消息也要把会话建起来。
+ * 消息只当上下文，回不回由 agent 按 skill 判断；插件不在这里发任何东西。
+ */
+export function buildOpenPrompt(platform, chatName, chatId, messages, {
+  profilePath = "", wakeMode = "mention",
+} = {}) {
+  const label = PLAT_LABEL[platform] || platform;
+  const safeName = sanitizeUntrusted(chatName || chatId);
+  const lines = messages
+    .slice()
+    .sort((a, b) => (a.ts_epoch - b.ts_epoch))
+    .map((m) => formatMsgLine(m, null, platform));
+  const parts = ["/cyber-im-avatar"];
+  parts.push(`值守已开启 · ${label} · ${safeName} · 会话开场（人工开启，不是新消息唤醒）`);
+  parts.push(`chat_id：${chatId}`);
+  parts.push("运行形态：DSH 插件壳；监听、水位、唤醒由插件负责，不要挂监听，不要运行 listen_cli/bootstrap.py。");
+  if (profilePath) parts.push(`画像文件：${profilePath}（先读它；学到长期事实就直接改这个文件，插件不代写。）`);
+  if (lines.length) {
+    parts.push(`最近上下文（最近 30 分钟，共 ${lines.length} 条）：`);
+    parts.push(...lines);
+  } else {
+    parts.push("最近 30 分钟没有新消息。");
+  }
+  parts.push(wakeMode === "all"
+    ? "全量模式：非点名的群消息只看不回，要本人表态的写进当日日报；标了「（@你）」的照常处理。"
+    : "只盯 @我：非点名的群消息不需要处理。");
+  parts.push("这一轮是用户点「加入值守」触发的：先把上下文和画像读进来；" +
+    "有该回的就按 skill 处理，**没有需要回的就不要往会话里发任何消息**。");
+  if (lines.length) parts.push("上下文来自本地最近消息；更早的按 skill 在线拉，不要重发已经处理过的。");
+  return parts.join("\n");
+}
+
 export class Turns {
   constructor({ state, profiles, poller = null, im = null, media = null, logger = console }) {
     this.state = state;
@@ -273,15 +306,33 @@ export class Turns {
     }
   }
 
-  async _wake(chat, { interrupted = false, batch = null } = {}) {
+  /** 人工开启值守：立刻建会话/起一轮，不等新消息。在飞则不打断，直接算成功。 */
+  async open(chat, { reason = "join" } = {}) {
+    if (!this.hostReady()) return { ok: false, reason: "host_unavailable" };
+    const key = chatKey(chat.platform, chat.chat_id);
+    if (this.active.has(key)) return { ok: true, skipped: "running" };
+    return this._wake(chat, { interrupted: false, open: true, reason });
+  }
+
+  /** 开场轮取最近 30 分钟内、有正文的消息当上下文（不区分是否待回）。 */
+  openMessages(chat, windowSec = 1800, limit = RECENT_LIMIT) {
+    const floor = nowSec() - Math.max(60, Number(windowSec) || 1800);
+    return (chat?.recent || [])
+      .filter((m) => String(m.content || "").trim() && (Number(m.ts_epoch) || 0) >= floor)
+      .sort((a, b) => (a.ts_epoch - b.ts_epoch))
+      .slice(-limit);
+  }
+
+  async _wake(chat, { interrupted = false, batch = null, open = false } = {}) {
     const key = chatKey(chat.platform, chat.chat_id);
     const current = this.state.getChat(chat.platform, chat.chat_id) || chat;
     if (!current.watching || current.blocked) {
       return { ok: false, reason: "not_watching" };
     }
     // 插件只追加消息：没有新消息/待回就不起 turn，也不生成空载荷。
-    const messages = this.wakeMessages(current, batch);
-    if (!messages.length) return { ok: false, reason: "no_pending" };
+    const opening = !!open;
+    const messages = opening ? this.openMessages(current) : this.wakeMessages(current, batch);
+    if (!messages.length && !opening) return { ok: false, reason: "no_pending" };
     const old = this.active.get(key);
     if (old) {
       old.cancelled = true;
@@ -323,10 +374,14 @@ export class Turns {
       const profilePath = this.profiles.pathFor(current.platform, current.chat_id, current.name);
       const firstTurn = current.prompt_session !== sid;
       const media = await this.resolveMedia(current, messages, agent);
-      const prompt = buildWakePrompt(current.platform, current.name, current.chat_id, messages, {
-        profilePath, interrupted, firstTurn, mediaMap: media.map,
-        wakeMode: current.wake_mode || "mention",
-      });
+      const prompt = opening
+        ? buildOpenPrompt(current.platform, current.name, current.chat_id, messages, {
+            profilePath, wakeMode: current.wake_mode || "mention",
+          })
+        : buildWakePrompt(current.platform, current.name, current.chat_id, messages, {
+            profilePath, interrupted, firstTurn, mediaMap: media.map,
+            wakeMode: current.wake_mode || "mention",
+          });
       const message = await makeUserMessage(prompt, media.parts);
       handle.promptId = message.id;
       const effective = session.cwd || "";

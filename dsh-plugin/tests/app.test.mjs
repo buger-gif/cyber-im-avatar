@@ -21,12 +21,13 @@ function makeApp() {
   const state = new State(dir);
   state.load();
   const profiles = new Profiles(dir);
-  const calls = { send: [], wake: [], cancel: [], poll: [], fetchThread: [] };
+  const calls = { send: [], wake: [], open: [], cancel: [], poll: [], fetchThread: [] };
   const turns = {
     hostReady: () => true,
     isActive: () => false,
     snapshot: () => ({}),
     async wake(chat) { calls.wake.push(chat.chat_id); return { ok: true, turn_id: "turn-1" }; },
+    async open(chat) { calls.open.push(chat.chat_id); return { ok: true, started: true }; },
     cancel(platform, chatId) { calls.cancel.push(chatId); return false; },
   };
   const im = {
@@ -101,6 +102,9 @@ test("watch creates target + profile; unwatch cancels without deleting the targe
   assert.equal(chat.watching, true);
   assert.equal(chat.target, true);
   assert.ok(fs.existsSync(profiles.pathFor("feishu", "oc_abc", "示例对象 A")));
+  assert.deepEqual(calls.open, ["oc_abc"], "加入值守立刻起一次开场会话");
+  assert.equal(out.body.open.ok, true);
+  assert.deepEqual(calls.poll.at(-1).opts, { name: "示例对象 A", kind: "p2p", force: true, wake: false });
 
   out = await app.handle("/api/unwatch", "POST", null, { platform: "feishu", chat_id: "oc_abc" });
   assert.equal(out.body.ok, true);
@@ -354,4 +358,31 @@ test("joining watch on a group defaults to mention mode and starts polling", asy
   assert.equal(chat.timer, 1, "群加入值守应当真的拉起来");
   assert.equal(chat.wake_mode, "mention", "默认只盯 @我");
   assert.equal(out.body.chat.wake_mode, "mention");
+});
+
+test("a failed opening turn never fails the join itself", async () => {
+  const { app, state } = makeApp();
+  app.turns.open = async () => { throw new Error("session_locked_other_host"); };
+  const out = await app.handle("/api/watch", "POST", null, {
+    platform: "feishu", chat_id: "oc_half", name: "示例对象 B", kind: "p2p", watching: true,
+  });
+  assert.equal(out.body.ok, true);
+  assert.equal(out.body.open.ok, false);
+  assert.match(out.body.open.reason, /session_locked_other_host/);
+  assert.equal(state.getChat("feishu", "oc_half").watching, true, "值守状态已经保存");
+});
+
+test("switching a group from off to mention opens a session; re-joining does not", async () => {
+  const { app, state, calls } = makeApp();
+  await app.handle("/api/chat/mode", "POST", null, {
+    platform: "feishu", chat_id: "oc_g10", name: "示例群", kind: "group", mode: "mention",
+  });
+  assert.deepEqual(calls.open, ["oc_g10"]);
+  const before = state.getChat("feishu", "oc_g10");
+  assert.equal(before.watching, true);
+
+  await app.handle("/api/chat/mode", "POST", null, {
+    platform: "feishu", chat_id: "oc_g10", mode: "all",
+  });
+  assert.deepEqual(calls.open, ["oc_g10"], "已在值守的会话再切模式不重复开会话");
 });

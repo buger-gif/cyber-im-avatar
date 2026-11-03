@@ -181,7 +181,7 @@ const targets = [
   {
     platform: "feishu", name: "林一帆", chat_id: "oc_demo_lin", open_id: "ou_demo_lin",
     kind: "p2p", in_env: true,
-    profile: "# 林一帆\n\n> 飞书 · oc_demo_lin\n> 画像由值守 agent 与面板共同维护：只写下次值守还会用到的信息，不保存聊天原文。\n\n## 对方是谁\n\n- 产品部，负责云雀项目交付。\n\n## 沟通偏好\n\n- 先要结论，再要细节；大段铺垫会被跳过。\n",
+    profile: "# 林一帆\n\n> 飞书 · oc_demo_lin\n> 画像由值守 agent 与面板共同维护：只写下次值守还会用到的信息，不保存聊天原文。\n\n## 对方是谁\n\n- 产品部，云雀项目交付负责人。\n\n## 沟通偏好\n\n- 先要结论，再要细节；大段铺垫会被跳过。\n\n## 在意与忌讳\n\n- 不接受「我催一下」这种没有时间点的回复。\n\n## 历史结论\n\n- 说「马上」≈ 两天；催第三次才会真的动。\n- 会上不表态的事，会后私聊才是他的真意见。\n- 报价先给区间和口径，别先解释成本。\n",
     profile_excerpt: "产品部，负责云雀项目交付。",
     profile_path: "profiles/feishu/oc_demo_lin.md",
     profile_updated_at: now - 3600,
@@ -376,14 +376,14 @@ export const intercept = `(() => {
     if (p === "/api/watch" || p === "/api/unwatch") {
       const c = FIX.chats.find((x) => x.platform === body.platform && x.chat_id === body.chat_id);
       if (c) c.watching = p === "/api/unwatch" ? 0 : (body.watching === false ? 0 : 1);
-      return { ok: true };
+      return { ok: true, open: { ok: true } };
     }
     if (p === "/api/chat/mode") {
       const row = FIX.chats.find((x) => x.platform === body.platform && x.chat_id === body.chat_id) || {};
       row.watching = body.mode === "off" ? 0 : 1;
       row.timer = body.mode === "off" ? -1 : 1;
       row.wake_mode = body.mode === "all" ? "all" : "mention";
-      return { ok: true, chat: row };
+      return { ok: true, chat: row, open: { ok: body.mode !== "off" } };
     }
     if (p === "/api/chat/timer") {
       const c = FIX.chats.find((x) => x.platform === body.platform && x.chat_id === body.chat_id);
