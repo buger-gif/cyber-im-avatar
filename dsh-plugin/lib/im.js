@@ -23,11 +23,21 @@ export const PLATFORM_META = {
   dingtalk: { label: "钉钉", short: "钉", color: "#1890FF" },
 };
 
+/**
+ * 插件壳主动取回的媒体类型。只有这里列出的类型才在唤醒时下载；
+ * 其余类型在 prompt 里标“未适配，可用 CLI 取”。sticker 单独处理：不下载。
+ */
+export const MEDIA_ADAPTERS = {
+  feishu: { types: ["image", "file", "audio", "media", "post"] },
+  wecom: { types: ["image", "file", "voice", "video"] },
+};
+
 const PLACEHOLDER = {
   sticker: "[表情]", image: "[图片]", file: "[文件]", audio: "[语音]", media: "[视频]",
   post: "[富文本]", interactive: "[卡片]", share_chat: "[群名片]", share_user: "[个人名片]",
   system: "[系统消息]", merge_forward: "[合并转发]", location: "[位置]",
 };
+export const MEDIA_LABELS = PLACEHOLDER;
 
 export const ADAPTERS = {
   feishu: {
@@ -46,6 +56,10 @@ export const ADAPTERS = {
       "--msg-type", "text", "--text", "{text}", "--as", "user"],
     cmd_send_user: ["im", "+messages-send", "--user-id", "{chat_id}",
       "--msg-type", "text", "--text", "{text}", "--as", "user"],
+    cmd_media_download: ["im", "+messages-resources-download", "--message-id", "{msg_id}",
+      "--file-key", "{key}", "--type", "{type}", "--output", "{output}", "--as", "user"],
+    cmd_mget: ["im", "+messages-mget", "--message-ids", "{msg_id}",
+      "--download-resources", "--as", "user"],
     cmd_search: ["contact", "+search-user", "--query", "{q}", "--as", "user"],
     cmd_chat_search: ["im", "+chat-search", "--as", "user", "--query", "{q}",
       "--page-size", "{limit}"],
@@ -58,6 +72,8 @@ export const ADAPTERS = {
     f_time: [["create_time"], ["create_at"]],
     f_type: [["msg_type"]],
     f_mentions: [["mentions"]],
+    f_app_link: [["message_app_link"], ["app_link"]],
+    f_media_id: [["media_id"]],
     f_chat_name: [["name"]],
     f_chat_mode: [["chat_mode"]],
     order: "desc",
@@ -68,6 +84,8 @@ export const ADAPTERS = {
     self_id_regex: /Bot ID:\s*(\S+)/,
     cmd_list: ["chat", "messages", "list", "--chat-id", "{chat_id}",
       "--begin-time", "{begin_time}", "--end-time", "{end_time}"],
+    // 媒体命令参数未在本机实测；失败按“未适配”降级，不猜。可用 env.json overrides 改。
+    cmd_media: ["media", "download", "--media-id", "{media_id}", "--output", "{output}"],
     cmd_send: ["message", "send", "--chat-id", "{chat_id}",
       "--msg-type", "text", "--text", "{text}"],
     cmd_search: ["contact", "users", "search", "--keywords", "{q}"],
@@ -80,6 +98,8 @@ export const ADAPTERS = {
     f_content: [["text", "content"], ["content"]],
     f_time: [["send_time"], ["create_time"]],
     f_type: [["msg_type"]],
+    f_media_id: [["media_id"], ["image", "media_id"], ["file", "media_id"],
+      ["voice", "media_id"], ["video", "media_id"]],
     f_chat_name: [["chat_name"]],
     f_chat_mode: [["chat_type"]],
     order: "asc",
@@ -204,6 +224,129 @@ function outline(obj, depth = 0) {
   return typeof obj;
 }
 
+function jsonMaybe(text) {
+  const s = String(text == null ? "" : text).trim();
+  if (!s.startsWith("{") && !s.startsWith("[")) return null;
+  try { return JSON.parse(s); } catch { return null; }
+}
+
+function walkResourceKeys(node, msgType, out) {
+  if (Array.isArray(node)) {
+    for (const item of node) walkResourceKeys(item, msgType, out);
+    return;
+  }
+  if (!node || typeof node !== "object") return;
+  if (typeof node.image_key === "string" && /^img_/.test(node.image_key)) {
+    out.push({ key: node.image_key, type: "image", name: String(node.file_name || "") });
+  }
+  if (typeof node.file_key === "string" && /^file_/.test(node.file_key)) {
+    const isImage = node.tag === "img" || msgType === "image";
+    out.push({ key: node.file_key, type: isImage ? "image" : "file",
+      name: String(node.file_name || node.fileName || "") });
+  }
+  for (const value of Object.values(node)) walkResourceKeys(value, msgType, out);
+}
+
+/**
+ * 从消息正文里抽飞书资源键。lark-cli 可能给 JSON 字符串，也可能压平成
+ * `[image: img_...]` / `<file .../>` 的标记；两种都认。解析不到时由调用方
+ * 用 `+messages-mget --download-resources` 兜底。
+ */
+export function feishuResources(message) {
+  const msgType = String(message?.msg_type || "");
+  const content = message?.content;
+  const found = [];
+  const parsed = jsonMaybe(content);
+  if (parsed) walkResourceKeys(parsed, msgType, found);
+  const text = String(content == null ? "" : content);
+  const seen = new Set(found.map((r) => r.key));
+  const add = (key, type, name = "") => {
+    if (!key || seen.has(key)) return;
+    seen.add(key);
+    found.push({ key, type, name });
+  };
+  const reImage = /(?:\[image:\s*|!\[[^\]]*\]\(|<image[^>]*key=["'])(img_[A-Za-z0-9_-]+)/g;
+  let m;
+  while ((m = reImage.exec(text))) add(m[1], "image");
+  const reFileTag = /<file[^>]*\bkey=["'](file_[A-Za-z0-9_-]+)["'][^>]*>/g;
+  while ((m = reFileTag.exec(text))) {
+    const name = /\bname=["']([^"']+)["']/.exec(m[0]);
+    add(m[1], "file", name ? name[1] : "");
+  }
+  if (!found.length && msgType === "image") {
+    const img = /(img_[A-Za-z0-9_-]{5,})/.exec(text);
+    if (img) add(img[1], "image");
+  }
+  if (!found.length && msgType === "file") {
+    const file = /(file_[A-Za-z0-9_-]{5,})/.exec(text);
+    if (file) add(file[1], "file");
+  }
+  return [...new Map(found.map((r) => [r.key, r])).values()];
+}
+
+export function mediaIdOf(platform, message) {
+  if (platform === "wecom") {
+    const ad = ADAPTERS.wecom;
+    return String(dig(message, ad.f_media_id) || "");
+  }
+  return feishuResources(message).map((r) => r.key).join(",");
+}
+
+const IMAGE_EXT = {
+  ".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg",
+  ".webp": "image/webp", ".gif": "image/gif",
+};
+
+export function imageMediaType(file) {
+  return IMAGE_EXT[String(path.extname(file || "")).toLowerCase()] || "";
+}
+
+function displayContent(msgType, raw) {
+  const text = String(raw == null ? "" : raw);
+  if (!PLACEHOLDER[msgType] || msgType === "text" || msgType === "post") return text;
+  if (msgType === "file") {
+    const obj = jsonMaybe(text);
+    const named = obj && typeof obj === "object" ? (obj.file_name || obj.fileName) : "";
+    const tag = /\bname=["']([^"']+)["']/.exec(text);
+    const name = String(named || (tag ? tag[1] : "") || "");
+    return name ? `[文件: ${name}]` : PLACEHOLDER.file;
+  }
+  return PLACEHOLDER[msgType];
+}
+
+function kindForType(msgType, key = "") {
+  if (msgType === "image" || /^img_/.test(key)) return "image";
+  if (msgType === "audio" || msgType === "voice") return "audio";
+  if (msgType === "media" || msgType === "video") return "video";
+  return "file";
+}
+
+function resolveInside(dir, file) {
+  const p = path.isAbsolute(file) ? file : path.resolve(dir, file);
+  const rel = path.relative(dir, p);
+  if (!rel || rel.startsWith("..") || path.isAbsolute(rel)) return "";
+  return p;
+}
+
+function findOutput(dir, stem, savedPath) {
+  if (savedPath) {
+    const p = resolveInside(dir, savedPath);
+    if (p && fs.existsSync(p) && fs.statSync(p).isFile()) return p;
+    // CLI 可能把相对 output 落到自己的允许根（/tmp、~/files）；saved_path 指向哪就取哪。
+    if (path.isAbsolute(savedPath) && fs.existsSync(savedPath) && fs.statSync(savedPath).isFile()) {
+      return savedPath;
+    }
+  }
+  let entries;
+  try { entries = fs.readdirSync(dir, { withFileTypes: true }); } catch { return ""; }
+  const hit = entries
+    .filter((e) => e.isFile() && e.name.startsWith(stem))
+    .map((e) => path.join(dir, e.name))
+    .sort((a, b) => fs.statSync(b).mtimeMs - fs.statSync(a).mtimeMs)[0];
+  return hit || "";
+}
+
+
 export class Adapter {
   constructor(platform, { dir = ENV_DIR } = {}) {
     if (!ADAPTERS[platform]) throw new Error(`unsupported platform: ${platform}`);
@@ -226,7 +369,7 @@ export class Adapter {
     return (tmpl || []).map((a) => String(a).replace(/\{(\w+)\}/g, (_, k) => (k in kw ? String(kw[k]) : `{${k}}`)));
   }
 
-  async run(args, timeout = 45) {
+  async run(args, timeout = 45, { cwd = "" } = {}) {
     let rc = 0;
     let stdout = "";
     let stderr = "";
@@ -235,6 +378,7 @@ export class Adapter {
         timeout: timeout * 1000,
         maxBuffer: 16 * 1024 * 1024,
         env: childEnv(),
+        cwd: cwd || undefined,
         windowsHide: true,
       });
       stdout = r.stdout || "";
@@ -247,6 +391,134 @@ export class Adapter {
     const raw = String(stdout || "").trim();
     const json = firstJson(raw);
     return { rc, json, raw: json ? raw : raw + (stderr ? `\n${stderr}` : "") };
+  }
+
+  /**
+   * 下载一条消息里的适配媒体。只在 Turns.wake 命中时调用。
+   * @returns {{ok:boolean, files:Array, error:string, unsupported?:boolean, sticker?:boolean}}
+   */
+  async downloadMedia(message, { dir, timeoutMs = 20000, media } = {}) {
+    if (!dir || !media) return { ok: false, files: [], error: "media_dir_unavailable" };
+    const msgType = String(message?.msg_type || "");
+    if (msgType === "sticker") return { ok: true, files: [], error: "", sticker: true };
+    if (this.platform === "feishu") {
+      if (!this.ad.cmd_media_download && !this.ad.cmd_mget) {
+        return { ok: false, files: [], unsupported: true, error: "media_command_unavailable" };
+      }
+      return this.downloadFeishu(message, { dir, timeoutMs, media });
+    }
+    if (this.platform === "wecom") {
+      if (!this.ad.cmd_media) {
+        return { ok: false, files: [], unsupported: true, error: "media_command_unavailable" };
+      }
+      return this.downloadWecom(message, { dir, timeoutMs, media });
+    }
+    return { ok: false, files: [], error: "platform_not_supported", unsupported: true };
+  }
+
+  async downloadFeishu(message, { dir, timeoutMs, media }) {
+    const msgId = String(message?.msg_id || "");
+    const resources = feishuResources(message);
+    const deadline = Date.now() + Math.max(1000, Number(timeoutMs) || 20000);
+    const files = [];
+    const errors = [];
+    for (let i = 0; i < resources.length; i += 1) {
+      const rem = deadline - Date.now();
+      if (rem <= 300) { errors.push("timeout"); break; }
+      const r = resources[i];
+      const stem = `dl-${i + 1}`;
+      const args = this.argv(this.ad.cmd_media_download, {
+        msg_id: msgId, key: r.key, type: r.type, output: stem,
+      });
+      // --output 只允许 cwd/tmp/~/files：把子进程 cwd 指到消息目录，用相对路径落盘。
+      const res = await this.run(args, Math.max(1, rem / 1000), { cwd: dir });
+      if (res.rc !== 0) {
+        errors.push(redact(res.raw || `rc=${res.rc}`, 160));
+        continue;
+      }
+      const saved = dig(res.json, [["data", "saved_path"], ["saved_path"]]) || stem;
+      const src = findOutput(dir, stem, saved);
+      if (!src) { errors.push(`no_file:${r.key}`); continue; }
+      const kind = kindForType(message.msg_type, r.key);
+      let name = r.name || path.basename(src);
+      if (!path.extname(name) && path.extname(src)) name += path.extname(src);
+      if (!name || name === ".") name = `${kind}-${i + 1}${path.extname(src)}`;
+      const dest = media.keep(dir, src, name);
+      files.push({ path: dest, kind, name: path.basename(dest) });
+    }
+    if (files.length) return { ok: true, files, error: errors.join("; ") };
+    // 正文解析不到资源键（post / 合并转发等）时，让 CLI 只取这一条并下载资源。
+    const rem = deadline - Date.now();
+    if (msgId && rem > 500 && this.ad.cmd_mget) {
+      const res = await this.run(this.argv(this.ad.cmd_mget, { msg_id: msgId }),
+        Math.max(1, rem / 1000), { cwd: dir });
+      if (res.rc === 0 && res.json) {
+        const got = this.collectMgetResources(res.json, { dir, media, msgId, msgType: message.msg_type });
+        if (got.files.length) return { ok: true, files: got.files, error: got.error || errors.join("; ") };
+        // post 只有文字、没有内嵌图片：不是下载失败，不要标“可用 CLI 取”。
+        if (message.msg_type === "post" && got.count === 0) {
+          return { ok: true, files: [], error: "", no_media: true };
+        }
+        if (got.error) errors.push(got.error);
+      } else {
+        errors.push(redact(res.raw || `rc=${res.rc}`, 160));
+      }
+    }
+    return { ok: false, files, error: errors.join("; ") || "no_resource" };
+  }
+
+  collectMgetResources(json, { dir, media, msgId, msgType }) {
+    const blocks = [];
+    const walk = (node) => {
+      if (Array.isArray(node)) { for (const item of node) walk(item); return; }
+      if (!node || typeof node !== "object") return;
+      if (Array.isArray(node.resources)) blocks.push(...node.resources);
+      for (const value of Object.values(node)) walk(value);
+    };
+    walk(json);
+    const mine = blocks.filter((r) => !msgId || !r?.message_id || String(r.message_id) === String(msgId));
+    const use = mine.length ? mine : blocks;
+    const files = [];
+    const errors = [];
+    for (let i = 0; i < use.length; i += 1) {
+      const r = use[i] || {};
+      if (r.error) { errors.push(`download_failed:${r.key || i}`); continue; }
+      const rel = r.local_path || r.localPath || "";
+      const src = rel ? resolveInside(dir, rel) : findOutput(path.join(dir, "lark-im-resources"), "img_", "");
+      if (!src || !fs.existsSync(src)) { errors.push(`missing_local_path:${r.key || i}`); continue; }
+      const kind = r.type === "image" || /^img_/.test(String(r.key || ""))
+        ? "image" : kindForType(msgType, r.key);
+      let name = path.basename(src);
+      if (!name || name === ".") name = `${kind}-${i + 1}`;
+      const dest = media.keep(dir, src, name);
+      files.push({ path: dest, kind, name: path.basename(dest) });
+    }
+    media.pruneEmptyDirs(dir);
+    return { files, error: errors.join("; "), count: use.length };
+  }
+
+  async downloadWecom(message, { dir, timeoutMs, media }) {
+    const mediaId = mediaIdOf("wecom", message);
+    if (!mediaId) return { ok: false, files: [], error: "missing_media_id" };
+    const stem = "dl-1";
+    const res = await this.run(
+      this.argv(this.ad.cmd_media, { media_id: mediaId, output: stem }),
+      Math.max(1, Number(timeoutMs) / 1000),
+      { cwd: dir },
+    );
+    if (res.rc !== 0) {
+      const raw = String(res.raw || `rc=${res.rc}`);
+      const unsupported = /unknown command|unrecognized|not found|no such|不支持/i.test(raw);
+      return { ok: false, files: [], unsupported, error: redact(raw, 200) };
+    }
+    const saved = dig(res.json, [["data", "saved_path"], ["saved_path"], ["path"]]) || stem;
+    const src = findOutput(dir, stem, saved);
+    if (!src) return { ok: false, files: [], error: "no_file" };
+    const kind = kindForType(message.msg_type);
+    let name = String(message.file_name || message.filename || path.basename(src));
+    if (!path.extname(name) && path.extname(src)) name += path.extname(src);
+    const dest = media.keep(dir, src, name || `${kind}${path.extname(src)}`);
+    return { ok: true, files: [{ path: dest, kind, name: path.basename(dest) }], error: "" };
   }
 
   async whoami() {
@@ -298,20 +570,25 @@ export class Adapter {
       }
     }
     if (!mid) return null;
-    const mtype = dig(it, this.ad.f_type) || "text";
-    let content = dig(it, this.ad.f_content) || "";
-    if (PLACEHOLDER[mtype] && !String(content || "").trim()) content = PLACEHOLDER[mtype];
+    const mtype = String(dig(it, this.ad.f_type) || "text").toLowerCase();
+    const rawContent = String(dig(it, this.ad.f_content) || "");
     const ts = String(dig(it, this.ad.f_time) || "");
-    return {
+    const msg = {
       msg_id: String(mid),
       sender_id: String(dig(it, this.ad.f_sender) || ""),
       sender_name: String(dig(it, this.ad.f_sender_name) || ""),
-      content: String(content || ""),
+      content: displayContent(mtype, rawContent),
       ts,
       ts_epoch: parseTs(ts),
       msg_type: mtype,
       mentions: dig(it, this.ad.f_mentions) || [],
+      app_link: String(dig(it, this.ad.f_app_link) || ""),
+      media_id: "",
     };
+    msg.media_id = this.platform === "wecom"
+      ? String(dig(it, this.ad.f_media_id) || "")
+      : mediaIdOf(this.platform, { ...msg, content: rawContent });
+    return msg;
   }
 
   async listChats(limit = 15) {
@@ -382,36 +659,53 @@ export class Adapter {
   }
 }
 
-export function isMention(msg, selfId, selfNames) {
-  const uid = String(selfId || "");
-  const mentions = (msg?.mentions || []).filter((m) => m && typeof m === "object");
-  if (mentions.length && uid) {
-    for (const mt of mentions) {
-      const mid = mt.id;
-      const cands = [
-        typeof mid === "object" ? mid?.open_id : mid,
-        mid?.user_id, mid?.union_id, mt.open_id, mt.user_id, mt.union_id, mt.key,
-      ];
-      if (cands.some((c) => c && String(c) === uid)) return true;
-    }
-    for (const mt of mentions) {
-      const nm = String(mt.name || "");
-      for (const n of selfNames || []) {
-        if (n && nm && (n === nm || nm.includes(n))) return true;
-      }
-    }
-  }
-  const content = String(msg?.content || "");
-  if (content.includes("@_user_")) return false;
-  for (const n of selfNames || []) {
-    if (n && content.includes("@" + n)) return true;
+const AT_BOUNDARY = /[\s，。！？、；：,.!?;:）)\]】}"'“”‘’]/;
+
+function atToken(content, name) {
+  const needle = "@" + name;
+  let i = content.indexOf(needle);
+  while (i >= 0) {
+    const before = i === 0 ? "" : content[i - 1];
+    const after = content[i + needle.length] || "";
+    if ((!before || AT_BOUNDARY.test(before)) && (!after || AT_BOUNDARY.test(after))) return true;
+    i = content.indexOf(needle, i + 1);
   }
   return false;
 }
 
+export function isMention(msg, selfId, selfNames) {
+  const uid = String(selfId || "");
+  const names = (selfNames || []).map((n) => String(n || "")).filter(Boolean);
+  const mentions = (msg?.mentions || []).filter((m) => m && typeof m === "object");
+  if (mentions.length) {
+    // 有结构化 mentions 时只认 ID：别人 @“张三丰”不能被当成 @“张三”。
+    if (uid) {
+      for (const mt of mentions) {
+        const mid = mt.id;
+        const cands = [
+          typeof mid === "object" ? mid?.open_id : mid,
+          mid?.user_id, mid?.union_id, mt.open_id, mt.user_id, mt.union_id, mt.key,
+        ];
+        if (cands.some((c) => c && String(c) === uid)) return true;
+      }
+      return false;
+    }
+    // 拿不到 self_id 时只接受 name 完全相等，不做子串兜底。
+    for (const mt of mentions) {
+      const nm = String(mt.name || "");
+      if (nm && names.some((n) => n === nm)) return true;
+    }
+    return false;
+  }
+  const content = String(msg?.content || "");
+  if (content.includes("@_user_")) return false;
+  return names.some((n) => atToken(content, n));
+}
+
 export class IM {
-  constructor({ dir = ENV_DIR } = {}) {
+  constructor({ dir = ENV_DIR, media = null } = {}) {
     this.dir = dir;
+    this.media = media;
     this.adapters = {};
     this.env = (() => {
       try { return JSON.parse(fs.readFileSync(path.join(dir, "env.json"), "utf8")); } catch { return {}; }
@@ -421,6 +715,32 @@ export class IM {
   adapter(platform) {
     if (!this.adapters[platform]) this.adapters[platform] = new Adapter(platform, { dir: this.dir });
     return this.adapters[platform];
+  }
+
+  /**
+   * 只在唤醒时调用：下载一个会话里本批待回消息的媒体。
+   * 未适配类型返回 unsupported=true，由 prompt 提示 agent 走 CLI。
+   */
+  async downloadMedia(platform, chatId, message, { timeoutMs = 20000 } = {}) {
+    const spec = MEDIA_ADAPTERS[platform];
+    if (!spec) return { ok: false, files: [], unsupported: true, error: "platform_not_supported" };
+    const msgType = String(message?.msg_type || "");
+    if (msgType === "sticker") return { ok: true, files: [], sticker: true, error: "" };
+    if (!spec.types.includes(msgType)) {
+      return { ok: false, files: [], unsupported: true, error: `unsupported_type:${msgType || "unknown"}` };
+    }
+    if (!this.media) return { ok: false, files: [], error: "media_unavailable" };
+    let dir;
+    try {
+      dir = this.media.ensureMessageDir(platform, chatId, message.msg_id);
+    } catch (e) {
+      return { ok: false, files: [], error: `media_dir: ${e?.message || e}` };
+    }
+    try {
+      return await this.adapter(platform).downloadMedia(message, { dir, timeoutMs, media: this.media });
+    } catch (e) {
+      return { ok: false, files: [], error: `${e?.name || "Error"}: ${e?.message || e}` };
+    }
   }
 
   cliPath(platform) {

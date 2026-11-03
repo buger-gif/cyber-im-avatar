@@ -1,7 +1,8 @@
 /**
  * poller.js — 值守的「耳朵」。
  *
- * 定时：每 10 分钟只拉值守中的私聊 + 明确勾了 timer=1 的群；屏蔽的一律不拉。
+ * 两条车道：快车道每 60 秒只拉值守候选（私聊 + 勾了 timer=1 的群）；
+ * 慢车道每 10 分钟做发现（whoami + 会话列表）并补拉一轮。屏蔽的一律不拉。
  * 按需：点开会话拉一次。
  * 手动：立刻拉一轮，冷却 20 秒。
  *
@@ -13,7 +14,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { isMention, PLATFORM_META } from "./im.js";
-import { chatKey, RECENT_LIMIT } from "./state.js";
+import { chatKey, RECENT_LIMIT, SUPPORTED_PLATFORMS } from "./state.js";
 
 function nowSec() {
   return Date.now() / 1000;
@@ -47,6 +48,8 @@ export class Poller {
     this.lastCycleAt = Number(runtime.last_cycle_at) || 0;
     this.lastCycleMs = Number(runtime.last_cycle_ms) || 0;
     this.lastResult = runtime.last_result || {};
+    this.fastAt = 0;
+    this.lastFast = {};
   }
 
   get cfg() {
@@ -59,6 +62,14 @@ export class Poller {
 
   get intervalSec() {
     return Math.max(10, Number(this.cfg?.poll?.interval_min) || 10) * 60;
+  }
+
+  /** 快车道间隔（秒）。0 = 关闭，只跑慢车道。 */
+  get fastSec() {
+    const n = Number(this.cfg?.poll?.fast_sec);
+    if (n === 0) return 0;
+    if (!Number.isFinite(n) || n <= 0) return Math.min(60, this.intervalSec);
+    return Math.max(20, Math.min(n, this.intervalSec));
   }
 
   get cooldownSec() {
@@ -101,21 +112,82 @@ export class Poller {
       this.schedule(2);
       return;
     }
-    if (now < this.nextCycleAt) {
-      this.schedule(Math.min(30, Math.max(1, this.nextCycleAt - now)));
-      return;
-    }
+    const full = now >= this.nextCycleAt;
     try {
-      await this.cycle();
+      if (full) {
+        await this.cycle();
+        this.nextCycleAt = nowSec() + this.intervalSec;
+      } else if (this.fastSec > 0) {
+        await this.fastCycle();
+      }
     } catch (e) {
-      this.logError(null, null, "cycle: " + (e && e.message ? e.message : e));
+      this.logError(null, null, (full ? "cycle: " : "fast cycle: ") +
+        (e && e.message ? e.message : e));
     }
-    this.nextCycleAt = nowSec() + this.intervalSec;
-    this.schedule(Math.min(30, Math.max(1, this.nextCycleAt - nowSec())));
+    this.scheduleNext();
+  }
+
+  scheduleNext() {
+    const now = nowSec();
+    const untilFull = Math.max(0, this.nextCycleAt - now);
+    const step = this.fastSec > 0 ? this.fastSec : Math.min(30, untilFull || 30);
+    const wait = untilFull > 0 && untilFull < step ? untilFull : step;
+    this.schedule(Math.max(1, wait));
+  }
+
+  /**
+   * 快车道：只拉既有候选，不做发现。错误由慢车道每轮记一次，
+   * 这里不写 runtime、不刷会话列表——每分钟一次的事不能碰这两样。
+   */
+  async fastCycle() {
+    if (this.cycleLock) return { ok: false, busy: true, reason: "上一轮还没跑完" };
+    this.cycleLock = true;
+    const t0 = Date.now();
+    const platforms = this.cfg.platforms || ["feishu", "wecom"];
+    const usable = [];
+    let got = 0;
+    let added = 0;
+    let skipped = 0;
+    let targets = [];
+    try {
+      for (const p of platforms) {
+        const ident = await this.whoami(p);
+        if (ident?.ok && ident.self_id) usable.push(p);
+      }
+      targets = this.candidates(usable);
+      for (const chat of targets) {
+        if (this.stopped) break;
+        const pending = this.state.pendingCount(chat) > 0;
+        const r = await this.pollChat(chat.platform, chat.chat_id, {
+          name: chat.name, kind: chat.kind, force: pending,
+          dueAfter: pending ? 0 : this.cooldownSec,
+        });
+        if (r.fetched) {
+          got += 1;
+          added += Number(r.new) || 0;
+        } else if (r.skipped) {
+          skipped += 1;
+        }
+      }
+      this.fastAt = nowSec();
+      this.lastFast = {
+        at: this.fastAt, chats: got, new: added, skipped,
+        targets: targets.length, ms: Date.now() - t0,
+        paused_platforms: platforms.filter((p) => !usable.includes(p)),
+      };
+      return { ok: true, ...this.lastFast };
+    } finally {
+      this.cycleLock = false;
+    }
   }
 
   async whoami(platform, refresh = false) {
-    if (this.identity[platform] && !refresh) return this.identity[platform];
+    const cached = this.identity[platform];
+    // 失败不永久缓存：同一轮里短时间复用（避免 status/poll 连打），下一轮重试。
+    if (cached && !refresh) {
+      if (cached.ok && cached.self_id) return cached;
+      if ((nowSec() - Number(cached.checked_at || 0)) < 5) return cached;
+    }
     let info;
     try {
       info = await this.im.adapter(platform).whoami();
@@ -150,14 +222,27 @@ export class Poller {
     let skipped = 0;
     let targets = [];
     try {
-      for (const p of platforms) await this.whoami(p);
-      if (this.cfg.poll?.refresh_chatlist !== false) await this.refreshChatlist(platforms);
-      targets = this.candidates(platforms);
+      const usable = [];
+      for (const p of platforms) {
+        const ident = await this.whoami(p);
+        if (ident?.ok && ident.self_id) {
+          usable.push(p);
+        } else {
+          // 没有 self_id 时，本人消息会被判成对方；宁可这一轮不拉，也不自回环。
+          this.logError(p, null, "身份不可用，已暂停该平台拉取：" +
+            String(ident?.detail || "whoami 未返回 self_id").slice(0, 200));
+        }
+      }
+      if (this.cfg.poll?.refresh_chatlist !== false) await this.refreshChatlist(usable);
+      targets = this.candidates(usable);
       for (const chat of targets) {
         if (this.stopped) break;
+        // 仍有待回时不受 cooldown 限制：点开只读不推进水位，别让积压等到下一轮。
+        const pending = this.state.pendingCount(chat) > 0;
         const r = await this.pollChat(chat.platform, chat.chat_id, {
-          name: chat.name, kind: chat.kind, force,
-          dueAfter: force ? 0 : this.intervalSec,
+          name: chat.name, kind: chat.kind, force: force || pending,
+          // 冷却只看 cooldown_sec；调度本身已经把定时轮隔到 interval_min。
+          dueAfter: force || pending ? 0 : this.cooldownSec,
         });
         if (r.fetched) {
           got += 1;
@@ -172,6 +257,7 @@ export class Poller {
       this.lastCycleMs = Date.now() - t0;
       this.lastResult = {
         at: now, chats: got, new: added, skipped, targets: targets.length,
+        paused_platforms: platforms.filter((p) => !usable.includes(p)),
         force: !!force, note,
       };
       this.state.data.runtime = {
@@ -188,7 +274,8 @@ export class Poller {
   }
 
   async refreshChatlist(platforms) {
-    const limit = Math.max(20, Number(this.cfg.poll?.dm_recent) || 20);
+    // 飞书 +chat-list 的 --page-size 实测上限 100；配置允许 200 只是面板口径。
+    const limit = Math.max(20, Math.min(Number(this.cfg.poll?.dm_recent) || 20, 100));
     for (const p of platforms) {
       let r;
       try {
@@ -223,8 +310,17 @@ export class Poller {
     return out;
   }
 
+  /** state 里存在、但插件壳不加载的平台（钉钉存量）：保留数据，不拉取。 */
+  legacyPlatforms() {
+    const out = new Set();
+    for (const c of this.state.listChats()) {
+      if (!SUPPORTED_PLATFORMS.includes(c.platform)) out.add(c.platform);
+    }
+    return [...out];
+  }
+
   async pollChat(platform, chatId, {
-    name = "", kind = "", force = false, dueAfter = 0, limit = 0, postTurn = false,
+    name = "", kind = "", force = false, dueAfter = 0, limit = 0, wake = true,
   } = {}) {
     const chat = this.state.ensureChat(platform, chatId, { name, kind });
     if (chat.blocked) return { fetched: false, blocked: true, skipped: "已屏蔽，不同步" };
@@ -234,8 +330,16 @@ export class Poller {
       const left = Math.ceil(cd - (now - (chat.last_sync || 0)));
       return { fetched: false, skipped: `${left}s 内刚拉过` };
     }
-    const baseline = !chat.last_epoch;
-    if (!this.identity[platform]) await this.whoami(platform);
+    const baseline = !chat.last_epoch && !chat.last_msg_id;
+    await this.whoami(platform);
+    const ident = this.identity[platform];
+    if (!ident?.ok || !ident.self_id) {
+      const msg = "身份不可用，已暂停该平台拉取";
+      chat.last_error = msg;
+      this.state.save();
+      this.logError(platform, chat.name, msg);
+      return { fetched: false, error: msg };
+    }
     const n = Math.max(1, Math.min(Number(limit) || this.cfg.poll?.per_chat_limit || 10, 50));
     let r;
     try {
@@ -258,9 +362,9 @@ export class Poller {
     }
     chat.last_error = "";
     chat.last_sync = now;
-    const messages = r.messages.map((m) => ({
+    const messages = r.messages.slice(0, n).map((m) => ({
       ...m, platform, chat_id: chatId,
-      is_self: !!this.identity[platform]?.self_id && m.sender_id === this.identity[platform].self_id,
+      is_self: !!ident.self_id && m.sender_id === ident.self_id,
     }));
     if (baseline && messages.length === 0) {
       chat.last_epoch = now;
@@ -268,30 +372,45 @@ export class Poller {
       this.state.save();
       return { fetched: true, new: 0, msgs: 0, baseline: true, woke: false, items: [] };
     }
-    const result = this.process(chat, messages, { baseline, platform });
+    const result = this.process(chat, messages, {
+      baseline, platform, advance: wake || baseline,
+    });
     this.state.save();
-    const woke = await this.maybeWake(chat, result.batch, postTurn);
+    const woke = wake ? await this.maybeWake(chat, result.batch) : false;
     return {
       fetched: true, new: result.batch.length, msgs: messages.length,
       baseline, woke, items: messages,
     };
   }
 
-  process(chat, messages, { baseline, platform }) {
+  process(chat, messages, { baseline, platform, advance = true }) {
     const selfId = this.identity[platform]?.self_id || "";
     const names = this.selfNames(platform);
     const floorEpoch = Number(chat.last_epoch) || 0;
+    const lastId = String(chat.last_msg_id || "");
+    const indexOf = new Map(messages.map((m, i) => [String(m.msg_id), i]));
+    const hasWatermark = !!lastId && indexOf.has(lastId);
+    const stopAt = hasWatermark ? indexOf.get(lastId) : -1;
     const selfEpoch = Math.max(0, ...messages
       .filter((m) => selfId && m.sender_id === selfId)
       .map((m) => Number(m.ts_epoch) || 0));
-    let newestEpoch = Number(chat.last_epoch) || 0;
-    let newestTs = chat.last_ts || "";
-    const classified = [];
-    for (const m of messages) { // 最新在前
-      if ((Number(m.ts_epoch) || 0) > newestEpoch) {
-        newestEpoch = Number(m.ts_epoch) || 0;
-        newestTs = m.ts || "";
+    // 消息列表是最新在前；同秒多条时第一个最大的就是最新，不能只按 epoch 收口。
+    let best = null;
+    for (let i = 0; i < messages.length; i += 1) {
+      const epoch = Number(messages[i].ts_epoch) || 0;
+      if (epoch < floorEpoch) continue;
+      if (!best || epoch > best.epoch) {
+        best = { epoch, ts: String(messages[i].ts || ""), id: String(messages[i].msg_id) };
       }
+    }
+    const classified = [];
+    const newIds = new Set();
+    for (let i = 0; i < messages.length; i += 1) { // 最新在前
+      const m = messages[i];
+      const isNew = !baseline && (hasWatermark
+        ? i < stopAt
+        : (Number(m.ts_epoch) || 0) > floorEpoch);
+      if (isNew) newIds.add(String(m.msg_id));
       const isSelf = !!selfId && m.sender_id === selfId;
       let kind;
       if (isSelf) kind = "out";
@@ -320,14 +439,28 @@ export class Poller {
         ts_epoch: Number(m.ts_epoch) || 0,
         kind,
         state,
+        msg_type: String(m.msg_type || ""),
+        app_link: String(m.app_link || ""),
+        media_id: String(m.media_id || ""),
+        media_paths: Array.isArray(m.media_paths) ? m.media_paths : [],
       });
     }
     this.state.mergeRecent(chat, classified);
     if (!baseline && selfEpoch) this.state.markEarlierReplied(chat, selfEpoch);
-    chat.last_epoch = newestEpoch || (baseline ? nowSec() : chat.last_epoch);
-    chat.last_ts = newestTs;
+    // 点开只读（wake=false）不推进水位：这次发现的新消息留给下一轮定时唤醒，
+    // 否则 batch 会被“看过”吞掉，永远不会叫醒 agent。
+    if (advance) {
+      if (best) {
+        chat.last_epoch = best.epoch;
+        chat.last_ts = best.ts;
+        chat.last_msg_id = best.id;
+      } else if (baseline && !messages.length) {
+        chat.last_epoch = nowSec();
+        chat.last_ts = "";
+      }
+    }
     const batch = classified.filter((m) => {
-      if ((Number(m.ts_epoch) || 0) <= floorEpoch) return false;
+      if (!newIds.has(m.msg_id)) return false;
       if (m.kind !== "dm" && m.kind !== "mention" && m.kind !== "service") return false;
       const row = chat.recent.find((x) => x.msg_id === m.msg_id);
       return !!row && row.state === "new";
@@ -335,33 +468,38 @@ export class Poller {
     return { batch, selfEpoch };
   }
 
-  async maybeWake(chat, batch, postTurn = false) {
+  async maybeWake(chat, batch) {
     if (!chat.watching || chat.blocked) return false;
     const key = chatKey(chat.platform, chat.chat_id);
     const active = !!this.turns?.isActive(chat.platform, chat.chat_id);
     if (batch.length) {
       if (!this.turns) return false;
-      const r = await this.turns.wake(chat, { interrupted: active, postTurn, batch });
+      const r = await this.turns.wake(chat, { interrupted: active, batch });
       return !!r.ok;
     }
     if (chat.wake?.failed && !active && this.state.pendingCount(chat) > 0 && this.turns) {
-      const r = await this.turns.wake(chat, { retry: true, postTurn });
+      const r = await this.turns.wake(chat, { interrupted: active });
       return !!r.ok;
     }
     return false;
   }
 
   async fetchThread(platform, chatId, limit = 30) {
-    if (!this.identity[platform]) await this.whoami(platform);
+    await this.whoami(platform);
+    const n = Math.max(1, Math.min(Number(limit) || 30, 50));
+    // 企微只有时间窗（最多 7 天）；飞书没有时间回看参数，不传。
+    const lookbackMin = platform === "wecom"
+      ? Math.min(7 * 24 * 60, Math.max(5, (Number(this.cfg.poll?.backfill_hours) || 72) * 60))
+      : undefined;
     try {
       const r = await this.im.adapter(platform).fetchMessages(chatId, {
-        limit: Math.max(1, Math.min(limit, 100)), lookbackMin: 7 * 24 * 60,
+        limit: n, lookbackMin,
       });
       if (!r.ok) return { ok: false, items: [], error: r.error || "fetch failed" };
       const selfId = this.identity[platform]?.self_id;
       return {
         ok: true,
-        items: r.messages.map((m) => ({ ...m, platform, chat_id: chatId, is_self: !!selfId && m.sender_id === selfId })),
+        items: r.messages.slice(0, n).map((m) => ({ ...m, platform, chat_id: chatId, is_self: !!selfId && m.sender_id === selfId })),
         error: "",
       };
     } catch (e) {
@@ -407,6 +545,9 @@ export class Poller {
     return {
       interval_min: Number(p.interval_min) || 10,
       interval_sec: this.intervalSec,
+      fast_sec: this.fastSec,
+      fast_at: this.fastAt,
+      last_fast: this.lastFast,
       min_interval_min: 10,
       dm_scope: p.dm_scope || "recent",
       dm_recent: Number(p.dm_recent) || 20,
@@ -438,6 +579,7 @@ export class Poller {
         cli: this.im.cliPath(p),
         logged_in: !!ident.ok, self_id: ident.self_id || null,
         self_name: ident.name || null, detail: ident.detail || "",
+        identity_paused: !(ident.ok && ident.self_id),
         chats: rows.length, watched: watched.length, service: watched.length,
         blocked: rows.filter((r) => r.blocked).length,
         last_sync: lastSyncs.length ? Math.max(...lastSyncs) : 0,
@@ -456,6 +598,7 @@ export class Poller {
       poll_interval: this.intervalSec,
       poll: this.pollInfo(),
       platforms: pf,
+      legacy_platforms: this.legacyPlatforms(),
       counts: this.state.counts(),
       errors: this.errors.slice(0, 8),
       dsh: this.dshStatus(),
@@ -481,7 +624,9 @@ export class Poller {
       checks.push({
         platform: p, label: meta.label || p, level: ok ? "ok" : "fail",
         name: "身份与授权",
-        detail: String(ident.detail || "").slice(0, 200) || `self_id=${ident.self_id}`,
+        detail: ok
+          ? (String(ident.detail || "").slice(0, 200) || `self_id=${ident.self_id}`)
+          : `身份不可用，已暂停该平台拉取：${String(ident.detail || "whoami 未返回 self_id").slice(0, 180)}`,
         self_name: ident.name || null,
       });
       let adapter;
@@ -510,6 +655,13 @@ export class Poller {
       level: dsh.configured ? "ok" : "warn", name: "DSH 宿主",
       detail: dsh.label,
     });
+    for (const p of this.legacyPlatforms()) {
+      checks.push({
+        platform: p, label: PLATFORM_META[p]?.label || p, level: "warn",
+        name: "插件壳不支持",
+        detail: "插件壳只支持飞书 / 企微；存量会话保留但不拉取、不唤醒。钉钉请用独立 skill 形态。",
+      });
+    }
     const sp = skillPath();
     if (!fs.existsSync(sp)) {
       checks.push({
@@ -517,9 +669,15 @@ export class Poller {
         detail: `找不到 ${sp}；agent 能回但拿不到平台细节`,
       });
     }
+    const due = this.candidates(this.cfg.platforms || []);
+    const dmCount = due.filter((c) => (c.kind || "p2p") === "p2p").length;
     checks.push({
       platform: "poll", label: "拉取节奏", level: "ok", name: "定时拉取",
-      detail: `${Math.floor(this.intervalSec / 60)} 分钟一轮 · 私聊 ${this.candidates(this.cfg.platforms || []).length} 个 · 群按点开才拉`,
+      detail: this.fastSec > 0
+        ? `值守 ${this.fastSec} 秒（${due.length} 个会话，约 ${due.length * Math.floor(86400 / this.fastSec)} 次/天）` +
+          ` · 发现 ${Math.floor(this.intervalSec / 60)} 分钟（私聊 ${dmCount} / 群 ${due.length - dmCount}）`
+        : `${Math.floor(this.intervalSec / 60)} 分钟一轮（快车道已关） · 定时轮询 ${due.length} 个会话` +
+          `（私聊 ${dmCount} / 群 ${due.length - dmCount}）`,
     });
     return { checked_at: nowSec(), checks };
   }

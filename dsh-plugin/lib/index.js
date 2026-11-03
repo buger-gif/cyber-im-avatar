@@ -18,6 +18,7 @@ import { fileURLToPath } from "node:url";
 import { State } from "./state.js";
 import { Profiles } from "./profiles.js";
 import { IM } from "./im.js";
+import { MediaStore } from "./media.js";
 import { Poller } from "./poller.js";
 import { Turns } from "./turns.js";
 import { App } from "./app.js";
@@ -32,6 +33,7 @@ const MAX_BODY = 1 << 20; // 1 MiB：传的都是 JSON 参数
 let state = null;
 let profiles = null;
 let im = null;
+let media = null;
 let poller = null;
 let turns = null;
 let app = null;
@@ -40,6 +42,23 @@ let rootCtx = null;
 let registry = null;
 let sessionController = null;
 let sessions = null;
+let attachments = null;
+let llm = null;
+let permissionPresets = null;
+let mediaTimer = null;
+
+function cleanupMedia() {
+  if (!media || !state) return;
+  try {
+    const r = media.cleanup();
+    const pruned = state.pruneMediaPaths();
+    if (r.removed.length || pruned) {
+      console.log(LOG, `media cleanup: removed ${r.removed.length} file(s)`);
+    }
+  } catch (e) {
+    console.warn(LOG, "media cleanup failed:", e && e.message);
+  }
+}
 
 // ---- 进程内装配 -----------------------------------------------------------
 function boot() {
@@ -47,15 +66,20 @@ function boot() {
   state = new State();
   state.load();
   profiles = new Profiles(state.dir);
-  im = new IM({ dir: state.dir });
+  media = new MediaStore(state.dir);
+  im = new IM({ dir: state.dir, media });
   poller = new Poller({ state, im });
-  turns = new Turns({ state, profiles, poller });
+  turns = new Turns({ state, profiles, poller, im, media });
   poller.turns = turns;
   app = new App({ state, im, poller, turns, profiles });
   if (registry) turns.setRegistry(registry);
   if (sessionController && sessions) {
-    turns.setHost({ sessionController, sessions }, rootCtx);
+    turns.setHost({ sessionController, sessions, attachments, llm, permissionPresets }, rootCtx);
   }
+  cleanupMedia();
+  if (mediaTimer) clearInterval(mediaTimer);
+  mediaTimer = setInterval(cleanupMedia, 24 * 60 * 60 * 1000);
+  if (mediaTimer.unref) mediaTimer.unref();
   poller.start();
   console.log(LOG, "ready; state =", state.statePath);
   return app;
@@ -63,7 +87,7 @@ function boot() {
 
 function wireHost() {
   if (app && sessionController && sessions) {
-    turns.setHost({ sessionController, sessions }, rootCtx);
+    turns.setHost({ sessionController, sessions, attachments, llm, permissionPresets }, rootCtx);
   }
   if (app && registry) turns.setRegistry(registry);
 }
@@ -71,15 +95,21 @@ function wireHost() {
 function shutdown() {
   try { poller?.stop(); } catch { /* noop */ }
   try { turns?.stopAll(); } catch { /* noop */ }
+  if (mediaTimer) clearInterval(mediaTimer);
+  mediaTimer = null;
   poller = null;
   turns = null;
   profiles = null;
   im = null;
+  media = null;
   state = null;
   app = null;
   registry = null;
   sessionController = null;
   sessions = null;
+  attachments = null;
+  llm = null;
+  permissionPresets = null;
   rootCtx = null;
 }
 
@@ -203,6 +233,35 @@ function mount(ctx) {
     });
   } catch (e) {
     console.warn(LOG, "sessions unavailable:", e && e.message);
+  }
+
+  // 富媒体交付：附件服务与模型信息都是可选能力；旧 DSH 没有时自动降级为文本+路径。
+  try {
+    ctx.inject(["attachments"], (hostCtx) => {
+      attachments = hostCtx.attachments;
+      wireHost();
+    });
+  } catch (e) {
+    console.warn(LOG, "attachments unavailable:", e && e.message);
+  }
+  try {
+    ctx.inject(["llm"], (hostCtx) => {
+      llm = hostCtx.llm;
+      wireHost();
+    });
+  } catch (e) {
+    console.warn(LOG, "llm unavailable:", e && e.message);
+  }
+
+  // 画像由 agent 自己写；只有 dsh.full_access=true 时才需要这个服务把会话切到
+  // danger-full-access。旧 DSH 没有它也能跑，只是写画像会被沙箱拒绝。
+  try {
+    ctx.inject(["permissionPresets"], (hostCtx) => {
+      permissionPresets = hostCtx.permissionPresets;
+      wireHost();
+    });
+  } catch (e) {
+    console.warn(LOG, "permissionPresets unavailable:", e && e.message);
   }
 
   ctx.inject(["webServer"], (webCtx) => {
