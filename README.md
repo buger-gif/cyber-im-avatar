@@ -49,6 +49,18 @@ dsh plugin --profile web add ~/cyber-im-avatar/dsh-plugin
 dsh web    # 侧边栏底部出现「IM 值守」
 ```
 
+### 面板长这样
+
+截图由仓库自带的假数据渲染（`dsh-plugin/scripts/demo/fixture.mjs`）：人物、会话、工作区均为虚构。
+
+| 收件箱：谁在等你 | 分身：值守哪些会话 | 会话：上下文与手动发送 |
+|:---:|:---:|:---:|
+| <img src="docs/images/panel-inbox.png" width="260" alt="收件箱：待回、未读、@我、私聊、全部"> | <img src="docs/images/panel-service.png" width="260" alt="分身：值守中的会话与绑定工作区"> | <img src="docs/images/panel-thread.png" width="260" alt="会话详情：最近消息、画像与手动发送"> |
+
+**服务对象：画像里的雷霆评价**（「说『马上』≈ 两天」「不接受『我催一下』」这类结论，只写进本机画像文件，不会发到聊天里）
+
+<p align="center"><img src="docs/images/panel-targets.png" width="340" alt="服务对象：画像里的雷霆评价"></p>
+
 细节见 [dsh-plugin/README.md](dsh-plugin/README.md)。
 
 ## 为什么不是"定时任务 + AI"
