@@ -279,6 +279,42 @@ test("switching to a new session re-adds the skill entry", async () => {
   assert.doesNotMatch(host.followups[1].content[0].text, /当前画像|最近 10 条|im-profile-update/);
 });
 
+test("reopening mid-turn clears the binding and sends full context on the next wake", async () => {
+  const { state, chat, host, turns } = setup({ reply: "第一轮" });
+  host.agent.followup = (message) => {
+    host.followups.push(message);
+    queueMicrotask(() => {
+      host.emit({ type: "turn/start", seq: 1, data: { turn: 1 } });
+      host.emit({ type: "user/message", seq: 2, data: { id: message.id } });
+      // 不产生 turn/end：模拟值守到一半还在跑。
+    });
+  };
+  await turns.wake(chat);
+  await new Promise((r) => setTimeout(r, 5));
+  assert.equal(chat.prompt_session, "session-1");
+
+  // 与 POST /api/chat/session/reset 同一组操作：打断在飞 turn + 清空绑定。
+  assert.equal(turns.cancel("feishu", "oc_abc", "session_reset"), true);
+  state.setSession(chat, "");
+  assert.equal(chat.dsh_session, "");
+  assert.equal(chat.session_turns, 0);
+  assert.equal(chat.prompt_session, "");
+
+  await new Promise((r) => setTimeout(r, 5));
+  host.reply = "新会话";
+  await turns.wake(chat, { batch: [{
+    msg_id: "m9", sender_id: "ou_other", sender_name: "客户",
+    content: "重开后的新消息", ts: "t9", ts_epoch: 109, kind: "dm", state: "new",
+  }] });
+  const prompt = host.followups[1].content[0].text;
+  assert.match(prompt, /^\/cyber-im-avatar/);
+  assert.match(prompt, /值守命中 · 飞书 · 示例对象 A · 新消息/);
+  assert.match(prompt, /chat_id：oc_abc/);
+  assert.match(prompt, /运行形态：DSH 插件壳/);
+  assert.match(prompt, /画像文件：/);
+  assert.match(prompt, /重开后的新消息/);
+});
+
 test("a prompt that was never consumed keeps the skill entry but still only sends new messages", async () => {
   const { chat, host, turns } = setup();
   const real = host.agent.followup;
