@@ -5,8 +5,8 @@
 
 ## 更新时间
 
-2026-11-03（0.9.0 已发布：npm latest、`v0.9.0` tag 与市场索引都指向最终提交；
-真实客户命中与真实平台媒体待命中；插件壳已支持钉钉（dws），真发仍只到 dry-run）
+2026-11-03（0.9.0 已发布：npm latest=0.9.0，`v0.9.0` tag 指向发布代码，市场索引随后
+单独提交；真实客户命中与真实平台媒体待命中；插件壳已支持钉钉（dws），真发仍只到 dry-run）
 
 ## 最近批次
 
@@ -35,9 +35,9 @@
   三组主题本地提交（含后续修正），工作区干净、已推 main；已有会话的后续醒来只发消息行，
   完整上下文只在首轮载荷里出现。0013、0017–0023 全部逐条对勾后
   `git mv` 进 `docs/specs/archive/`，归档表已登记。ADR 0006 已从 proposed 移到 implemented。
-- **0.9.0 已发布**：npm `dist-tags.latest = 0.9.0`（publish 时间 2026-11-03T08:59:09Z）、
-  `v0.9.0` tag 指向最终提交、`market/index.json` 已由 `make-market-index --source npm`
-  重生成到 0.9.0 并通过 format-1 校验。CI 的「版本自检」只等 10 秒，registry 复制约 2 分钟，
+- **0.9.0 已发布**：npm `dist-tags.latest = 0.9.0`（publish 时间 2026-11-03T08:59:09Z）；
+  `v0.9.0` tag 指向发布代码 `82c11a0`，`market/index.json` 按 runbook 在其后单独提交，
+  已由 `make-market-index --source npm` 重生成到 0.9.0 并通过 format-1 校验。CI 的「版本自检」只等 10 秒，registry 复制约 2 分钟，
   该 run 曾误报红；自检已改成最多轮询 3 分钟。
 - **验证环境**：3080 使用 `IM_STANDIN_DIR=/tmp/im-standin-accept` 的隔离状态，只有合成会话
   `oc_e2e_local_only`；web profile 已 link 本地插件。**没有向真实客户外发**，也没有拉真实消息。
