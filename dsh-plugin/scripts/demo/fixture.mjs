@@ -181,6 +181,10 @@ const targets = [
   {
     platform: "feishu", name: "林一帆", chat_id: "oc_demo_lin", open_id: "ou_demo_lin",
     kind: "p2p", in_env: true,
+    profile: "# 林一帆\n\n> 飞书 · oc_demo_lin\n> 画像由值守 agent 与面板共同维护：只写下次值守还会用到的信息，不保存聊天原文。\n\n## 对方是谁\n\n- 产品部，负责云雀项目交付。\n\n## 沟通偏好\n\n- 先要结论，再要细节；大段铺垫会被跳过。\n",
+    profile_excerpt: "产品部，负责云雀项目交付。",
+    profile_path: "profiles/feishu/oc_demo_lin.md",
+    profile_updated_at: now - 3600,
     notes: [
       { index: 0, note: "先要结论，再要细节；大段铺垫会被跳过", at: "2026-10-28" },
       { index: 1, note: "周五下午固定开会，那个点找他大概率不回", at: "2026-10-30" },
@@ -191,6 +195,10 @@ const targets = [
   {
     platform: "wecom", name: "周敏", chat_id: "wm_demo_zhou", open_id: "ou_demo_zhou",
     kind: "p2p", in_env: true,
+    profile: "# 周敏\n\n> 企业微信 · wm_demo_zhou\n> 画像由值守 agent 与面板共同维护：只写下次值守还会用到的信息，不保存聊天原文。\n\n## 对方是谁\n\n- 财务部，合同与付款对接人。\n\n## 在意与忌讳\n\n- 金额、合同、对外承诺一律先问她本人。\n",
+    profile_excerpt: "财务部，合同与付款对接人。",
+    profile_path: "profiles/wecom/wm_demo_zhou.md",
+    profile_updated_at: now - 7200,
     notes: [
       { index: 0, note: "只在企业微信找她，别发邮件", at: "2026-10-29" },
       { index: 1, note: "金额、合同、对外承诺一律先问她本人", at: "2026-10-30" },

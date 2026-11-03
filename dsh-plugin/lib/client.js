@@ -1850,6 +1850,14 @@ window.__ModuleLoader__.load({
       return out.join("");
     }
 
+    /* 画像文件头两行是模板元信息（平台 · chat_id），只在文件里给 agent 看；
+       面板正文不展示内部 ID，需要排障时看 title 里的完整路径。 */
+    function profileForDisplay(text) {
+      return String(text || "").split(/\r?\n/).filter(function (line) {
+        return !/^>\s*(飞书|企业微信|钉钉)\s*·/.test(line.trim());
+      }).join("\n");
+    }
+
     function targetsView() {
       var scroll = h("div", { class: "ims-scroll" });
       var list = S.targets || [];
@@ -1903,7 +1911,7 @@ window.__ModuleLoader__.load({
           editBtn = null;
         } else {
           body = (t.profile || "").trim()
-            ? h("div", { class: "ims-profile", html: mdLite(t.profile) })
+            ? h("div", { class: "ims-profile", html: mdLite(profileForDisplay(t.profile)) })
             : h("div", { class: "ims-hint", text: "画像还是空的。点「编辑画像」写下对方是谁、怎么说话、在意什么。" });
           editBtn = h("button", {
             class: "ims-btn mini", type: "button",
@@ -1925,7 +1933,7 @@ window.__ModuleLoader__.load({
           h("div", { class: "ims-rowline" },
             h("span", { class: "ims-wschip", title: t.profile_path || "" },
               h("span", { class: "ims-ico", html: icon("note", 12) }),
-              t.profile_path ? baseName(t.profile_path) : "画像未生成"),
+              h("span", { class: "ims-wschip-txt", text: t.profile_path ? "画像文件" : "画像未生成" })),
             h("span", { class: "ims-hint",
               text: t.profile_updated_at ? "更新于 " + fmtTime(t.profile_updated_at) : "" })),
           body));
