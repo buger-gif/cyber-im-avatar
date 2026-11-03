@@ -1,5 +1,63 @@
 # Changelog
 
+## 未发布
+
+### 唤醒载荷增量追加（spec 0016）
+
+- **同一会话只追加新消息**：首轮仍发完整载荷（`/cyber-im-avatar`、画像、最近 10 条），
+  之后每条新消息只发「值守命中 · 平台 · 对象 · 新消息」+ 本次正文，不再把整份画像和
+  历史重贴一遍；DSH 对话不再出现一长串重复的巨型 user 消息。
+- **新状态字段 `chats.prompt_session`**：记录已消费完整载荷的 DSH session id。换会话、
+  重置会话或首轮载荷还没被 agent 消费时清空/不置位，下一轮自动回到完整载荷。
+- **批次透传**：poller 把命中 batch 直接交给 `turns.wake()`，增量只发触发本轮的新消息；
+  手动唤醒/失败重试没有 batch 时退回 pending 消息。
+- SKILL.md / dsh-plugin/README / 运行时架构同步；新增 6 条 Node 回归。
+
+### 画像上限与自动整理（spec 0015）
+
+- **不再无限追加**：画像软上限 8KB、硬上限 12KB。超过 8KB、历史结论 >20 条或日期流水
+  >8 条时，唤醒 prompt 要求 agent 本轮整理（合并重复、删一次性/已失效、日期流水改写成
+  结论，历史结论 ≤20 条）；没有新事实但需要整理，也要附整理后的完整画像。
+- **旧版归档**：整理缩小时，插件把旧画像追加到 `profiles/.../<id>.history.md`（0600）；
+  mtime CAS 冲突时不归档。
+- **独立形态兜底**：`bootstrap.py --compact PLATFORM ALIAS [--dry-run]` 按小节去重，
+  超 12KB 或历史结论 >20 条时从最旧开始归档；`--note` 追加后自动整理。
+
+### 监听 55 分钟主动退出，续一次模型上下文缓存
+
+- **默认 55 分钟退出一次**：模型服务商的上下文缓存通常 1 小时过期；监听脚本到
+  55 分钟主动退出（退出码 `3`，stderr 标 `[cache-refresh]`），agent 重挂时那次模型
+  调用会命中并续上缓存。等待期仍然只有本地轮询，不产生模型请求。
+- **可调/可关**：`--cache-refresh-min 55`（分钟，`0` 关闭）；与 `--until` /
+  `--timeout` 取更早者，临时值守重挂继续沿用原 `--until`，不重置截止时间。
+- **大 interval 不再拖过点**：sleep 会截到 deadline，避免 `--interval 600` 把 55 分钟
+  拖成 65 分钟。
+- SKILL.md / README 同步；新增回归 `tests/run_tests.py::test_cache_refresh`。
+
+### 分身页签收敛为「值守列表 + 统一搜索」（spec 0014）
+
+- **分身页签只留值守会话**：删除「群聊 N · 全部点开才拉」清单与已屏蔽清单；
+  已屏蔽会话的取消入口移到「设置 → 值守范围」，值守中的群卡片直接提供
+  「定时检测 @我」开关。
+- **搜人 / 搜群合并**：页签顶部一个输入框同时查人和群，结果按名称相关度排序、
+  按会话去重；行内只显示名称、部门与「群 / 私聊」，不再出现 `open_id` / `chat_id`。
+- **修可读名称**：飞书 `contact +search-user` 返回的是 `localized_name`，此前只读
+  `name` 导致搜索结果只剩 imid；现在映射 `localized_name`，并带上 `p2p_chat_id`
+  与 `department`。群搜索没有名称时不再拿 `chat_id` 冒充。
+
+### 面板配色改为跟随 DSH 主题 token
+
+- **不再自带一套暖灰色**：面板颜色全部改为 DSH 的语义 token（`--dsw-alias-bg-base` /
+  `label-primary` / `border-l2` / `interactive-bg-hover` / `state-*` 等），浅色、深色
+  都直接跟随宿主，不再自己维护两套色值。
+- **主色对齐**：主按钮用 DSH 的 brand-primary（浅色黑、深色白），焦点环与草稿标用
+  DSH 的 business 蓝；用户消息气泡用 `--dsw-specific-bubble`；危险 / 警告 / 成功
+  分别用 `state-error` / `state-warn` / `state-success`。
+- **平台头像改为低饱和色块**：飞书 / 企微 / 钉钉的标识色映射到 DSH 的蓝 / 绿调色板，
+  头像用 16% 透明底 + 同色文字，深色模式下不再白字压绿底。
+- 宿主没注入 token（独立预览页、旧版 DSH）时回退到 DSH 浅色调色板，深色回退值单独
+  给出；`web/panel.js` 与 `lib/client.js` 同步重建。
+
 ## 0.8.0 — 2026-11-03
 
 ### 0.8.0：插件收缩为分身壳 + Node 单进程重写（spec 0004 / 0013）

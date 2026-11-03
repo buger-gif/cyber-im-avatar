@@ -5,12 +5,17 @@
 
 ## 更新时间
 
-2026-11-03（v0.8.0：Node 单进程壳；公开历史已脱敏重写；npm 已发布，tag 已推）
+2026-11-03（v0.8.0 已发布；分身页签收敛 + 面板配色 + 监听缓存续期 + 画像整理 + 唤醒增量，未发版）
 
 ## 最近批次
 
 | 日期 | 主题 | 证据 |
 | --- | --- | --- |
+| 2026-11-03 | 唤醒载荷增量追加：首轮完整，同会话后续只发新消息（spec 0016） | `lib/turns.js`、`lib/state.js`、`lib/poller.js` |
+| 2026-11-03 | 画像 8KB/12KB 上限 + 整理归档（spec 0015） | `lib/profiles.js`、`lib/turns.js`、`scripts/bootstrap.py` |
+| 2026-11-03 | 监听脚本 55 分钟主动退出续上下文缓存（skill 形态） | `scripts/listen_core.py`、`README.md`、`tests/run_tests.py` |
+| 2026-11-03 | 面板配色改用 DSH 语义 token（浅/深两套跟随宿主） | `web/panel.js`、`lib/client.js` |
+| 2026-11-03 | 分身页签只留守值会话 + 搜人/搜群合并（spec 0014） | `web/panel.js`、`lib/im.js`、`tests/im.test.mjs` |
 | 2026-11-02 | 插件重写为 Node 单进程（spec 0013）：删 Python/stdio/SQLite/headless，state.json + live turn | `dsh-plugin/lib/`、`tests/*.test.mjs`、`scripts/migrate-state.mjs` |
 | 2026-11-02 | 服务对象画像文件 + 消息只留指针（spec 0012） | `lib/profiles.js`、`docs/specs/archive/0012-*.md` |
 | 2026-11-02 | 工作区接线修正（spec 0011）：加入值守带工作区、换区即解绑 | `lib/workspaces.js`、`tests/turns.test.mjs` |
@@ -21,6 +26,23 @@
 
 ## 当前断点
 
+- 唤醒载荷改为增量（spec 0016）：`chats.prompt_session` 标记已消费完整载荷的 session；同会话后续只发新消息，换会话/重置回到完整载荷。
+- 画像新增软上限 8KB / 硬上限 12KB（spec 0015）：超 8KB、历史结论 >20 条或日期流水
+  >8 条时，prompt 要求当轮整理成结论；缩小时旧版归档到 `<画像>.history.md`；
+  独立形态用 `bootstrap.py --compact` 兜底。
+- 监听脚本新增 55 分钟缓存续期（未发版，仅 skill 形态）：到点退出 3，agent 重挂那次
+  模型调用续上下文缓存；`--cache-refresh-min 0` 关闭。DSH 插件形态不走脚本，暂未加心跳。
+- 分身页签已收敛（spec 0014，未发版）：只列 `watching && !blocked` 的会话；顶部一个
+  输入框同时搜人/搜群，结果只显示名称、部门与「群/私聊」，不再出现 `open_id` / `chat_id`。
+  飞书搜人的可读字段是 `localized_name`，已在 `lib/im.js` 映射；`/api/search` 新增
+  `chat_id`（优先 `p2p_chat_id`）与 `department` 两个兼容字段。`lib/client.js` 已重建，
+  截图走查 `/tmp/im-service-search.png`（演示假数据）。
+- 面板配色已改跟 DSH 主题 token（未发版）：`--bg/--panel/--fg/--line/--accent/--danger/
+  --warn/--ok` 都取 `--dsw-alias-*`，深色只换 fallback；主按钮、焦点环、消息气泡、
+  toast、平台头像一并换到 DSH 调色板。独立预览页注入真实 token 后浅色解析
+  `bg=#fff fg=#0f1115`、深色 `bg=#151517 panel=#232324`；窄栏截图
+  `/tmp/im-narrow-light.png`、`/tmp/im-narrow-dark.png`。`lib/client.js` 已重建，
+  3080 刷新后生效。
 - 工作区代码 = **v0.8.0（已 push + npm 发布 + tag 已推；历史已压成单提交并脱敏）**：插件只剩 DSH 宿主里的 Node 模块
   `lib/index.js`（同源路由/token/skill 安装/服务注入）→ `app.js`（API）→
   `poller.js` + `im.js`（拉取）→ `turns.js`（live turn）→ `state.js` / `profiles.js`
