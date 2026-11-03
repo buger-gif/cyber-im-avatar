@@ -26,7 +26,7 @@
 ## 当前断点
 
 - **0.9.0 代码面已完成**：`docs/specs/active/` 已清空；本轮按 panel / 验收归档 / 收尾
-  三组本地提交，工作区干净、未 push；0013、0017–0022 全部逐条对勾后
+  三组主题本地提交（含后续修正），工作区干净、未 push；0013、0017–0022 全部逐条对勾后
   `git mv` 进 `docs/specs/archive/`，归档表已登记。ADR 0006 已从 proposed 移到 implemented。
 - **未发版**：`dsh-plugin/package.json` 仍是 0.8.0；`CHANGELOG.md` 的「未发布」已记录
   0013/0017–0022 的用户可见变化。不要在没有发版动作时改版本号。
