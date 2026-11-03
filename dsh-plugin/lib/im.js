@@ -352,9 +352,13 @@ export class Adapter {
     const { rc, json, raw } = await this.run(this.argv(this.ad.cmd_search, { q }));
     if (rc !== 0 || !json) return { ok: false, items: [], error: redact(raw || `rc=${rc}`) };
     const items = dig(json, [["data", "users"], ["users"], ["data", "items"], ["items"]]) || [];
+    // 飞书返回的是 localized_name；只回可读名称，找不到就留空，由面板隐藏，
+    // 不把 open_id 当名字展示。
     const out = items.map((u) => ({
       id: String(u?.open_id || u?.userid || u?.user_id || u?.id || ""),
-      name: String(u?.name || u?.user_name || u?.nickname || ""),
+      chat_id: String(u?.p2p_chat_id || ""),
+      name: String(u?.localized_name || u?.name || u?.user_name || u?.nickname || ""),
+      department: String(u?.department || ""),
     })).filter((x) => x.id);
     return { ok: true, items: out, error: "" };
   }
@@ -370,7 +374,7 @@ export class Adapter {
       const mode = String(dig(c, this.ad.f_chat_mode) || "");
       out.push({
         chat_id: String(c.chat_id),
-        name: String(dig(c, this.ad.f_chat_name) || c.chat_id),
+        name: String(dig(c, this.ad.f_chat_name) || ""),
         kind: mode.toLowerCase().includes("p2p") ? "p2p" : "group",
       });
     }

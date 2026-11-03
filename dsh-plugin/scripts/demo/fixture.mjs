@@ -104,6 +104,17 @@ const inbox = [
     chat_name: "云雀项目 · 交付群", chat_kind: "group", chat_mode: "monitor" },
 ];
 
+const searchUsers = [
+  { id: "ou_demo_lin", chat_id: "oc_demo_lin", name: "林一帆", department: "产品部" },
+  { id: "ou_demo_wang", chat_id: "", name: "王珂", department: "研发部 / 平台组" },
+  { id: "ou_demo_chen", chat_id: "", name: "陈语", department: "财务部" },
+];
+
+const searchChats = [
+  { chat_id: "oc_demo_grp", name: "云雀项目 · 交付群", kind: "group" },
+  { chat_id: "oc_demo_ops", name: "线上告警 · 值班群", kind: "group" },
+];
+
 const targets = [
   {
     platform: "feishu", name: "林一帆", chat_id: "oc_demo_lin", open_id: "ou_demo_lin",
@@ -176,6 +187,8 @@ export function resolve(path) {
   if (p === "/api/chats") return { items: chats };
   if (p === "/api/inbox") return { filter: "todo", items: inbox, counts: status.counts };
   if (p === "/api/thread") return { chat: chats[0], items: thread };
+  if (p === "/api/search") return { ok: true, items: searchUsers };
+  if (p === "/api/search/chats") return { ok: true, items: searchChats };
   if (p === "/api/targets") return { items: targets };
   if (p === "/api/workspaces") return workspaces;
   if (p === "/api/config") return config;
@@ -185,13 +198,15 @@ export function resolve(path) {
 
 /** 注入到页面里的拦截器源码（字符串，走 addScriptToEvaluateOnNewDocument）。 */
 export const intercept = `(() => {
-  const FIX = ${JSON.stringify({ chats, inbox, thread, targets, workspaces, status, config })};
+  const FIX = ${JSON.stringify({ chats, inbox, thread, targets, workspaces, status, config, searchUsers, searchChats })};
   const pick = (path) => {
     const p = path.split("?")[0];
     if (p === "/api/status") return FIX.status;
     if (p === "/api/chats") return { items: FIX.chats };
     if (p === "/api/inbox") return { filter: "todo", items: FIX.inbox, counts: FIX.status.counts };
     if (p === "/api/thread") return { chat: FIX.chats[0], items: FIX.thread };
+    if (p === "/api/search") return { ok: true, items: FIX.searchUsers };
+    if (p === "/api/search/chats") return { ok: true, items: FIX.searchChats };
     if (p === "/api/targets") return { items: FIX.targets };
     if (p === "/api/workspaces") return FIX.workspaces;
     if (p === "/api/config") return FIX.config;

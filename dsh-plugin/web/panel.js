@@ -10,16 +10,16 @@
 
   var API = (typeof window !== "undefined" && window.IM_STANDIN_API) || "/plugins/im-standin";
   var PLAT = {
-    feishu: { label: "飞书", short: "飞", color: "#3370FF" },
-    wecom: { label: "企业微信", short: "企", color: "#07C160" },
-    dingtalk: { label: "钉钉", short: "钉", color: "#1890FF" }
+    feishu: { label: "飞书", short: "飞", color: "#4176e6" },
+    wecom: { label: "企业微信", short: "企", color: "#22c55e" },
+    dingtalk: { label: "钉钉", short: "钉", color: "#4d93f8" }
   };
   var KIND = {
-    dm: { label: "私聊", color: "#3370FF" },
-    mention: { label: "@我", color: "#F5A623" },
-    service: { label: "客服", color: "#07C160" },
-    fyi: { label: "知会", color: "#8A8F99" },
-    out: { label: "已发", color: "#8A8F99" }
+    dm: { label: "私聊", color: "var(--dsw-alias-state-business-primary,#4176e6)" },
+    mention: { label: "@我", color: "var(--dsw-alias-state-warn-primary,#f59e0b)" },
+    service: { label: "客服", color: "var(--dsw-alias-state-success-primary,#22c55e)" },
+    fyi: { label: "知会", color: "var(--dsw-alias-label-tertiary,#81858c)" },
+    out: { label: "已发", color: "var(--dsw-alias-label-tertiary,#81858c)" }
   };
 
   var SVG = {
@@ -57,12 +57,21 @@
   }
 
   var CSS = [
-    /* ---- 底座：浅色/深色共用的结构与交互 ---- */
-    ".ims-root{--bg:#fff;--panel:#fbfaf7;--fg:#1c1b18;--fg2:#57544d;--fg3:#8f8a80;--line:#e8e4db;--line2:#d6d0c3;",
-    "--hover:rgba(28,27,24,.045);--sunk:rgba(28,27,24,.035);--accent:#2f6b52;--on-accent:#fff;--danger:#c0392b;--warn:#b7791f;--ok:#2f8f5b;",
-    "--r:10px;--r-sm:7px;--mono:ui-monospace,SFMono-Regular,Menlo,monospace;",
-    "--font:-apple-system,BlinkMacSystemFont,'Segoe UI','PingFang SC',system-ui,sans-serif;--rowgap:9px;--pad:16px;",
-    "font:13px/1.55 var(--font);color:var(--fg);-webkit-font-smoothing:antialiased}",
+    /* ---- 底座：颜色全部取 DSH 自己的语义 token（--dsw-alias-*）----
+       宿主没注入 token（独立预览页、老版本 DSH）时，回退到 DSH 浅色调色板。
+       深色不另配一套色，仍指向同一批 token，只换 fallback。 */
+    ".ims-root{--bg:var(--dsw-alias-bg-base,#fff);--panel:var(--dsw-alias-bg-layer-1,#fff);",
+    "--fg:var(--dsw-alias-label-primary,#0f1115);--fg2:var(--dsw-alias-label-secondary,#61666b);--fg3:var(--dsw-alias-label-tertiary,#81858c);",
+    "--line:var(--dsw-alias-border-l2,rgba(0,0,0,.1));--line2:var(--dsw-alias-border-l3,rgba(0,0,0,.12));",
+    "--hover:var(--dsw-alias-interactive-bg-hover,rgba(38,49,72,.06));--sunk:var(--dsw-specific-sidebar-nav-item-hover,#f1f3f5);",
+    "--accent:var(--dsw-alias-brand-primary,#0f1115);--on-accent:var(--dsw-alias-label-primary-foreground,#fff);",
+    "--accent-hover:var(--dsw-alias-button-primary-hover,#43454a);",
+    "--blue:var(--dsw-alias-state-business-primary,#4176e6);",
+    "--danger:var(--dsw-alias-state-error-primary,#ec1313);--warn:var(--dsw-alias-state-warn-primary,#f59e0b);--ok:var(--dsw-alias-state-success-primary,#22c55e);",
+    "--r:var(--dsw-radius-md,12px);--r-sm:var(--dsw-radius-sm,8px);",
+    "--mono:var(--dsh-font-family-code-default,ui-monospace,SFMono-Regular,Menlo,monospace);",
+    "--font:var(--dsw-font-family,-apple-system,BlinkMacSystemFont,'Segoe UI','PingFang SC',system-ui,sans-serif);",
+    "--rowgap:9px;--pad:16px;font:13px/1.55 var(--font);color:var(--fg);-webkit-font-smoothing:antialiased}",
     ".ims-root *{box-sizing:border-box}",
     ".ims-root button{font:inherit;color:inherit}",
     ".ims-ico{display:inline-flex;align-items:center;justify-content:center;line-height:0}",
@@ -71,9 +80,9 @@
     ".ims-seat{display:flex;align-items:center;gap:9px;width:100%;height:38px;padding:0 10px;border:0;border-radius:var(--r-sm);",
     "background:transparent;color:var(--fg2);font:inherit;cursor:pointer;overflow:hidden;text-align:left}",
     ".ims-seat:hover{background:var(--hover);color:var(--fg)}",
-    ".ims-seat-dot{width:7px;height:7px;border-radius:50%;flex:none;background:var(--ok);box-shadow:0 0 0 3px rgba(47,143,91,.16)}",
+    ".ims-seat-dot{width:7px;height:7px;border-radius:50%;flex:none;background:var(--ok);box-shadow:0 0 0 3px color-mix(in srgb,var(--ok) 18%,transparent)}",
     ".ims-seat-dot.off{background:var(--fg3);box-shadow:none}",
-    ".ims-seat-dot.warn{background:var(--warn);box-shadow:0 0 0 3px rgba(183,121,31,.18)}",
+    ".ims-seat-dot.warn{background:var(--warn);box-shadow:0 0 0 3px color-mix(in srgb,var(--warn) 20%,transparent)}",
     ".ims-seat-label{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}",
     ".ims-seat-badge{flex:none;min-width:18px;height:18px;padding:0 5px;border-radius:9px;background:var(--danger);",
     "color:#fff;font-size:11px;line-height:18px;text-align:center;font-variant-numeric:tabular-nums}",
@@ -96,7 +105,7 @@
     "font-size:12px;padding:5px 10px;border-radius:var(--r-sm);cursor:pointer;white-space:nowrap;display:inline-flex;align-items:center;gap:6px}",
     ".ims-btn:hover{background:var(--hover);color:var(--fg)}",
     ".ims-btn.primary{background:var(--accent);border-color:var(--accent);color:var(--on-accent)}",
-    ".ims-btn.primary:hover{filter:brightness(1.07);color:var(--on-accent)}",
+    ".ims-btn.primary:hover{background:var(--accent-hover);border-color:var(--accent-hover);color:var(--on-accent);filter:none}",
     ".ims-btn.ghost{border-color:transparent}",
     ".ims-btn.danger{color:var(--danger)}",
     ".ims-btn.mini{padding:2px 7px;font-size:11px}",
@@ -109,13 +118,13 @@
     ".ims-tab.on .ims-ico{color:var(--accent)}",
     ".ims-inp{flex:1;min-width:0;height:30px;border:1px solid var(--line2);border-radius:var(--r-sm);padding:0 9px;",
     "font:inherit;font-size:12.5px;color:var(--fg);background:var(--bg);outline:none}",
-    ".ims-inp:focus{border-color:var(--accent);box-shadow:0 0 0 3px color-mix(in srgb,var(--accent) 14%,transparent)}",
+    ".ims-inp:focus{border-color:var(--blue);box-shadow:0 0 0 3px color-mix(in srgb,var(--blue) 20%,transparent)}",
     ".ims-select{height:30px;max-width:230px;border:1px solid var(--line2);border-radius:var(--r-sm);background:var(--bg);",
     "color:var(--fg);font:inherit;font-size:12px;padding:0 6px;outline:none;cursor:pointer}",
-    ".ims-select:focus{border-color:var(--accent)}",
+    ".ims-select:focus{border-color:var(--blue)}",
     ".ims-ta{width:100%;min-height:70px;max-height:180px;resize:vertical;border:1px solid var(--line2);border-radius:var(--r);",
     "padding:9px 11px;font:inherit;font-size:12.5px;line-height:1.6;color:var(--fg);background:var(--bg);outline:none}",
-    ".ims-ta:focus{border-color:var(--accent);box-shadow:0 0 0 3px color-mix(in srgb,var(--accent) 12%,transparent)}",
+    ".ims-ta:focus{border-color:var(--blue);box-shadow:0 0 0 3px color-mix(in srgb,var(--blue) 18%,transparent)}",
     ".ims-switch{display:inline-flex;align-items:center;gap:6px;font-size:11.5px;color:var(--fg2);cursor:pointer;user-select:none;white-space:nowrap}",
     ".ims-switch input{accent-color:var(--accent);margin:0}",
     ".ims-switch.hot input{accent-color:var(--warn)}",
@@ -130,8 +139,8 @@
     ".ims-list{flex:1;overflow-y:auto;overflow-x:hidden;min-width:0;padding:2px 8px 12px}",
     ".ims-row{display:flex;gap:10px;padding:var(--rowgap) 10px;border-radius:var(--r-sm);cursor:pointer;align-items:flex-start;min-width:0}",
     ".ims-row:hover{background:var(--hover)}",
-    ".ims-pdot{width:26px;height:26px;border-radius:8px;flex:none;color:#fff;font-size:11.5px;display:flex;align-items:center;",
-    "justify-content:center;font-weight:650;letter-spacing:.02em}",
+    ".ims-pdot{width:26px;height:26px;border-radius:var(--r-sm);flex:none;font-size:11.5px;display:flex;align-items:center;",
+    "justify-content:center;font-weight:650;letter-spacing:.02em;background:color-mix(in srgb,var(--pc,var(--fg3)) 16%,transparent);color:var(--pc,var(--fg2))}",
     ".ims-row-main{flex:1;min-width:0}",
     ".ims-row-top{display:flex;align-items:center;gap:6px;min-width:0}",
     ".ims-name{font-size:12.8px;font-weight:620;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:26ch}",
@@ -162,17 +171,19 @@
     ".ims-thread{flex:1;overflow-y:auto;padding:14px var(--pad);display:flex;flex-direction:column;gap:9px;background:var(--bg)}",
     ".ims-msg{max-width:76%;padding:8px 11px;border-radius:var(--r);background:var(--panel);border:1px solid var(--line);",
     "white-space:pre-wrap;word-break:break-word;font-size:12.6px;line-height:1.62}",
-    ".ims-msg.me{align-self:flex-end;background:color-mix(in srgb,var(--accent) 10%,var(--bg));border-color:color-mix(in srgb,var(--accent) 22%,var(--line))}",
+    ".ims-msg.me{align-self:flex-end;background:var(--dsw-specific-bubble,#edf3fe);border-color:var(--dsw-specific-bubble-highlight,#d3e2ff)}",
     ".ims-msg-meta{font-size:10.5px;color:var(--fg3);margin-bottom:3px}",
     ".ims-compose{flex:none;border-top:1px solid var(--line);padding:10px var(--pad) 12px;display:flex;flex-direction:column;gap:8px}",
     ".ims-rowline{display:flex;align-items:center;gap:8px;flex-wrap:wrap;min-width:0}",
+    ".ims-found{padding:6px 0;border-top:1px solid var(--line)}",
+    ".ims-found:first-child{border-top:0;padding-top:2px}",
     ".ims-hint{font-size:11px;color:var(--fg3)}",
     ".ims-warnchip{font-size:11px;color:var(--warn);border:1px solid currentColor;border-radius:5px;padding:1px 6px}",
-    ".ims-draftchip{font-size:10.5px;color:var(--accent);background:color-mix(in oklab,var(--accent) 13%,transparent);border-radius:4px;",
+    ".ims-draftchip{font-size:10.5px;color:var(--blue);background:color-mix(in oklab,var(--blue) 12%,transparent);border-radius:4px;",
     "padding:1px 5px;flex:none;letter-spacing:.02em}",
     ".ims-banner{display:flex;align-items:center;gap:8px;padding:7px var(--pad);font-size:11.5px;color:var(--fg2);",
     "background:var(--sunk);border-bottom:1px solid var(--line)}",
-    ".ims-banner.warn{color:var(--warn);background:rgba(214,139,32,.08)}",
+    ".ims-banner.warn{color:var(--warn);background:color-mix(in srgb,var(--warn) 10%,transparent)}",
     ".ims-card{border:1px solid var(--line);border-radius:var(--r);padding:11px 13px;margin:9px var(--pad);display:flex;flex-direction:column;gap:8px;background:var(--bg)}",
     ".ims-card-h{display:flex;align-items:center;gap:8px;font-size:12.6px;font-weight:640}",
     ".ims-kv{display:flex;justify-content:space-between;gap:12px;font-size:11.5px;color:var(--fg3)}",
@@ -182,13 +193,13 @@
     ".ims-code{font-family:var(--mono);font-size:11px;color:var(--fg2);background:var(--sunk);border-radius:var(--r-sm);",
     "padding:9px;max-height:160px;overflow:auto;white-space:pre-wrap;word-break:break-word}",
     ".ims-err{color:var(--danger)}",
-    ".ims-toast{position:fixed;left:50%;transform:translateX(-50%);bottom:78px;background:var(--fg);color:var(--panel);",
-    "font-size:12px;padding:7px 14px;border-radius:999px;opacity:0;transition:opacity .18s;pointer-events:none;z-index:10000}",
+    ".ims-toast{position:fixed;left:50%;transform:translateX(-50%);bottom:78px;background:var(--dsw-alias-toast-bg,#353638);",
+    "color:var(--dsw-alias-toast-label,#fff);font-size:12px;padding:7px 14px;border-radius:999px;opacity:0;transition:opacity .18s;pointer-events:none;z-index:10000}",
     ".ims-toast.show{opacity:1}",
 
     /* 服务对象 / 习惯 */
-    ".ims-avatar{width:34px;height:34px;border-radius:10px;flex:none;color:#fff;display:flex;align-items:center;",
-    "justify-content:center;font-weight:650;font-size:13px}",
+    ".ims-avatar{width:34px;height:34px;border-radius:var(--r-sm);flex:none;display:flex;align-items:center;",
+    "justify-content:center;font-weight:650;font-size:13px;background:color-mix(in srgb,var(--pc,var(--fg3)) 16%,transparent);color:var(--pc,var(--fg2))}",
     ".ims-notes{display:flex;flex-direction:column;gap:6px;margin-top:2px}",
     ".ims-profile{border:1px solid var(--line);border-radius:var(--r-sm);background:var(--sunk);padding:9px 11px;",
     "font-size:12px;line-height:1.68;color:var(--fg2);max-height:320px;overflow:auto;word-break:break-word}",
@@ -218,9 +229,14 @@
        镜像，老版本缺 body 标记时兜底。CSS 祖先选择器随 DSH 切换主题即时生效，
        不需要刷新，也不需要 JS 监听。 */
     "body[data-ds-dark-theme] .ims-root,html[data-ds-theme-source=dark] .ims-root{",
-    "--bg:#16181d;--panel:#1a1c22;--fg:#eef1f6;--fg2:#b3b9c6;--fg3:#848b99;",
-    "--line:#282c34;--line2:#333844;--hover:rgba(255,255,255,.06);--sunk:rgba(255,255,255,.05);",
-    "--accent:#5ec49b;--on-accent:#07231a;--danger:#ff7b72;--warn:#e3b341;--ok:#5ec49b;color-scheme:dark}",
+    "--bg:var(--dsw-alias-bg-base,#151517);--panel:var(--dsw-alias-bg-layer-1,#232324);",
+    "--fg:var(--dsw-alias-label-primary,#f9fafb);--fg2:var(--dsw-alias-label-secondary,#cfd3d6);--fg3:var(--dsw-alias-label-tertiary,#adb2b8);",
+    "--line:var(--dsw-alias-border-l2,rgba(255,255,255,.12));--line2:var(--dsw-alias-border-l3,rgba(255,255,255,.16));",
+    "--hover:var(--dsw-alias-interactive-bg-hover,rgba(255,255,255,.08));--sunk:var(--dsw-specific-sidebar-nav-item-hover,#2c2c2e);",
+    "--accent:var(--dsw-alias-brand-primary,#f9fafb);--on-accent:var(--dsw-alias-label-primary-foreground,#0f1115);",
+    "--accent-hover:var(--dsw-alias-button-primary-hover,#ebeef2);",
+    "--blue:var(--dsw-alias-state-business-primary,#5686fe);",
+    "--danger:var(--dsw-alias-state-error-primary,#f25a5a);--warn:var(--dsw-alias-state-warn-primary,#f59e0b);--ok:var(--dsw-alias-state-success-primary,#22c55e);color-scheme:dark}",
 
     /* 席位独立挂载：只渲染角标与未读数，面板本体在右侧栏 */
     ".ims-root[data-mode=seat]{display:block;width:100%}",
@@ -343,8 +359,6 @@
       detail: null, thread: [], threadOffline: false, threadError: "", sending: false,
       chats: [], targets: [], workspaces: [], doctor: null, cfg: null,
       search: { q: "", platform: "feishu", items: null, err: "" },
-      gsearch: { q: "", platform: "feishu", items: null, err: "", open: false },
-      gAll: false,
       addWs: readWsMemory(), addWsPicked: false, detailWs: "", wsPicked: false,
       targetEdit: "", targetDrafts: {}, dead: false, timer: null
     };
@@ -512,7 +526,7 @@
       var dsh = st.dsh || {};
       return h("div", { class: "ims-foot" },
         h("span", { class: "ims-dot", style: "background:" + (st.running ? "var(--ok)" : "var(--fg3)") }),
-        h("span", { text: "分身 " + ((S.chats || []).filter(function (c) { return c.watching; }).length) + " 个" }),
+        h("span", { text: "分身 " + ((S.chats || []).filter(function (c) { return c.watching && !c.blocked; }).length) + " 个" }),
         busy ? h("span", { text: "· " + busy + " 个处理中" }) : null,
         (poll.blocked ? h("span", { text: "· 屏蔽 " + poll.blocked + " 个" }) : null),
         h("span", { class: "ims-grow" }),
@@ -745,7 +759,7 @@
     /* 一个会话一行：人多发几条不再刷屏，条数收进右侧角标，想看细节再展开。 */
     function inboxRow(g) {
       var key = g.key || (g.platform + ":" + g.chat_id);
-      var p = PLAT[g.platform] || { label: g.platform, short: "?", color: "#888" };
+      var p = PLAT[g.platform] || { label: g.platform, short: "?", color: "var(--fg3)" };
       var chat = chatOf(g.platform, g.chat_id);
       var kinds = (g.kinds || []).filter(function (k) {
         // 群里不该出现「私聊」：历史上被当成 p2p 扫过的群会带这个 kind，按当前会话类型纠正掉
@@ -806,7 +820,7 @@
                                          (g.preview && g.preview[0] || {}).kind),
         onclick: function () { openThread(g.platform, g.chat_id, g.msg_id); }
       },
-        h("div", { class: "ims-pdot", style: "background:" + p.color, text: p.short }),
+        h("div", { class: "ims-pdot", style: "--pc:" + p.color, text: p.short }),
         main,
         h("div", { class: "ims-row-side" },
           h("span", { class: "ims-time", text: fmtTime(g.last_epoch) }),
@@ -933,7 +947,7 @@
                       onclick: function () { S.detail = null; loadInbox().then(paint); } },
           h("span", { class: "ims-ico", html: icon("back", 15) })),
         h("span", { class: "ims-name", text: chat.name || d.chat_id }),
-        h("span", { class: "ims-tag", style: "color:" + (p.color || "#888"), text: p.label }),
+        h("span", { class: "ims-tag", style: "color:" + (p.color || "var(--fg3)"), text: p.label }),
         chat.kind === "group"
           ? h("span", { class: "ims-tag", style: "color:" + (chat.timer === 1 ? "var(--ok)" : "var(--fg3)"),
                         text: chat.timer === 1 ? "定时拉" : "点开才拉" })
@@ -1184,21 +1198,23 @@
     function serviceView() {
       var scroll = h("div", { class: "ims-scroll" });
       var all = S.chats || [];
-      // 屏蔽的会话单独一栏放最后：它不产生新数据，但值守配置保留着
-      var blockedList = all.filter(function (c) { return c.blocked; });
+      // 这个页签只放「正在值守」的会话；找新会话用顶部搜索，
+      // 群清单与已屏蔽都收起来（屏蔽恢复在设置里）。
       var watched = all.filter(function (c) { return c.watching && !c.blocked; });
+
+      scroll.appendChild(searchCard());
 
       scroll.appendChild(h("div", { class: "ims-card" },
         h("div", { class: "ims-card-h" },
           h("span", { class: "ims-ico", html: icon("headset", 15) }),
-          "分身实例 " + (watched.length || "")),
+          "值守中 " + (watched.length || "")),
         h("div", { class: "ims-hint", text: "值守 = 这通会话的新消息会唤醒 agent。一通会话绑一个 DSH 会话，默认永久复用；工作区决定 agent 调研的范围。" })));
 
       if (!watched.length) {
-        scroll.appendChild(h("div", { class: "ims-empty", text: "还没有值守会话。在下面搜人/搜群加入，或到「收件箱」点开会话打开值守。" }));
+        scroll.appendChild(h("div", { class: "ims-empty", text: "还没有值守会话。用上面的搜索加入一个人或一个群，或到「收件箱」点开会话打开值守。" }));
       }
       watched.forEach(function (c) {
-        var p = PLAT[c.platform] || { label: c.platform, color: "#888" };
+        var p = PLAT[c.platform] || { label: c.platform, color: "var(--fg3)" };
         var running = c.turn_state === "running";
         var tgt = (S.targets || []).filter(function (t) {
           return t.platform === c.platform && t.chat_id === c.chat_id;
@@ -1206,8 +1222,8 @@
         var prof = (tgt && tgt.profile_excerpt) || "";
         scroll.appendChild(h("div", { class: "ims-card" },
           h("div", { class: "ims-card-h" },
-            h("div", { class: "ims-avatar", style: "background:" + p.color, text: (c.name || "?")[0] }),
-            h("span", { class: "ims-name", text: c.name || c.chat_id }),
+            h("div", { class: "ims-avatar", style: "--pc:" + p.color, text: (c.name || "?")[0] }),
+            h("span", { class: "ims-name", text: c.name || "未命名会话" }),
             h("span", { class: "ims-tag", style: "color:" + p.color, text: p.label }),
             running ? h("span", { class: "ims-tag", style: "color:var(--ok)", text: "处理中" })
                     : (c.last_ok === false
@@ -1282,6 +1298,13 @@
                     .then(loadChats);
                 }
               }), "值守"),
+            c.kind === "group" ? h("label", {
+              class: "ims-switch", title: "开=按设置间隔定时检测这个群的 @我；关=只在点开时拉一次"
+            },
+              h("input", {
+                type: "checkbox", checked: c.timer === 1,
+                onchange: function (e) { setChatTimer(c, e.target.checked ? 1 : -1); }
+              }), "定时检测 @我") : null,
             h("span", { class: "ims-grow" }),
             c.last_error ? h("span", { class: "ims-hint ims-err", text: String(c.last_error).slice(0, 36) }) : null,
             h("button", {
@@ -1293,217 +1316,147 @@
             }, "移出"))));
       });
 
-      // 群聊：默认一个都不定时拉，点进去才拉一次；要做群值守再单独勾定时检测
-      var groups = all.filter(function (c) { return c.kind === "group" && !c.blocked; });
-      var gtimed = groups.filter(function (c) { return c.timer === 1; }).length;
-      scroll.appendChild(h("div", { class: "ims-section",
-        text: "群聊 " + (groups.length || "") + " · " + (gtimed ? gtimed + " 个定时检测" : "全部点开才拉") +
-          (blockedList.length ? " · 已屏蔽 " + blockedList.length : "") }));
-      if (!groups.length) {
-        scroll.appendChild(h("div", { class: "ims-empty",
-          text: all.some(function (c) { return c.kind === "group" && c.blocked; })
-            ? "群全部被屏蔽了。往下翻「已屏蔽」可以逐个取消。"
-            : "还没发现群。点顶部「同步」拉一次会话清单，或在下面按群名搜一个。" }));
-      }
-      var gshown = S.gAll ? groups.slice(0, 40) : groups.slice(0, 5);
-      gshown.forEach(function (c) {
-        var p = PLAT[c.platform] || { label: c.platform, color: "#888" };
-        var timed = c.timer === 1;
-        scroll.appendChild(h("div", { class: "ims-card" },
-          h("div", { class: "ims-card-h" },
-            h("div", { class: "ims-avatar", style: "background:" + p.color, text: (c.name || "群")[0] }),
-            h("span", { class: "ims-name", text: c.name || c.chat_id }),
-            h("span", { class: "ims-tag", style: "color:" + p.color, text: "群" }),
-            timed ? h("span", { class: "ims-tag", style: "color:var(--ok)", text: "定时" })
-                  : h("span", { class: "ims-tag", style: "color:var(--fg3)", text: "点开才拉" }),
-            h("span", { class: "ims-grow" }),
-            c.watching ? h("span", { class: "ims-tag", style: "color:var(--accent)", text: "值守中" }) : null),
-          h("div", { class: "ims-rowline" },
-            h("button", { class: "ims-btn mini", type: "button",
-              onclick: function () { openThread(c.platform, c.chat_id, ""); } }, "打开"),
-            h("button", { class: "ims-btn mini", type: "button",
-              onclick: function () {
-                api("/api/poll", { method: "POST", body: { platform: c.platform, chat_id: c.chat_id,
-                                                           name: c.name, kind: "group" } })
-                  .then(function (r) {
-                    say(r.fetched ? "已拉取这个群 · 新 " + (r.new || 0) + " 条"
-                                  : ("没拉：" + (r.skipped || r.error || "未知原因")));
-                    loadChats();
-                  });
-              } }, "拉一次"),
-            h("button", {
-              class: "ims-btn mini danger", type: "button",
-              title: "屏蔽这个群：不再同步它（连点开也不拉），也不进收件箱",
-              onclick: function () {
-                setChatBlocked(c.platform, c.chat_id, true, { name: c.name, kind: "group" })
-                  .then(paint);
-              }
-            }, "屏蔽"),
-            h("label", { class: "ims-switch", title: "开=按设置的间隔定时检测这个群的 @我（会持续调接口）；关=只在点开时拉一次" },
-              h("input", {
-                type: "checkbox", checked: timed,
-                onchange: function (e) { setChatTimer(c, e.target.checked ? 1 : -1); }
-              }), "定时检测 @我"),
-            c.watching ? null : h("button", {
-              class: "ims-btn mini", type: "button",
-              onclick: function () {
-                joinWatch(c.platform, c.chat_id, c.name, "group");
-              }
-            }, "加入值守")),
-          h("div", { class: "ims-kv" },
-            h("span", null, h("b", { text: timed ? "定时轮询" : "按需" }),
-              " · " + (c.poll_at ? "上次拉取 " + fmtTime(c.poll_at) : "还没拉过")),
-            h("span", { text: c.last_error ? "有错误" : "" }))));
-      });
+      return scroll;
+    }
 
-      if (groups.length > gshown.length) {
-        scroll.appendChild(h("div", { class: "ims-rowline", style: "padding:0 var(--pad) 8px" },
-          h("button", {
-            class: "ims-btn", type: "button",
-            onclick: function () { S.gAll = true; paint(); }
-          }, "展开全部 " + groups.length + " 个群")));
-      }
-
-      // 已屏蔽：群和单聊都在这里，方便哪天想通了逐个放回来
-      if (blockedList.length) {
-        scroll.appendChild(h("div", { class: "ims-section", text: "已屏蔽 " + blockedList.length + " 个 · 不同步" }));
-        blockedList.forEach(function (c) {
-          var p = PLAT[c.platform] || { label: c.platform, color: "#888" };
-          scroll.appendChild(h("div", { class: "ims-card" },
-            h("div", { class: "ims-card-h" },
-              h("div", { class: "ims-avatar", style: "background:" + p.color,
-                         text: (c.name || "?")[0] }),
-              h("span", { class: "ims-name", text: c.name || c.chat_id }),
-              h("span", { class: "ims-tag", style: "color:var(--fg3)",
-                          text: c.kind === "group" ? "群" : "私聊" }),
-              h("span", { class: "ims-tag", style: "color:var(--danger)", text: "已屏蔽" }),
-              h("span", { class: "ims-grow" }),
-              c.watching ? h("span", { class: "ims-tag", style: "color:var(--fg3)", text: "值守配置已保留" }) : null),
-            h("div", { class: "ims-rowline" },
-              h("button", { class: "ims-btn mini", type: "button",
-                onclick: function () { openThread(c.platform, c.chat_id, ""); } }, "看历史"),
-              h("button", {
-                class: "ims-btn mini primary", type: "button",
-                onclick: function () {
-                  setChatBlocked(c.platform, c.chat_id, false, { name: c.name, kind: c.kind })
-                    .then(paint);
-                }
-              }, "取消屏蔽"),
-              h("span", { class: "ims-hint",
-                          text: c.blocked_at ? "屏蔽于 " + fmtTime(c.blocked_at) : "" }))));
-        });
-      }
-
-      // 按群名找群：拿到 chat_id 才能把「指定的群」管起来
-      var gsel = h("select", { class: "ims-select" });
-      ["feishu", "wecom"].forEach(function (k) {
-        gsel.appendChild(h("option", { value: k, selected: S.gsearch.platform === k }, PLAT[k].label));
-      });
-      gsel.addEventListener("change", function () {
-        S.gsearch.platform = gsel.value; S.gsearch.items = null; S.gsearch.err = "";
-      });
-      var ginp = h("input", { class: "ims-inp", placeholder: "按群名搜索（如 告警群）" });
-      ginp.value = S.gsearch.q;
-      var ggo = h("button", { class: "ims-btn", type: "button" }, "搜群");
-      var gresult = h("div", {});
-      function paintGResult() {
-        gresult.textContent = "";
-        if (S.gsearch.err) gresult.appendChild(h("div", { class: "ims-hint ims-err", text: S.gsearch.err }));
-        (S.gsearch.items || []).forEach(function (c) {
-          var known = (S.chats || []).filter(function (x) {
-            return x.platform === S.gsearch.platform && x.chat_id === c.chat_id;
-          })[0];
-          gresult.appendChild(h("div", { class: "ims-rowline" },
-            h("span", { class: "ims-name", text: c.name || c.chat_id }),
-            h("span", { class: "ims-tag", text: c.kind === "group" ? "群" : "私聊" }),
-            h("span", { class: "ims-grow" }),
-            known ? h("button", { class: "ims-btn mini", type: "button",
-                onclick: function () { openThread(c.platform, c.chat_id, ""); } }, "打开")
-              : h("button", { class: "ims-btn mini", type: "button",
-                onclick: function () {
-                  joinWatch(S.gsearch.platform, c.chat_id, c.name, c.kind);
-                } }, "加入值守")));
-        });
-        if (S.gsearch.items && !S.gsearch.items.length) {
-          gresult.appendChild(h("div", { class: "ims-hint", text: "没搜到同名群。飞书只搜得到你是成员的群。" }));
-        }
-      }
-      function doGroupSearch() {
-        var q = ginp.value.trim();
-        S.gsearch.q = q;
-        if (!q) return say("先输入群名");
-        ggo.disabled = true; ggo.textContent = "…";
-        api("/api/search/chats", { body: { platform: S.gsearch.platform, q: q } }).then(function (r) {
-          ggo.disabled = false; ggo.textContent = "搜群";
-          (r.items || []).forEach(function (x) { x.platform = S.gsearch.platform; });
-          S.gsearch.items = r.items || [];
-          S.gsearch.err = r.ok ? "" : (r.error || "搜索失败");
-          paintGResult();
-        });
-      }
-      ggo.addEventListener("click", doGroupSearch);
-      ginp.addEventListener("keydown", function (e) { if (e.key === "Enter") doGroupSearch(); });
-      scroll.appendChild(h("div", { class: "ims-card" },
-        h("div", { class: "ims-card-h" },
-          h("span", { class: "ims-ico", html: icon("search", 15) }), "找群"),
-        h("div", { class: "ims-rowline" }, gsel, ginp, ggo),
-        h("div", { class: "ims-rowline" },
-          h("span", { class: "ims-hint", text: "加入值守工作区" }),
-          wsOptions(joinWorkspace(), function (v) {
-            S.addWs = v; S.addWsPicked = true; rememberWs(v);
-          }, true)),
-        gresult,
-        h("div", { class: "ims-hint", text: "指定群聊：搜到后「加入值守」即可在收件箱/分身里看到它；" +
-          "要不要定时拉，在群卡片上单独勾。" })));
-      paintGResult();
-
-      // 加入值守：搜人 + 先选工作区
+    // 搜人 + 搜群：一个输入框、一个结果列表；只显示可读名称，不露 imid。
+    function searchCard() {
       var sel = h("select", { class: "ims-select" });
       ["feishu", "wecom"].forEach(function (k) {
         sel.appendChild(h("option", { value: k, selected: S.search.platform === k }, PLAT[k].label));
       });
-      sel.addEventListener("change", function () { S.search.platform = sel.value; S.search.items = null; });
-      var inp = h("input", { class: "ims-inp", placeholder: "按名字搜索（如 示例对象 A）" });
+      var inp = h("input", { class: "ims-inp", placeholder: "搜人 / 搜群：输入名称，如 张三、告警群" });
       inp.value = S.search.q;
       var go = h("button", { class: "ims-btn", type: "button" }, "搜索");
+      var result = h("div", {});
+
+      function renderRows() {
+        result.textContent = "";
+        if (S.search.err) {
+          result.appendChild(h("div", { class: "ims-hint ims-err", text: S.search.err }));
+        }
+        var items = S.search.items;
+        if (!items) return;
+        if (!items.length) {
+          result.appendChild(h("div", { class: "ims-hint",
+            text: S.search.platform === "wecom"
+              ? "没搜到。企业微信只能按名字搜通讯录里的联系人。"
+              : "没搜到。飞书只搜得到你可见的人、你是成员的群。" }));
+          return;
+        }
+        items.forEach(function (x) {
+          var chatId = x.chat_id || x.id;
+          // 旧版本按 open_id 加入过的会话也认出来，避免同一个人再添一份。
+          var known = chatOf(S.search.platform, chatId) || chatOf(S.search.platform, x.id);
+          var matchId = (known && known.chat_id) || chatId;
+          var watching = !!(known && known.watching && !known.blocked);
+          var blocked = !!(known && known.blocked);
+          var kind = x.kind === "group" ? "group" : "p2p";
+          result.appendChild(h("div", { class: "ims-rowline ims-found" },
+            h("div", { class: "ims-avatar", style: "--pc:" + ((PLAT[S.search.platform] || {}).color || "var(--fg3)"),
+                       text: (x.name || "?")[0] }),
+            h("span", { class: "ims-name", text: x.name }),
+            h("span", { class: "ims-tag", style: "color:" + (kind === "group" ? "var(--fg3)" : "var(--accent)"),
+                        text: kind === "group" ? "群" : "私聊" }),
+            x.department ? h("span", { class: "ims-hint", text: x.department }) : null,
+            h("span", { class: "ims-grow" }),
+            blocked
+              ? h("button", {
+                  class: "ims-btn mini", type: "button",
+                  onclick: function () {
+                    setChatBlocked(S.search.platform, matchId, false, { name: x.name, kind: kind })
+                      .then(function () { loadChats(); });
+                  }
+                }, "取消屏蔽")
+              : watching
+                ? h("span", { class: "ims-tag", style: "color:var(--ok)", text: "值守中" })
+                : h("button", {
+                    class: "ims-btn mini primary", type: "button",
+                    onclick: function () {
+                      joinWatch(S.search.platform, matchId, x.name, kind, function () {
+                        loadChats().then(paintBody);
+                      });
+                    }
+                  }, "加入值守"),
+            known ? h("button", {
+              class: "ims-btn mini", type: "button",
+              onclick: function () { openThread(S.search.platform, matchId, ""); }
+            }, "打开") : null));
+        });
+      }
+
       function doSearch() {
+        if (go.disabled) return;
         var q = inp.value.trim();
         S.search.q = q;
         if (!q) return say("先输入名字");
+        var platform = S.search.platform;
         go.disabled = true; go.textContent = "…";
-        api("/api/search", { body: { platform: S.search.platform, q: q } }).then(function (r) {
+        Promise.all([
+          api("/api/search", { body: { platform: platform, q: q } })
+            .catch(function (e) { return { ok: false, items: [], error: String(e) }; }),
+          api("/api/search/chats", { body: { platform: platform, q: q } })
+            .catch(function (e) { return { ok: false, items: [], error: String(e) }; })
+        ]).then(function (rs) {
           go.disabled = false; go.textContent = "搜索";
-          S.search.items = r.items || [];
-          S.search.err = r.ok ? "" : (r.error || "搜索失败");
-          paint();
+          if (S.dead || S.search.platform !== platform) return;
+          var people = (rs[0].items || []).map(function (u) {
+            return { id: u.id, chat_id: u.chat_id || u.id, name: u.name,
+                     department: u.department || "", kind: "p2p" };
+          });
+          var groups = (rs[1].items || []).map(function (c) {
+            return { id: c.chat_id, chat_id: c.chat_id, name: c.name,
+                     department: "", kind: c.kind === "p2p" ? "p2p" : "group" };
+          });
+          // 名字不可读的结果直接隐藏：界面上不出现 ou_ / oc_ 这类 imid。
+          var merged = [], seen = {}, hidden = 0;
+          people.concat(groups).forEach(function (x) {
+            if (!x.name || !x.chat_id) { hidden++; return; }
+            var key = platform + ":" + x.chat_id;
+            if (seen[key]) return;
+            seen[key] = 1;
+            merged.push(x);
+          });
+          var ql = q.toLowerCase();
+          merged.sort(function (a, b) {
+            var an = String(a.name).toLowerCase(), bn = String(b.name).toLowerCase();
+            var ar = an === ql ? 0 : (an.indexOf(ql) === 0 ? 1 : 2);
+            var br = bn === ql ? 0 : (bn.indexOf(ql) === 0 ? 1 : 2);
+            return ar - br || an.localeCompare(bn, "zh-CN");
+          });
+          S.search.items = merged;
+          var errs = [];
+          if (!rs[0].ok && rs[0].error) errs.push("搜人：" + rs[0].error);
+          // 企微没有群搜索，这个错误不算失败，不弹给用户。
+          if (!rs[1].ok && rs[1].error && !/不支持/.test(rs[1].error)) errs.push("搜群：" + rs[1].error);
+          S.search.err = merged.length ? "" : errs.join(" · ");
+          renderRows();
+          if (hidden && merged.length) say("已隐藏 " + hidden + " 条没有可读名称的结果");
         });
       }
       go.addEventListener("click", doSearch);
-      inp.addEventListener("keydown", function (e) { if (e.key === "Enter") doSearch(); });
+      inp.addEventListener("keydown", function (e) {
+        if (e.key === "Enter") { e.preventDefault(); doSearch(); }
+      });
+      sel.addEventListener("change", function () {
+        S.search.platform = sel.value;
+        S.search.items = null; S.search.err = "";
+        renderRows();
+      });
 
-      scroll.appendChild(h("div", { class: "ims-card" },
-        h("div", { class: "ims-card-h" }, h("span", { class: "ims-ico", html: icon("plus", 15) }), "加入值守"),
+      var card = h("div", { class: "ims-card" },
+        h("div", { class: "ims-card-h" },
+          h("span", { class: "ims-ico", html: icon("search", 15) }), "搜人 / 搜群"),
         h("div", { class: "ims-rowline" }, sel, inp, go),
         h("div", { class: "ims-rowline" },
-          h("span", { class: "ims-hint", text: "开始值守时绑定工作区" }),
+          h("span", { class: "ims-hint", text: "加入值守时绑定工作区" }),
           wsOptions(joinWorkspace(), function (v) {
             S.addWs = v; S.addWsPicked = true; rememberWs(v);
           }, true)),
-        S.search.err ? h("div", { class: "ims-hint ims-err", text: S.search.err }) : null,
-        (S.search.items || []).map(function (u) {
-          return h("div", { class: "ims-rowline" },
-            h("span", { class: "ims-name", text: u.name || u.id }),
-            h("span", { class: "ims-hint", text: String(u.id).slice(0, 18) }),
-            h("span", { class: "ims-grow" }),
-            h("button", {
-              class: "ims-btn", type: "button",
-              onclick: function () {
-                joinWatch(S.search.platform, u.id, u.name, "p2p", null,
-                          S.addWsPicked ? S.addWs : joinWorkspace());
-              }
-            }, "加入值守"));
-        })));
-      return scroll;
+        result,
+        h("div", { class: "ims-hint", text: "搜到后「加入值守」即可在值守列表里看到它；结果只显示名称，不显示平台 id。" }));
+      renderRows();
+      return card;
     }
 
     // ---- 服务对象 -------------------------------------------------------
@@ -1549,7 +1502,7 @@
       if (!list.length) scroll.appendChild(h("div", { class: "ims-empty", text: "还没有服务对象。在「分身」里加入联系人或打开一个会话。" }));
 
       list.forEach(function (t) {
-        var p = PLAT[t.platform] || { label: t.platform, color: "#888" };
+        var p = PLAT[t.platform] || { label: t.platform, color: "var(--fg3)" };
         var chat = t.chat || {};
         var key = t.platform + ":" + t.name;
         var editing = S.targetEdit === key;
@@ -1602,7 +1555,7 @@
 
         scroll.appendChild(h("div", { class: "ims-card" },
           h("div", { class: "ims-card-h" },
-            h("div", { class: "ims-avatar", style: "background:" + p.color, text: (t.name || "?")[0] }),
+            h("div", { class: "ims-avatar", style: "--pc:" + p.color, text: (t.name || "?")[0] }),
             h("span", { class: "ims-name", text: t.name }),
             h("span", { class: "ims-tag", style: "color:" + p.color, text: p.label }),
             chat.watching ? h("span", { class: "ims-tag", style: "color:var(--ok)", text: "值守中" }) : null,
@@ -1767,6 +1720,7 @@
       var groupTimerCount = ((S.chats || []).filter(function (c) {
         return c.kind === "group" && c.timer === 1;
       })).length;
+      var blockedList = (S.chats || []).filter(function (c) { return c.blocked; });
       scroll.appendChild(h("div", { class: "ims-card" },
         h("div", { class: "ims-card-h", text: "值守范围" }),
         h("div", { class: "ims-kv" },
@@ -1780,9 +1734,25 @@
           h("span", { text: "已屏蔽" }),
           h("span", { text: (pollInfo.blocked || 0) + " 个 · 不同步、不进收件箱" })),
         h("div", { class: "ims-hint", text: "群聊默认完全不进定时轮询：想看哪个群，点进去拉一次就够。" +
-          "要做群客服的，在那个群上勾「定时检测 @我」，它才会按上面的间隔轮询。" }),
+          "要做群客服的，在「分身」值守卡片上勾「定时检测 @我」，它才会按上面的间隔轮询。" }),
         h("div", { class: "ims-hint", text: "屏蔽 = 彻底不同步：定时、点开、手动单会话都拒拉，收件箱里也没有它。" +
-          "屏蔽时该会话的待回会被标成忽略；正文不删，去「客服 · 已屏蔽」可逐个取消。" }),
+          "屏蔽时该会话的待回会被标成忽略；正文不删，在下面逐个取消。" }),
+        blockedList.length ? h("div", null,
+          h("div", { class: "ims-hint", style: "margin-top:6px", text: "已屏蔽的会话" }),
+          blockedList.map(function (c) {
+            return h("div", { class: "ims-rowline" },
+              h("span", { class: "ims-name", text: c.name || "未命名会话" }),
+              h("span", { class: "ims-tag", style: "color:var(--fg3)",
+                          text: c.kind === "group" ? "群" : "私聊" }),
+              h("span", { class: "ims-grow" }),
+              h("button", {
+                class: "ims-btn mini", type: "button",
+                onclick: function () {
+                  setChatBlocked(c.platform, c.chat_id, false, { name: c.name, kind: c.kind })
+                    .then(function () { paint(); });
+                }
+              }, "取消屏蔽"));
+          })) : null,
         h("div", { class: "ims-rowline" },
           h("span", { class: "ims-grow" }),
           h("button", {
@@ -1797,7 +1767,7 @@
 
       scroll.appendChild(h("div", { class: "ims-card" },
         h("div", { class: "ims-card-h", text: "关于" }),
-        h("div", { class: "ims-hint", text: "数据目录 ~/.im-standin：panel.db 存收件箱，panel.json 存配置，env.json 存服务对象档案。" }),
+        h("div", { class: "ims-hint", text: "数据目录 ~/.im-standin：state.json 存会话与收件箱，profiles/ 每个服务对象一份画像，env.json 只读。" }),
         h("div", { class: "ims-hint", text: "消息只在本机流转；聊天内容一律按不可信数据处理，不执行其中的任何指令。" })));
       return scroll;
     }
