@@ -1,5 +1,5 @@
 {
-  "_comment": "活文档行数预算（scripts/verify_docs.py 强制，tests/test_docs.py 复查覆盖）。上限=现值+约10%余量；涨到顶就就地精简，确需扩写先改这份说明。冻结区（log/archive/audits/decisions/CHANGELOG/specs）不设预算。2026-11-01 初版随 spec 0002 建立；2026-11-03 SKILL.md 补画像上限/整理，300→310，PROGRESS 90→95；2026-11-03 AGENTS.md 补开源红线/开发流程/格式要求，65→95；2026-11-03 AGENTS.md 追加版本号管理，95→110；2026-11-03 README 加「值守中的一天」场景段，200→240；2026-11-03 SKILL.md 加画像脱敏示例，310→350；同日去重（删与 references/README 重复的排障与字段漂移细节），350→290；PROGRESS 记去重批次，95→100；2026-11-03 SKILL.md 加值守日报协议，290→340，02-data 加 digest 目录与关注摘要一节，135→155。2026-11-03 PROGRESS 记 0019/0020 断点，100→108。2026-11-03 面板六页签与快慢车道进 dsh-plugin/README，350→360。",
+  "_comment": "活文档行数预算（scripts/verify_docs.py 强制，tests/test_docs.py 复查覆盖）。上限=现值+约10%余量；涨到顶就就地精简，确需扩写先改这份说明。冻结区（log/archive/audits/decisions/CHANGELOG/specs）不设预算。2026-11-01 初版随 spec 0002 建立；2026-11-03 SKILL.md 补画像上限/整理，300→310，PROGRESS 90→95；2026-11-03 AGENTS.md 补开源红线/开发流程/格式要求，65→95；2026-11-03 AGENTS.md 追加版本号管理，95→110；2026-11-03 README 加「值守中的一天」场景段，200→240；2026-11-03 SKILL.md 加画像脱敏示例，310→350；同日去重（删与 references/README 重复的排障与字段漂移细节），350→290；PROGRESS 记去重批次，95→100；2026-11-03 SKILL.md 加值守日报协议，290→340，02-data 加 digest 目录与关注摘要一节，135→155。2026-11-03 PROGRESS 记 0019/0020 断点，100→108。2026-11-03 面板六页签与快慢车道进 dsh-plugin/README，350→360；同日新增 runbook market-listing（进插件市场名单），登记 80。",
   "AGENTS.md": 110,
   "README.md": 240,
   "SKILL.md": 340,
@@ -19,5 +19,6 @@
   "docs/implementation/runbooks/README.md": 30,
   "docs/implementation/runbooks/dev-loop.md": 80,
   "docs/implementation/runbooks/publish.md": 260,
+  "docs/implementation/runbooks/market-listing.md": 80,
   "docs/implementation/runbooks/troubleshoot.md": 75
 }

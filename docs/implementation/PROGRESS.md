@@ -12,6 +12,7 @@
 
 | 日期 | 主题 | 证据 |
 | --- | --- | --- |
+| 2026-11-03 | 进插件市场名单：向 awesome-dsh-plugin 提条目 PR，`screenshots.json` 进详情页，流程落 runbook | `docs/implementation/runbooks/market-listing.md`、`dsh-plugin/screenshots.json` |
 | 2026-11-03 | 加入值守即开会话（spec 0025）：`Turns.open()` + 开场载荷、`/api/watch` 与 `/api/chat/mode` 立刻起 turn | `lib/turns.js`、`lib/app.js`、`web/panel.js`、契约 01 |
 | 2026-11-03 | 群聊关注程度（spec 0024）：`wake_mode` / `last_wake_at` / `last_wake_epoch`、合并窗口、`/api/chat/mode`、三态控件 | `lib/state.js`、`lib/poller.js`、`lib/app.js`、`web/panel.js`、契约 01–03 |
 | 2026-11-03 | 面板体验加固（spec 0021）：草稿进内存、失败不装空、窄栏、密度、确认、可达、隐藏 imid | `web/panel.js`、`scripts/demo/fixture.mjs` |

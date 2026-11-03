@@ -9,6 +9,7 @@
 | --- | --- |
 | 本地改代码 → 看到 UI 生效 → 跑测试 | `docs/implementation/runbooks/dev-loop.md` |
 | 发 npm / 打 tag / 更新自托管插件市场索引 | `docs/implementation/runbooks/publish.md` |
+| 让插件进 awesome-dsh-plugin 名单，市场里搜得到 | `docs/implementation/runbooks/market-listing.md` |
 | 面板白屏 / 401 / 不轮询 / 拉不到消息 | `docs/implementation/runbooks/troubleshoot.md` |
 | 查平台 CLI 的字段与授权坑 | `references/`（skill 侧共用，改这里要同步 `SKILL.md`） |
 

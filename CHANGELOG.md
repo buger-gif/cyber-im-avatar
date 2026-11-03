@@ -1,5 +1,13 @@
 # Changelog
 
+## 未发布
+
+- **进插件市场名单**：向 awesome-dsh-plugin 投稿，在 dsh-market 与 DSH「发现」页可按名字搜到装到；
+  此前只有手动加自托管索引源的人才看得见。流程与环境落进
+  `docs/implementation/runbooks/market-listing.md`。
+- **截图进市场详情页**：`dsh-plugin/screenshots.json` 声明面板四张图（收件箱 / 分身 / 会话 /
+  服务对象），相对路径不许出插件目录，所以指向 `docs/images/` 的 raw 链接。
+
 ## 0.11.0 — 2026-11-03
 
 ### 0.11.0：加入值守即开会话（spec 0025）
