@@ -496,7 +496,47 @@ def test_idle_exit():
                 "--interval", "2", "--idle-exit-min", "0.02", "--new-watch", "--timeout", "20")
     check("--new-watch 重新计时", r5.returncode == 4 and time.time() - start >= 0.8,
           f"rc={r5.returncode} {time.time() - start:.1f}s")
+    try:
+        after = json.load(open(state_file))
+    except Exception:
+        after = {}
+    check("--new-watch 不碰水位", after.get("last_id") == saved.get("last_id") and bool(after.get("last_id")),
+          f"last_id={after.get('last_id')} want={saved.get('last_id')}")
     shutil.rmtree(d4, ignore_errors=True)
+
+    # 被过滤的消息不算命中，也不该刷新 idle_at，否则闲置退出永远不会到点。
+    filtered = [{"id": "k1", "sender": "PEER", "content": "不匹配关键词",
+                 "time": "2026-10-30 15:20:00"}]
+    d5, data5 = setup("wecom", "wecom", filtered)
+    start = time.time()
+    r6 = listen("wecom", d5, data5, "wecom", "--user-id", "PEER", "--init", "zero",
+                "--keyword", "NO_SUCH_WORD", "--interval", "2",
+                "--idle-exit-min", "0.02", "--timeout", "20")
+    check("关键词过滤的消息不算命中", r6.returncode == 4 and "[idle-exit]" in r6.stderr,
+          f"rc={r6.returncode} err={r6.stderr[:200]}")
+    try:
+        state6 = json.load(open(os.path.join(d5, "states", "wecom_PEER.pos")))
+    except Exception:
+        state6 = {}
+    check("过滤消息不刷新 idle_at", abs(float(state6.get("idle_at") or 0) - start) < 1.0,
+          f"idle_at={state6.get('idle_at')} start={start:.1f}")
+    shutil.rmtree(d5, ignore_errors=True)
+
+    selfmsg = [{"id": "s1", "sender": "SELF_BOT", "content": "我自己发的",
+                "time": "2026-10-30 15:30:00"}]
+    d6, data6 = setup("wecom", "wecom", selfmsg)
+    start = time.time()
+    r7 = listen("wecom", d6, data6, "wecom", "--user-id", "PEER", "--init", "zero",
+                "--interval", "2", "--idle-exit-min", "0.02", "--timeout", "20")
+    check("自己发的消息不算命中", r7.returncode == 4 and "[idle-exit]" in r7.stderr,
+          f"rc={r7.returncode} err={r7.stderr[:200]}")
+    try:
+        state7 = json.load(open(os.path.join(d6, "states", "wecom_PEER.pos")))
+    except Exception:
+        state7 = {}
+    check("自己发的消息不刷新 idle_at", abs(float(state7.get("idle_at") or 0) - start) < 1.0,
+          f"idle_at={state7.get('idle_at')} start={start:.1f}")
+    shutil.rmtree(d6, ignore_errors=True)
 
 
 def test_profile_compact():

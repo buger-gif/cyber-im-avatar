@@ -60,7 +60,7 @@ poller 判定命中
 - `poll.interval_min` 有硬下限 10 分钟，填 1 会被夹回 10——不是在防备谁，是不想把 IM 接口当靶子打。
 - `poll.dm_scope` 是 legacy no-op：老配置还能加载，实际候选只看 `watching` 私聊，群只有 `timer=1`。
 - `dsh.full_access` 默认 `false`；为 `true` 时插件把值守会话切到 `danger-full-access`，agent 才能写工作区外的画像。这是唯一放开沙箱的开关。
-- `dsh.idle_reset_min` / `dsh.warm_min` 控制会话寿命与保温（默认 180 / 55 分钟，0 = 关闭）；保温只在重开窗口内跑，且不推进闲置时钟。
+- `dsh.idle_reset_min` / `dsh.warm_min` 控制会话寿命与保温（默认 180 / 55 分钟，0 = 关闭）；重开开启时保温只在重开窗口内跑，且不推进闲置时钟；两个 0 各自关闭。
 - 平台白名单只有 `feishu` / `wecom`；`platforms` 里其他值被忽略，存量钉钉会话保留不拉取。
 - 风险拦截在 skill 铁律里（钱、承诺、对外群由 agent 停下等本人），插件不再有 `reply_guard` 开关。
 

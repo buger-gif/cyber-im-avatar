@@ -149,6 +149,7 @@ export class Poller {
     for (const chat of this.state.listChats()) {
       if (!chat.watching || chat.blocked || !chat.dsh_session) continue;
       if (!platforms.includes(chat.platform)) continue;
+      if (!this.platformUsable(chat.platform)) continue;
       if (chat.prompt_session !== chat.dsh_session) continue;
       // 和候选口径一致：不轮询的会话不会再有唤醒，焐它没有意义。
       const timer = Number(chat.timer) || 0;
@@ -173,6 +174,17 @@ export class Poller {
       return true;
     }
     return false;
+  }
+
+  /**
+   * 平台身份可用才保温：授权掉了轮询已经暂停，这些会话再也不会被新消息唤醒，
+   * 继续每 warm_min 起一轮真实模型调用只是白烧钱。
+   * identity 还没填（首次 cycle 之前）时放行，交给本轮 cycle 的 whoami 判断。
+   */
+  platformUsable(platform) {
+    const ident = this.identity?.[platform];
+    if (!ident) return true;
+    return !!(ident.ok && ident.self_id);
   }
 
   scheduleNext() {

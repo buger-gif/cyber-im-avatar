@@ -514,3 +514,23 @@ test("heartbeat waits for the first turn to consume the skill payload", async ()
   assert.equal(await poller.maybeWarm(), false);
   assert.equal(turns.warmCalls, 0);
 });
+
+test("heartbeat keeps running when idle reset is off; both knobs are independent", async () => {
+  const { state, poller, turns } = setup();
+  warmChat(state, { idleMin: 60 });
+  state.data.config.dsh.idle_reset_min = 0;
+  assert.equal(await poller.maybeWarm(), true);
+  assert.equal(turns.warmCalls, 1);
+});
+
+test("heartbeat skips a platform whose auth is gone", async () => {
+  const { state, poller, turns } = setup();
+  warmChat(state);
+  poller.identity.feishu = { ok: false, self_id: null, detail: "未登录" };
+  assert.equal(await poller.maybeWarm(), false);
+  assert.equal(turns.warmCalls, 0);
+
+  poller.identity.feishu = { ok: true, self_id: "ou_me" };
+  assert.equal(await poller.maybeWarm(), true);
+  assert.equal(turns.warmCalls, 1);
+});

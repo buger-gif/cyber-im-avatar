@@ -38,8 +38,8 @@
 
 - **0026 已实现，真机未验**：插件闲置重开（`dsh.idle_reset_min=180`）与值守心跳
   （`dsh.warm_min=55`）已进契约、state、面板与测试；skill 形态新增 `--idle-exit-min 180`
-  （3 小时没有新消息命中退 4、不重挂）与 `--new-watch`。`node --test` 131/131、
-  `python3 tests/run_tests.py` 122/0、全量 gate 全绿。运行中的 127.0.0.1:55562 未重启，
+  （3 小时没有新消息命中退 4、不重挂）与 `--new-watch`。`node --test` 134/134、
+  `python3 tests/run_tests.py` 127/0、全量 gate 全绿。运行中的 127.0.0.1:55562 未重启，
   仍是旧代码；真实 `state.json` 未被本轮写入。
 - **市场收录待合并**：条目 PR
   [#11669](https://github.com/awesome-dsh-plugin/awesome-dsh-plugin/pull/11669)。唯一的红是

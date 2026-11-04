@@ -348,6 +348,12 @@ export class Turns {
     if (!this.hostReady()) return { ok: false, reason: "host_unavailable" };
     const key = chatKey(chat.platform, chat.chat_id);
     if (this.active.has(key)) return { ok: true, skipped: "running" };
+    // 和 wake 一样等启动阶段收口，避免两个 followup 抢同一个 session。
+    const starting = this.starting.get(key);
+    if (starting) {
+      try { await starting; } catch { /* 上一次启动失败也继续 */ }
+    }
+    if (this.active.has(key)) return { ok: true, skipped: "running" };
     return this._wake(chat, { interrupted: false, open: true, reason });
   }
 
@@ -795,6 +801,7 @@ export class Turns {
   /**
    * 值守心跳：在已绑定的会话里跑一轮维护（续上下文缓存 + 按 skill 归并画像）。
    * 不新建会话、不计入 session_turns、不推进真实 turn 的时钟；真实消息到达时会被取消。
+   * 启动阶段与 wake() 共用 starting 串行：真实消息先到就让它赢，别把心跳插在前面。
    */
   async warm(chat) {
     if (!this.hostReady()) return { ok: false, reason: "host_unavailable" };
@@ -804,44 +811,52 @@ export class Turns {
     if (!current.dsh_session) return { ok: false, reason: "no_session" };
     // 首轮完整载荷还没被消费过：让真实唤醒先把 skill 入口送进去，别让保温轮当首轮。
     if (current.prompt_session !== current.dsh_session) return { ok: false, reason: "no_prompt_session" };
-    if (this.active.has(key)) return { ok: false, reason: "running" };
+    if (this.active.has(key) || this.starting.has(key)) return { ok: false, reason: "running" };
     const token = { cancelled: false };
     this.warming.set(key, token);
+    const run = (async () => {
+      try {
+        const existing = await this.resolveExisting(current);
+        if (token.cancelled || this.active.has(key)) return { ok: false, reason: "cancelled" };
+        if (!existing) return { ok: false, reason: "no_session" };
+        const { agent, sessionId: sid, cwd } = existing;
+        this.applySessionPermission(agent);
+        const profilePath = this.profiles.pathFor(current.platform, current.chat_id, current.name);
+        const lastReal = Math.max(Number(current.last_turn?.at) || 0,
+          Number(current.session_bound_at) || 0);
+        const idleMin = lastReal ? Math.round((nowSec() - lastReal) / 60) : 0;
+        const prompt = buildWarmPrompt(current.platform, current.name, current.chat_id, {
+          profilePath, idleMin,
+        });
+        const message = await makeUserMessage(prompt);
+        // 构造载荷期间可能已有真实消息进来：再确认一次，别把心跳插到真实回复后面。
+        if (token.cancelled || this.active.has(key)) return { ok: false, reason: "cancelled" };
+        const turnId = crypto.randomUUID();
+        const handle = {
+          turnId, platform: current.platform, chatId: current.chat_id,
+          cancelled: false, state: "warm", since: nowSec(), startedAt: nowSec(),
+          lastOk: null, lastReason: "", lastAt: 0, promptId: message.id, agent, done: null,
+          warm: true,
+        };
+        this.active.set(key, handle);
+        handle.done = this.runTurn(handle, {
+          chat: current, agent, sid, cwd, message, warm: true,
+        });
+        this.state.save();
+        return { ok: true, started: true, turn_id: turnId, state: "warm" };
+      } catch (e) {
+        const reason = typeof e === "string" ? e : (e?.message || e?.name || "warm_failed");
+        this.logger.warn?.(`[im-standin] warm ${key}: ${reason}`);
+        return { ok: false, reason };
+      } finally {
+        if (this.warming.get(key) === token) this.warming.delete(key);
+      }
+    })();
+    this.starting.set(key, run);
     try {
-      const existing = await this.resolveExisting(current);
-      if (token.cancelled || this.active.has(key)) return { ok: false, reason: "cancelled" };
-      if (!existing) return { ok: false, reason: "no_session" };
-      const { agent, sessionId: sid, cwd } = existing;
-      this.applySessionPermission(agent);
-      const profilePath = this.profiles.pathFor(current.platform, current.chat_id, current.name);
-      const lastReal = Math.max(Number(current.last_turn?.at) || 0,
-        Number(current.session_bound_at) || 0);
-      const idleMin = lastReal ? Math.round((nowSec() - lastReal) / 60) : 0;
-      const prompt = buildWarmPrompt(current.platform, current.name, current.chat_id, {
-        profilePath, idleMin,
-      });
-      const message = await makeUserMessage(prompt);
-      // 构造载荷期间可能已有真实消息进来：再确认一次，别把心跳插到真实回复后面。
-      if (token.cancelled || this.active.has(key)) return { ok: false, reason: "cancelled" };
-      const turnId = crypto.randomUUID();
-      const handle = {
-        turnId, platform: current.platform, chatId: current.chat_id,
-        cancelled: false, state: "warm", since: nowSec(), startedAt: nowSec(),
-        lastOk: null, lastReason: "", lastAt: 0, promptId: message.id, agent, done: null,
-        warm: true,
-      };
-      this.active.set(key, handle);
-      handle.done = this.runTurn(handle, {
-        chat: current, agent, sid, cwd, message, warm: true,
-      });
-      this.state.save();
-      return { ok: true, started: true, turn_id: turnId, state: "warm" };
-    } catch (e) {
-      const reason = typeof e === "string" ? e : (e?.message || e?.name || "warm_failed");
-      this.logger.warn?.(`[im-standin] warm ${key}: ${reason}`);
-      return { ok: false, reason };
+      return await run;
     } finally {
-      if (this.warming.get(key) === token) this.warming.delete(key);
+      if (this.starting.get(key) === run) this.starting.delete(key);
     }
   }
 

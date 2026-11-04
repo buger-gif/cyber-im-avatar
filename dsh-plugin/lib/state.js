@@ -531,6 +531,7 @@ export class State {
   /**
    * 换会话绑定。清空时可选记原因，供面板说明「为什么换了一个会话」：
    * idle / manual / workspace / missing。
+   * 保温结果属于会话：换会话时一并归零，别让新会话显示上一个会话的「上次保温」。
    */
   setSession(chat, sessionId, resetReason = "") {
     const sid = String(sessionId || "");
@@ -542,6 +543,8 @@ export class State {
       chat.session_bound_at = sid ? Date.now() / 1000 : 0;
       chat.session_turns = 0;
       chat.prompt_session = "";
+      chat.last_warm_at = 0;
+      chat.last_warm_ok = null;
     }
     this.save();
   }

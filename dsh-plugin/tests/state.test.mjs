@@ -245,11 +245,16 @@ test("old state gets warm/reset defaults; setSession records the reset reason", 
   assert.equal(chat.last_warm_ok, null);
   assert.deepEqual(chat.last_reset, { at: 0, reason: "" });
 
+  chat.last_warm_at = 123;
+  chat.last_warm_ok = true;
   state.setSession(chat, "", "idle");
   assert.equal(chat.dsh_session, "");
   assert.equal(chat.session_turns, 0);
   assert.equal(chat.last_reset.reason, "idle");
   assert.ok(chat.last_reset.at > 0);
+  // 保温结果属于旧会话：换会话后面板不该显示上一个会话的“上次保温”。
+  assert.equal(chat.last_warm_at, 0);
+  assert.equal(chat.last_warm_ok, null);
 
   // 已有空绑定再清一次不覆盖上次原因，也不报错。
   state.setSession(chat, "", "manual");

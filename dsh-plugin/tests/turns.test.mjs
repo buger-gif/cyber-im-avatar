@@ -741,3 +741,25 @@ test("a real message cancels an in-flight warm turn", async () => {
   assert.equal(chat.last_warm_at, 0);
   assert.equal(chat.session_turns, 1);
 });
+
+test("a real wake that starts during warm startup wins and cancels the heartbeat", async () => {
+  const { chat, host, turns } = setup();
+  chat.dsh_session = "session-1";
+  chat.prompt_session = "session-1";
+  chat.session_bound_at = Date.now() / 1000 - 3600;
+  chat.last_turn = { ok: true, reason: "", at: chat.session_bound_at };
+  host.auto = false;
+
+  const warmP = turns.warm(chat);
+  const wakeP = turns.wake(chat);
+  const [warm, wake] = await Promise.all([warmP, wakeP]);
+  await new Promise((resolve) => setTimeout(resolve, 10));
+
+  assert.equal(warm.ok, true);
+  assert.equal(wake.ok, true);
+  assert.equal(host.cancelled, true);
+  assert.equal(chat.last_warm_at, 0);
+  assert.equal(chat.session_turns, 0);
+  assert.equal(turns.isActive("feishu", "oc_abc"), true);
+  assert.doesNotMatch(host.followups.at(-1).content[0].text, /值守心跳/);
+});
