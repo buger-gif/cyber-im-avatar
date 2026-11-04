@@ -303,11 +303,23 @@ test("new chats default to group mention / DM all", () => {
   assert.equal(state.ensureChat("feishu", "oc_new_grp", { name: "新群", kind: "group" }).wake_mode, "mention");
 });
 
-test("kind correction resets wake_mode to that kind's default", () => {
+test("kind correction keeps the chosen wake_mode but keeps watched groups pulling", () => {
   const { state } = tempState();
   const chat = state.ensureChat("feishu", "oc_kind", { name: "先当私聊" });
   assert.equal(chat.wake_mode, "all");
+  assert.equal(chat.timer, 0);
+  chat.watching = true;
   state.ensureChat("feishu", "oc_kind", { name: "其实是群", kind: "group" });
   assert.equal(chat.kind, "group");
-  assert.equal(chat.wake_mode, "mention", "私聊的 all 不能带进群的 all");
+  assert.equal(chat.wake_mode, "all", "用户选的「全部消息」在两种 kind 下同名同义，不该被纠正改写");
+  assert.equal(chat.timer, 1, "认成群后仍要 timer=1，否则静默不再拉");
+
+  // 反向：群 → 私聊不动关注程度与 timer。
+  const g = state.ensureChat("feishu", "oc_kind2", { name: "群", kind: "group" });
+  g.watching = true;
+  g.timer = 1;
+  state.ensureChat("feishu", "oc_kind2", { kind: "p2p" });
+  assert.equal(g.kind, "p2p");
+  assert.equal(g.wake_mode, "mention");
+  assert.equal(g.timer, 1, "私聊 timer=-1 才表示不盯；1 保持拉取");
 });

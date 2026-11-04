@@ -331,11 +331,12 @@ export class State {
     }
     if (kind) {
       const nextKind = kind === "group" ? "group" : "p2p";
-      // kind 纠正时关注程度回到该 kind 的默认口径：私聊的 all 不等于群的 all，
-      // 沿用会让一个刚认成群的会话突然全量唤醒（或反过来静默只认 @）。
+      // kind 是会话的根本属性，被平台元数据纠正时不动用户选的关注程度
+      //（三态在两种 kind 下同名同义）；但要保证「已经盯上」的会话不会因为
+      // 被认成群就停在 timer!=1——群只有 timer=1 才进轮询，否则会静默不再拉。
       if (nextKind !== chat.kind) {
         chat.kind = nextKind;
-        chat.wake_mode = nextKind === "group" ? "mention" : "all";
+        if (nextKind === "group" && chat.watching && Number(chat.timer) !== 1) chat.timer = 1;
       }
     }
     if (target) chat.target = true;

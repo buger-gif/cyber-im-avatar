@@ -787,3 +787,18 @@ test("a real wake that starts during warm startup wins and cancels the heartbeat
   assert.equal(turns.isActive("feishu", "oc_abc"), true);
   assert.doesNotMatch(host.followups.at(-1).content[0].text, /值守心跳/);
 });
+
+test("open starts a new turn right after the old one was cancelled", async () => {
+  const { chat, host, turns } = setup({ auto: false });
+  const r1 = await turns.wake(chat);
+  assert.equal(r1.ok, true);
+  assert.equal(turns.busy("feishu", "oc_abc"), true, "自动事件不来时这一轮确实在飞");
+  turns.cancel("feishu", "oc_abc", "session_reset");
+  // cancel 是协作式的：句柄已经不算在飞，open 不能被它挡住（spec 0028）。
+  assert.equal(turns.busy("feishu", "oc_abc"), false);
+  const r2 = await turns.open(chat, { reason: "reset" });
+  assert.equal(r2.ok, true);
+  assert.equal(r2.skipped, undefined);
+  assert.equal(host.followups.length, 2, "取消后 open 要真的起一轮，而不是静默跳过");
+  assert.equal(host.created.length, 1, "复用已绑定会话，不额外建一个");
+});

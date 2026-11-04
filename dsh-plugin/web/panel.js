@@ -885,7 +885,12 @@
             return;
           }
           if (value) rememberWs(value);
-          say(value ? "工作区已设为 " + (r.label || baseName(value)) : "已取消工作区绑定");
+          // 换工作区可能顺带换了会话；开了新会话就直接说清，别让人再猜。
+          var opened = !r.open ? ""
+            : (r.open.ok && r.open.skipped ? " · 会话正在处理"
+              : (r.open.ok ? " · 新会话已开"
+                : "；会话没起来：" + (r.open.reason || "未知原因")));
+          say((value ? "工作区已设为 " + (r.label || baseName(value)) : "已取消工作区绑定") + opened);
           if (done) done(r);
         });
     }
@@ -1184,20 +1189,25 @@
       chat = chat || (S.detail && S.detail.chat) || {};
       return h("button", {
         class: "ims-btn mini", type: "button",
-        title: "打断这一轮、解绑当前 DSH 会话，下一轮命中开新会话（旧会话留在侧边栏，不再续聊）",
+        title: "打断这一轮、解绑当前 DSH 会话，并立刻在新会话里开场（旧会话留在侧边栏，不再续聊）",
         onclick: function () {
           var ws = actionWs(chat);
           var where = ws ? wsTitle(ws) : effectiveLabel(chat);
           if (typeof window !== "undefined" && window.confirm &&
               !window.confirm("重开会话？会打断正在跑的这一轮，并解绑当前 DSH 会话" +
                               "（旧会话留在侧边栏，不再续聊）。\n" +
-                              "下一轮命中会在「" + where + "」开新会话。")) return;
+                              "随后立刻在「" + where + "」开新会话并跑一轮开场。")) return;
           api("/api/chat/session/reset", { method: "POST",
                                            body: { platform: d.platform, chat_id: d.chat_id,
                                                    workspace: ws } })
             .then(function (r) {
-              say(r.ok ? "已重开：下一轮命中在「" + where + "」开新会话（旧会话留在侧边栏）"
-                       : "没成功：" + (r.reason || "未知"));
+              if (!r.ok) return say("没成功：" + (r.reason || "未知"));
+              var opened = !r.open
+                ? "；未值守或已屏蔽，只解绑"
+                : (r.open.ok && r.open.skipped ? "；旧轮还在收尾，等它结束"
+                  : (r.open.ok ? " · 新会话已开"
+                    : "；会话没起来：" + (r.open.reason || "未知原因") + "，下一条命中会重试"));
+              say("已重开：旧会话留在侧边栏" + opened);
               refreshDetail(); loadChats();
             });
         }
@@ -1464,16 +1474,23 @@
           c.watching = !!r.chat.watching;
           c.timer = r.chat.timer;
           c.wake_mode = r.chat.wake_mode;
+          if (r.chat.dsh_session) c.dsh_session = r.chat.dsh_session;
           var isGroup = c.kind === "group";
-          var opened = r.open && r.open.ok ? " · 会话已开"
-            : (r.open && r.open.ok === false ? "；会话没起来：" + (r.open.reason || "未知原因") : "");
+          // open 三态：null=没尝试（off / 未值守）、ok=会话已开、skipped=真的在跑没打断。
+          var opened = !r.open ? ""
+            : (r.open.ok && r.open.skipped ? " · 会话正在处理"
+              : (r.open.ok ? " · 会话已开"
+                : "；会话没起来：" + (r.open.reason || "未知原因")));
+          // 会话状态说清楚：还绑着就继续用；没有绑定的，下一轮命中才开，别让人以为按钮坏了。
+          var session = mode === "off" || opened ? ""
+            : ((r.chat && r.chat.dsh_session) ? " · 继续用当前会话" : " · 下一条命中开新会话");
           say((mode === "off"
             ? "已改为不盯：不再拉这个" + (isGroup ? "群" : "会话")
             : (mode === "all"
                 ? (isGroup ? "已改为全部消息：非 @ 只看不回，@ 你照常回"
                            : "已改为全部消息：每条新消息都唤醒")
                 : "已改为只盯 @我：" + (isGroup ? "只有 @ 你才唤醒"
-                                               : "对方 @ 你才唤醒，闲聊只记知会"))) + opened);
+                                               : "对方 @ 你才唤醒，闲聊只记知会"))) + opened + session);
           // 详情头部也挂这个下拉：切完把会话行 / 提示刷成服务端的最新状态。
           loadChats(); loadStatus();
           if (S.detail) refreshDetail();
@@ -1491,7 +1508,9 @@
     function modeSelect(c) {
       var cur = chatModeOf(c);
       var isGroup = c.kind === "group";
-      var canMention = c.mentionable !== false;
+      // 群口径不动：企微群读不到 @ 是既有已知限制；只有私聊的 @-only 是 0027 新加的，
+      // 判不了 @ 就置灰，不给一个永远不触发的开关。
+      var canMention = !(c.mentionable === false && !isGroup);
       var title = isGroup
         ? "关注程度：不盯=一条不拉；只盯 @我=只有 @你的消息唤醒 agent；" +
           "全部消息=非 @ 也唤醒（只看不回、要你表态的进日报），@ 你照常回"

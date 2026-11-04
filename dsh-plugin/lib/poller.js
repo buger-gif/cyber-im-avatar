@@ -565,7 +565,10 @@ export class Poller {
   async maybeWake(chat, batch) {
     if (!chat.watching || chat.blocked) return false;
     const key = chatKey(chat.platform, chat.chat_id);
-    const active = !!this.turns?.isActive(chat.platform, chat.chat_id);
+    // 已被取消、正在收尾的旧轮不算在飞：它不该让新消息的载荷被标成「上一轮被打断」。
+    const active = typeof this.turns?.busy === "function"
+      ? this.turns.busy(chat.platform, chat.chat_id)
+      : !!this.turns?.isActive(chat.platform, chat.chat_id);
     const allMode = chat.kind === "group" && chat.wake_mode === "all";
     if (allMode && batch.length) {
       // 合并窗口：窗口内攒着，下一轮一次给过去。窗口 0 = 不合并。

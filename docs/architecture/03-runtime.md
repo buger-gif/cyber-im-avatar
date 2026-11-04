@@ -33,9 +33,10 @@ poller 判定命中
        └─ 听 session/event：turn/start → user/message(id 匹配) → turn/end
 ```
 
-- 一通 IM 会话 ↔ 一个 DSH 会话（`chats.dsh_session`），默认复用。手动「新建会话」、
-  工作区漂移、会话丢失，或闲置超过 `dsh.idle_reset_min`（默认 180 分钟）后的下一条消息，
-  都会换新会话；旧会话留在侧边栏。显式工作区目录存在但未在 DSH 登记时，仍先尝试恢复旧会话。
+- 一通 IM 会话 ↔ 一个 DSH 会话（`chats.dsh_session`），默认复用。手动「重开会话」
+  （解绑后立刻在值守中开新会话）、工作区漂移、会话丢失，或闲置超过 `dsh.idle_reset_min`
+  （默认 180 分钟）后的下一条消息，都会换新会话；旧会话留在侧边栏。显式工作区目录存在但未在
+  DSH 登记时，仍先尝试恢复旧会话。
 - 闲置达到 `dsh.warm_min`（默认 55 分钟）、又没到重开阈值时，轮询器起一轮「值守心跳」：
   在已绑定会话里续上下文缓存，并让 agent 按 skill 规则归并画像。它不写 `session_turns` /
   `last_turn`，真实消息到达即取消；结果记 `chats.last_warm_at` / `last_warm_ok`。

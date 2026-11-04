@@ -381,15 +381,25 @@ export const intercept = `(() => {
     if (p === "/api/state") return { ok: true };
     if (p === "/api/watch" || p === "/api/unwatch") {
       const c = FIX.chats.find((x) => x.platform === body.platform && x.chat_id === body.chat_id);
-      if (c) c.watching = p === "/api/unwatch" ? 0 : (body.watching === false ? 0 : 1);
-      return { ok: true, open: { ok: true } };
+      if (c) {
+        const on = p === "/api/watch" && body.watching !== false;
+        c.watching = on ? 1 : 0;
+        // 和后端一致：加入值守把 -1 清掉、盯上就要拉；wake_mode 沿用上次。
+        if (on && Number(c.timer) !== 1) c.timer = 1;
+        return { ok: true, open: on ? { ok: true, started: true } : null };
+      }
+      return { ok: true };
     }
     if (p === "/api/chat/mode") {
       const row = FIX.chats.find((x) => x.platform === body.platform && x.chat_id === body.chat_id) || {};
-      row.watching = body.mode === "off" ? 0 : 1;
-      row.timer = body.mode === "off" ? -1 : 1;
-      row.wake_mode = body.mode === "all" ? "all" : "mention";
-      return { ok: true, chat: row, open: { ok: body.mode !== "off" } };
+      const wasOn = !!row.watching;
+      const on = body.mode !== "off";
+      row.watching = on ? 1 : 0;
+      row.timer = on ? 1 : -1;
+      // 和后端一致：关闭不改写关注程度，下次开启沿用。
+      if (on) row.wake_mode = body.mode === "all" ? "all" : "mention";
+      const opened = on && (!wasOn || !row.dsh_session);
+      return { ok: true, chat: row, open: opened ? { ok: true, started: true } : null };
     }
     if (p === "/api/chat/timer") {
       const c = FIX.chats.find((x) => x.platform === body.platform && x.chat_id === body.chat_id);
@@ -398,14 +408,22 @@ export const intercept = `(() => {
     }
     if (p === "/api/chat/workspace") {
       const c = FIX.chats.find((x) => x.platform === body.platform && x.chat_id === body.chat_id);
-      if (c) c.workspace = body.workspace || "";
+      if (c) {
+        const changed = (c.workspace || "") !== (body.workspace || "");
+        c.workspace = body.workspace || "";
+        const opened = changed && c.watching && !c.blocked && !c.dsh_session;
+        return { ok: true, changed, open: opened ? { ok: true, started: true } : null };
+      }
       return { ok: true };
     }
     if (p === "/api/chat/wake" || p === "/api/pause") return { ok: true };
     if (p === "/api/chat/session/reset") {
       const c = FIX.chats.find((x) => x.platform === body.platform && x.chat_id === body.chat_id);
-      if (c) { c.dsh_session = ""; c.session_turns = 0; c.turn_state = "idle"; }
-      return { ok: true };
+      if (c) {
+        c.dsh_session = "session-demo-again"; c.session_turns = 0; c.turn_state = "running";
+      }
+      return { ok: true, previous: "session-demo-old", interrupted: false,
+               open: { ok: true, started: true } };
     }
     if (p === "/api/config") {
       const merge = (dst, src) => {

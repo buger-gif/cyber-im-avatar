@@ -19,12 +19,12 @@
 | GET | `/api/chats` | — | 会话清单，含 `blocked` / `timer` / `timed` / `watching` / `wake_mode` / `mentionable` / `dsh_session` / `session_turns` / `turn_state`；`mentionable=false` 表示该平台判不了 @（面板置灰「只盯 @我」）。工作区字段见下 |
 | GET | `/api/send` | `platform`、`chat_id`、`text`、`msg_id` | 以本人身份发出；不写发送历史 |
 | GET | `/api/state` | `platform`、`msg_id`、`state`、`chat_id` | 改最近 10 条里的一条：new / opened / replied / ignored；更早的返回 `not_cached` |
-| GET | `/api/watch` | `platform`、`chat_id`、`watching`、`name`、`kind`、`workspace` | 加入 / 移出值守；`workspace` 非空时一并绑定，空串不改变已有绑定。群加入值守默认 `timer=1` + `wake_mode=mention`（只盯 @我），私聊默认 `wake_mode=all`（每条都唤醒）；要改得显式调 `/api/chat/mode`。**加入即开会话**：补拉一次（`wake=false, force=true`，不推进水位）后起一轮开场 turn；失败不影响值守，只在返回的 `open: {ok, reason, skipped}` 里说明（在飞时 `skipped="running"`） |
+| GET | `/api/watch` | `platform`、`chat_id`、`watching`、`name`、`kind`、`workspace` | 加入 / 移出值守；`workspace` 非空时一并绑定，空串不改变已有绑定。加入时把 `timer` 拉回 1（去掉「不盯」留下的 `-1`，否则看着在盯其实不拉），`wake_mode` 沿用上次设置；群首次加入默认 `wake_mode=mention`（只盯 @我），私聊默认 `all`（每条都唤醒）；要改得显式调 `/api/chat/mode`。**加入即开会话**（新加入或绑定会话缺了才开；已经盯上且有会话不重复开场）：补拉一次（`wake=false, force=true`，不推进水位）后起一轮开场 turn；失败不影响值守，只在返回的 `open: {ok, reason, skipped}` 里说明（真的在飞时 `skipped="running"`；已取消正在收尾的旧轮不算） |
 | GET | `/api/unwatch` | `platform`、`chat_id` | 移出值守（保留目标与最近指针） |
 | GET | `/api/search` | `platform`、`q` | 在线搜人；每条含 `id`、`chat_id`（可空，飞书为 `p2p_chat_id`）、`name`（仅可读名称）、`department` |
 | GET | `/api/search/chats` | `platform`、`q` | 按名字搜会话（找群用）；`name` 为空时表示没有可读群名，不回退 `chat_id` |
 | GET | `/api/chat/timer` | `platform`、`chat_id`、`timer` | 定时拉开关：-1 / 0 / 1；群默认 -1 |
-| POST | `/api/chat/mode` | `platform`、`chat_id`、`mode`、`name`、`kind` | 关注程度一档三态：`off` / `mention` / `all`，一次写 `watching` / `timer` / `wake_mode`；群 `mention`=只 @ 唤醒、`all`=非 @ 也进批次；私聊 `mention`=只认 @、`all`=每条都唤醒。`off` 会取消在飞 turn；`mentionable=false` 的平台私聊选 `mention` 返回 `{ok:false}`；`off` → 开启同样立刻起一场开场 turn，返回 `open` |
+| POST | `/api/chat/mode` | `platform`、`chat_id`、`mode`、`name`、`kind` | 关注程度一档三态：`off` / `mention` / `all`，写 `watching` / `timer`，开启时同时写 `wake_mode`；群 `mention`=只 @ 唤醒、`all`=非 @ 也进批次；私聊 `mention`=只认 @、`all`=每条都唤醒。`off` 会取消在飞 turn，但**不改写 `wake_mode`**（下次开启沿用上次；重新加入值守也不会静默变只认 @）；`mentionable=false` 的平台私聊选 `mention` 返回 `{ok:false}`；关闭 → 开启（或开启时没有绑定会话）同样立刻起一场开场 turn，返回 `open` |
 | GET | `/api/chat/block` | `platform`、`chat_id`、`blocked` | 屏蔽 / 取消屏蔽（屏蔽即不同步） |
 | GET | `/api/poll` | `platform`、`chat_id` | 立即拉一轮；带会话=只拉它并同步返回，不带=后台跑整轮，结果从 `/api/status` 的 `poll.last_result` 读。受 `cooldown_sec` 约束；post-turn 补拉是唯一 `force` 例外 |
 | GET | `/api/pause` | `paused` | 暂停 / 恢复定时轮询（不取消在飞 turn） |
@@ -32,7 +32,7 @@
 | GET | `/api/config` | — | 读配置；模型/凭据全在 DSH，插件无 api_key 可回传 |
 | GET | `/api/workspaces` | — | 可选工作区列表（值守会话绑定用） |
 | GET | `/api/targets` | — | 服务对象画像：`profile` / `profile_path` / `profile_updated_at` / `profile_excerpt` |
-| GET | `/api/chat/workspace` | `platform`、`chat_id`、`workspace`（别名 `path`） | 给值守会话绑 / 解绑工作区；必须显式给键，空串=解绑 |
+| GET | `/api/chat/workspace` | `platform`、`chat_id`、`workspace`（别名 `path`） | 给值守会话绑 / 解绑工作区；必须显式给键，空串=解绑。工作区变了且旧会话因此解绑、会话又在值守中（未屏蔽）→ 立刻在新工作区开新会话，返回 `open` |
 | GET | `/api/chat/session` | `platform`、`chat_id` | 查当前绑定的 DSH 会话与工作区 |
 | GET | `/api/logs` | — | 最近轮询错误与在飞 turn 快照（不落盘、不进日志正文） |
 | GET | `/api/digest` | `date`（`YYYY-MM-DD`，默认今天） | 只读 `~/.im-standin/digest/<date>.md`（agent 维护）：`{ok, date, exists, text, mtime}`；日期非法 `bad_date`；不建目录、不解析、不统计 |
@@ -59,7 +59,7 @@
 | POST | `/api/config` | 写配置；`poll.interval_min` 夹到 ≥10 |
 | POST | `/api/platforms` | 启用 / 停用平台：入参 `platform`、`enabled`；只接受 `feishu` / `wecom` / `dingtalk`，写回 `config.platforms`（按固定顺序去重） |
 | POST | `/api/targets/profile` | 覆盖写一份服务对象画像；入参 `platform`、`name`、`text`（≤12KB，超限拒绝不截断） |
-| POST | `/api/chat/session/reset` | 新建会话：可带 `workspace` 先落工作区；打断在飞 turn、清空 `dsh_session`，下次命中开新会话 |
+| POST | `/api/chat/session/reset` | 重开会话：可带 `workspace` 先落工作区；打断在飞 turn、清空 `dsh_session`；值守中（未屏蔽）立刻在新会话里跑一轮开场，返回 `open: {ok, reason, skipped}`；未值守 / 屏蔽只解绑 |
 | POST | `/api/chat/wake` | 手动唤醒：可带 `workspace` 先落工作区；把该会话最近待回交给 agent，不等新消息；`running` / `blocked` / 未值守时拒绝 |
 
 ## 删除接口（DELETE）

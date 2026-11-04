@@ -349,9 +349,12 @@ export class App {
     const chatId = chat.chat_id;
     if (chat.blocked) return { ok: false, reason: "blocked" };
     if (!this.turns) return { ok: false, reason: "host_unavailable" };
-    if (typeof this.turns.isActive === "function" && this.turns.isActive(platform, chatId)) {
-      return { ok: true, skipped: "running" };
-    }
+    // 已被取消、正在收尾的旧轮不算在飞：重开 / 切关注程度刚 cancel 过它，
+    // 这里要能继续把新会话开起来（Turns.open 内部会等旧轮收尾）。
+    const busy = typeof this.turns.busy === "function"
+      ? this.turns.busy(platform, chatId)
+      : !!(typeof this.turns.isActive === "function" && this.turns.isActive(platform, chatId));
+    if (busy) return { ok: true, skipped: "running" };
     try {
       await this.poller.pollChat(platform, chatId, {
         name: chat.name, kind: chat.kind, force: true, wake: false,
@@ -385,13 +388,15 @@ export class App {
     });
     const rawWatching = pick(q, body, "watching", undefined);
     const watching = rawWatching === undefined || rawWatching === "" ? true : boolValue(rawWatching, true);
+    const wasWatching = !!chat.watching;
     chat.watching = watching;
     chat.target = true;
-    // 群加入值守的默认口径是「只盯 @我」：拉起来、只 @ 唤醒。
-    // 不这么做会留成「值守中但 timer=-1」——看着在盯，其实一条都不拉。
-    if (chat.kind === "group" && watching) {
+    // 加入值守的默认口径：盯上就要真的拉。群只有 timer=1 才进轮询，私聊 timer=-1
+    // 表示「不盯」——重新加入时必须把 -1 清掉，否则看着在盯、其实一条都不拉。
+    // wake_mode 不动：沿用上次的关注程度（关闭时不改写，见 chatMode）。
+    if (watching) {
       if (Number(chat.timer) !== 1) chat.timer = 1;
-      if (chat.wake_mode !== "all") chat.wake_mode = "mention";
+      if (chat.kind === "group" && chat.wake_mode !== "all") chat.wake_mode = "mention";
     }
     // 加入值守即视为启用该平台：钉钉默认不开，避免没装 dws 的用户每轮白跑一次 whoami。
     if (watching) {
@@ -404,7 +409,11 @@ export class App {
     if (!watching) this.turns.cancel(platform, chatId, "unwatch");
     try { this.profiles.ensure(platform, chatId, chat.name); } catch { /* profile is best effort */ }
     this.state.save();
-    const open = watching ? await this.openAfterJoin(chat) : null;
+    // 重复加入（已经盯上、会话也在）不重复开场，免得多跑一轮、甚至多回一条；
+    // 但会话缺了（重开过/工作区漂移/会话丢失）就补开，别留空窗。
+    const open = watching && (!wasWatching || !chat.dsh_session)
+      ? await this.openAfterJoin(chat)
+      : null;
     return { ok: true, chat: this.publicChat(chat), open };
   }
 
@@ -457,11 +466,12 @@ export class App {
   }
 
   /**
-   * 「关注程度」一档三态，一次写 watching / timer / wake_mode 三个字段，
+   * 「关注程度」一档三态，一次写 watching / timer / wake_mode（off 只写前两个），
    * 面板不用再记两套开关的组合。按会话 kind 解释：
    * 群 mention=只 @ 唤醒、all=非 @ 也进批次；私聊 mention=只认 @、all=每条都唤醒。
    * 读不到 @ 信息的平台（企微）只拒绝私聊的 mention，别给一个永远不动的开关。
-   * off 会取消在飞 turn，与 unwatch 一致。
+   * off 会取消在飞 turn，与 unwatch 一致；但 off 不动 wake_mode——下次开启沿用上次的
+   * 关注程度，重新加入值守时也不会突然变成「只认 @」（spec 0027 / 0028）。
    */
   async chatMode(q, body = {}) {
     const platform = pick(q, body, "platform");
@@ -482,9 +492,9 @@ export class App {
     const wasOn = !!chat.watching;
     chat.watching = on;
     chat.timer = on ? 1 : -1;
-    chat.wake_mode = mode === "all" ? "all" : "mention";
-    if (chat.wake_mode !== "all") chat.last_wake_at = 0;
     if (on) {
+      chat.wake_mode = mode === "all" ? "all" : "mention";
+      if (chat.wake_mode !== "all") chat.last_wake_at = 0;
       chat.target = true;
       const enabled = this.state.data.config.platforms || [];
       if (!enabled.includes(platform)) {
@@ -496,7 +506,9 @@ export class App {
       this.turns.cancel(platform, chatId, "mode_off");
     }
     this.state.save();
-    const open = on && !wasOn ? await this.openAfterJoin(chat) : null;
+    // 从「不盯」切回来要立刻起会话；已经在盯但绑定为空（刚重开/会话丢失）也要补上，
+    // 否则 @-only 模式下会一直等不到下一轮命中，看着像没生效（spec 0028）。
+    const open = on && (!wasOn || !chat.dsh_session) ? await this.openAfterJoin(chat) : null;
     return { ok: true, chat: this.publicChat(chat), open, poll: this.poller.pollInfo() };
   }
 
@@ -668,9 +680,15 @@ export class App {
       : (body && "path" in body ? body.path : q1(q, q.has?.("workspace") ? "workspace" : "path", ""));
     const res = await this.applyWorkspace(platform, chatId, raw || "");
     if (!res.ok) return res;
+    // 换工作区可能把旧会话解绑掉（DSH 会话按 cwd 归属）。值守中又没有会话时立刻开一个，
+    // 否则又回到「等下一轮命中」——@-only 私聊会看起来像坏了（spec 0028）。
+    const chat = this.state.getChat(platform, chatId);
+    const open = chat && chat.watching && !chat.blocked && !chat.dsh_session
+      ? await this.openAfterJoin(chat)
+      : null;
     return {
       ok: true, workspace: res.workspace || "", effective: res.effective || "",
-      label: res.title || "", changed: !!res.changed,
+      label: res.title || "", changed: !!res.changed, open,
     };
   }
 
@@ -702,8 +720,16 @@ export class App {
     interrupted = this.turns.cancel(platform, chatId, "session_reset") || interrupted;
     const chat = this.state.ensureChat(platform, chatId, {});
     this.state.setSession(chat, "", "manual");
+    // 旧轮可能留下「进行中 / 失败」的痕迹，手动重开是干净的起点。
+    chat.wake.active = false;
+    chat.wake.failed = false;
+    chat.wake.turn_id = "";
     this.state.save();
-    return { ok: true, previous: old, interrupted, chat: this.publicChat(chat) };
+    // 只解绑会让 @-only 私聊长期没有会话可续（下一轮命中可能不来）；立刻在新会话里开场。
+    // 刚被 cancel 的旧轮不算在飞（Turns.busy），所以这里不会误判成 running。
+    // 未值守 / 屏蔽 / 宿主未就绪不强行开，只回报原因，解绑结果不受影响（spec 0028）。
+    const open = (chat.watching && !chat.blocked) ? await this.openAfterJoin(chat) : null;
+    return { ok: true, previous: old, interrupted, open, chat: this.publicChat(chat) };
   }
 
   async chatWake(q, body) {
@@ -719,7 +745,7 @@ export class App {
     if (!chat) return { ok: false, reason: "chat_not_found" };
     if (chat.blocked) return { ok: false, reason: "blocked" };
     if (!chat.watching) return { ok: false, reason: "not_watching" };
-    if (this.turns.isActive(platform, chatId)) {
+    if (this.turns.busy?.(platform, chatId)) {
       return { ok: false, reason: "running", pending: this.state.pendingCount(chat) };
     }
     const nonSelf = chat.recent.some((m) => m.kind !== "out");

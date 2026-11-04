@@ -25,6 +25,7 @@ function makeApp() {
   const turns = {
     hostReady: () => true,
     isActive: () => false,
+    busy: () => false,
     snapshot: () => ({}),
     async wake(chat) { calls.wake.push(chat.chat_id); return { ok: true, turn_id: "turn-1" }; },
     async open(chat) { calls.open.push(chat.chat_id); return { ok: true, started: true }; },
@@ -393,6 +394,137 @@ test("chat list exposes whether mention mode can work per platform", async () =>
   assert.equal(byPlatform.wecom.mentionable, false);
 });
 
+test("session reset opens a new session immediately for watched chats", async () => {
+  const { app, state, calls } = makeApp();
+  const chat = state.ensureChat("feishu", "oc_rs", { name: "值守对象", kind: "p2p" });
+  chat.watching = true;
+  chat.dsh_session = "session-old";
+  chat.session_turns = 4;
+
+  let out = await app.handle("/api/chat/session/reset", "POST", null,
+    { platform: "feishu", chat_id: "oc_rs" });
+  assert.equal(out.body.ok, true);
+  assert.equal(out.body.previous, "session-old");
+  assert.equal(chat.dsh_session, "", "先解绑");
+  assert.equal(chat.session_turns, 0);
+  assert.deepEqual(calls.open, ["oc_rs"], "值守中要立刻在新会话里开场");
+  assert.equal(out.body.open.ok, true);
+
+  // 未值守：只解绑，不起来会话。
+  const idle = state.ensureChat("feishu", "oc_rs_idle", { name: "未值守对象", kind: "p2p" });
+  idle.dsh_session = "session-idle";
+  out = await app.handle("/api/chat/session/reset", "POST", null,
+    { platform: "feishu", chat_id: "oc_rs_idle" });
+  assert.equal(out.body.ok, true);
+  assert.equal(out.body.open, null);
+  assert.deepEqual(calls.open, ["oc_rs"], "未值守不该起 turn");
+
+  // 屏蔽：同样只解绑。
+  const blocked = state.ensureChat("feishu", "oc_rs_blocked", { name: "屏蔽对象", kind: "p2p" });
+  blocked.watching = true;
+  blocked.blocked = true;
+  blocked.dsh_session = "session-blocked";
+  out = await app.handle("/api/chat/session/reset", "POST", null,
+    { platform: "feishu", chat_id: "oc_rs_blocked" });
+  assert.equal(out.body.ok, true);
+  assert.equal(out.body.open, null);
+  assert.deepEqual(calls.open, ["oc_rs"]);
+
+  // 在飞：先打断，再在新会话开场；两个动作都要发生。
+  const running = state.ensureChat("feishu", "oc_rs_running", { name: "在飞对象", kind: "p2p" });
+  running.watching = true;
+  running.dsh_session = "session-running";
+  app.turns.cancel = () => true;
+  out = await app.handle("/api/chat/session/reset", "POST", null,
+    { platform: "feishu", chat_id: "oc_rs_running" });
+  assert.equal(out.body.interrupted, true);
+  assert.equal(out.body.open.ok, true);
+  assert.deepEqual(calls.open, ["oc_rs", "oc_rs_running"]);
+});
+
+test("re-joining a DM that was switched off restores polling and keeps its mode", async () => {
+  const { app, state, calls } = makeApp();
+  // 先在「全部消息」里盯上，再切到不盯；timer 会变成 -1。
+  await app.handle("/api/chat/mode", "POST", null,
+    { platform: "feishu", chat_id: "oc_readd", name: "对象", kind: "p2p", mode: "all" });
+  const chat = state.getChat("feishu", "oc_readd");
+  chat.wake_mode = "all";
+  await app.handle("/api/chat/mode", "POST", null,
+    { platform: "feishu", chat_id: "oc_readd", mode: "off" });
+  assert.equal(chat.watching, false);
+  assert.equal(chat.timer, -1);
+  assert.equal(chat.wake_mode, "all", "off 不改写关注程度");
+
+  // 重新从搜索里加入值守：timer 要回到 1，否则 candidates 跳过它、看着在盯其实不拉。
+  const out = await app.handle("/api/watch", "POST", null,
+    { platform: "feishu", chat_id: "oc_readd", name: "对象", kind: "p2p", watching: true });
+  assert.equal(out.body.ok, true);
+  assert.equal(chat.watching, true);
+  assert.equal(chat.timer, 1);
+  assert.equal(chat.wake_mode, "all", "沿用上次的关注程度，不能静默变成只认 @");
+  assert.deepEqual(calls.open, ["oc_readd", "oc_readd"], "重新加入也要立刻开会话");
+});
+
+test("re-adding an already watching chat with a session does not open another turn", async () => {
+  const { app, state, calls } = makeApp();
+  const chat = state.ensureChat("feishu", "oc_dup", { name: "对象", kind: "p2p" });
+  chat.watching = true;
+  chat.timer = 1;
+  chat.dsh_session = "session-dup";
+  const out = await app.handle("/api/watch", "POST", null,
+    { platform: "feishu", chat_id: "oc_dup", name: "对象", kind: "p2p", watching: true });
+  assert.equal(out.body.ok, true);
+  assert.equal(out.body.open, null, "已经盯上且有会话：不重复开场");
+  assert.deepEqual(calls.open, []);
+
+  // 会话丢了（重开/漂移）时补开。
+  chat.dsh_session = "";
+  const out2 = await app.handle("/api/watch", "POST", null,
+    { platform: "feishu", chat_id: "oc_dup", watching: true });
+  assert.equal(out2.body.open.ok, true);
+  assert.deepEqual(calls.open, ["oc_dup"]);
+});
+
+test("changing workspace for a watched chat opens a session when the old one was dropped", async () => {
+  const { app, state, calls } = makeApp();
+  const chat = state.ensureChat("feishu", "oc_ws", { name: "对象", kind: "p2p" });
+  chat.watching = true;
+  chat.timer = 1;
+  chat.dsh_session = "";
+  const out = await app.handle("/api/chat/workspace", "POST", null,
+    { platform: "feishu", chat_id: "oc_ws", workspace: "/tmp" });
+  assert.equal(out.body.ok, true);
+  assert.equal(out.body.open.ok, true);
+  assert.deepEqual(calls.open, ["oc_ws"]);
+});
+
+test("reset reports running instead of silently doing nothing when a live turn holds the chat", async () => {
+  const { app, state } = makeApp();
+  const chat = state.ensureChat("feishu", "oc_busy", { name: "在飞", kind: "p2p" });
+  chat.watching = true;
+  chat.dsh_session = "session-old";
+  app.turns.busy = () => true;
+  app.turns.cancel = () => false; // 模拟 cancel 拿不到句柄
+  const out = await app.handle("/api/chat/session/reset", "POST", null,
+    { platform: "feishu", chat_id: "oc_busy" });
+  assert.equal(out.body.ok, true);
+  assert.equal(out.body.open.ok, true);
+  assert.equal(out.body.open.skipped, "running");
+  assert.equal(chat.dsh_session, "", "解绑照常生效");
+});
+
+test("switching mode on a watched chat with no session opens one", async () => {
+  const { app, state, calls } = makeApp();
+  const chat = state.ensureChat("feishu", "oc_ns", { name: "没有会话", kind: "p2p" });
+  chat.watching = true;
+  chat.dsh_session = "";
+  const out = await app.handle("/api/chat/mode", "POST", null,
+    { platform: "feishu", chat_id: "oc_ns", mode: "mention" });
+  assert.equal(out.body.ok, true);
+  assert.deepEqual(calls.open, ["oc_ns"], "已值守但没绑会话：切模式要补开会话");
+  assert.equal(out.body.open.ok, true);
+});
+
 test("joining watch on a group defaults to mention mode and starts polling", async () => {
   const { app, state } = makeApp();
   const out = await app.handle("/api/watch", "POST", null, {
@@ -426,9 +558,10 @@ test("switching a group from off to mention opens a session; re-joining does not
   assert.deepEqual(calls.open, ["oc_g10"]);
   const before = state.getChat("feishu", "oc_g10");
   assert.equal(before.watching, true);
+  before.dsh_session = "session-g10"; // 真实链路里首次开场会绑定会话；测试夹具替它补上。
 
   await app.handle("/api/chat/mode", "POST", null, {
     platform: "feishu", chat_id: "oc_g10", mode: "all",
   });
-  assert.deepEqual(calls.open, ["oc_g10"], "已在值守的会话再切模式不重复开会话");
+  assert.deepEqual(calls.open, ["oc_g10"], "已有会话的会话再切模式不重复开会话");
 });

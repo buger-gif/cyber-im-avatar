@@ -323,6 +323,16 @@ export class Turns {
     return this.active.has(chatKey(platform, chatId));
   }
 
+  /**
+   * 真正在跑的轮次：已被取消、正在收尾的不算。
+   * 「加入 / 重开 / 切关注程度」要立刻起会话时用它判断，否则刚 cancel 的旧轮
+   * 还挂在 active 里，open 会被误判成 running 而静默不开（spec 0028）。
+   */
+  busy(platform, chatId) {
+    const handle = this.active.get(chatKey(platform, chatId));
+    return !!handle && !handle.cancelled;
+  }
+
   async wake(chat, { interrupted = false, batch = null } = {}) {
     if (!this.hostReady()) {
       return { ok: false, reason: "host_unavailable" };
@@ -350,17 +360,18 @@ export class Turns {
     }
   }
 
-  /** 人工开启值守：立刻建会话/起一轮，不等新消息。在飞则不打断，直接算成功。 */
+  /** 人工开启值守：立刻建会话/起一轮，不等新消息。在飞（未取消）则不打断，直接算成功。 */
   async open(chat, { reason = "join" } = {}) {
     if (!this.hostReady()) return { ok: false, reason: "host_unavailable" };
     const key = chatKey(chat.platform, chat.chat_id);
-    if (this.active.has(key)) return { ok: true, skipped: "running" };
+    if (this.busy(chat.platform, chat.chat_id)) return { ok: true, skipped: "running" };
     // 和 wake 一样等启动阶段收口，避免两个 followup 抢同一个 session。
     const starting = this.starting.get(key);
     if (starting) {
       try { await starting; } catch { /* 上一次启动失败也继续 */ }
     }
-    if (this.active.has(key)) return { ok: true, skipped: "running" };
+    if (this.busy(chat.platform, chat.chat_id)) return { ok: true, skipped: "running" };
+    // 被取消的旧轮仍在收尾时，_wake 会先 cancel 再 await done，然后开新轮。
     return this._wake(chat, { interrupted: false, open: true, reason });
   }
 
