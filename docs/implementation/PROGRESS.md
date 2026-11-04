@@ -12,7 +12,7 @@
 
 | 日期 | 主题 | 证据 |
 | --- | --- | --- |
-| 2026-11-04 | 闲置重开 + 值守心跳（spec 0026）：`dsh.idle_reset_min` / `dsh.warm_min`、`last_warm_at` / `last_warm_ok` / `last_reset`、设置页「会话生命周期」 | `lib/turns.js`、`lib/poller.js`、`lib/state.js`、`web/panel.js`、契约 02/03、`docs/implementation/log/2026-11-04.md` |
+| 2026-11-04 | 闲置重开 + 值守心跳（spec 0026）：`dsh.idle_reset_min` / `dsh.warm_min`、`last_warm_at` / `last_warm_ok` / `last_reset`、设置页「会话生命周期」；skill 加 `--idle-exit-min 180` / `--new-watch` | `lib/turns.js`、`lib/poller.js`、`lib/state.js`、`web/panel.js`、`scripts/listen_core.py`、契约 02/03、`docs/implementation/log/2026-11-04.md` |
 | 2026-11-03 | 进插件市场名单：条目 PR [#11669](https://github.com/awesome-dsh-plugin/awesome-dsh-plugin/pull/11669)，`screenshots.json` 进详情页，流程落 runbook | `docs/implementation/runbooks/market-listing.md`、`dsh-plugin/screenshots.json` |
 | 2026-11-03 | 0024 / 0025 真机验收通过并归档（群三态 + 加入即开会话） | `docs/specs/archive/README.md` |
 | 2026-11-03 | 加入值守即开会话（spec 0025）：`Turns.open()` + 开场载荷、`/api/watch` 与 `/api/chat/mode` 立刻起 turn | `lib/turns.js`、`lib/app.js`、`web/panel.js`、契约 01 |
@@ -36,9 +36,10 @@
 
 ## 当前断点
 
-- **0026 已实现，真机未验**：闲置重开（`dsh.idle_reset_min=180`）与值守心跳
-  （`dsh.warm_min=55`）已进契约、state、面板与测试；`node --test` 131/131、
-  `python3 tests/run_tests.py` 110/0、全量 gate 全绿。运行中的 127.0.0.1:55562 未重启，
+- **0026 已实现，真机未验**：插件闲置重开（`dsh.idle_reset_min=180`）与值守心跳
+  （`dsh.warm_min=55`）已进契约、state、面板与测试；skill 形态新增 `--idle-exit-min 180`
+  （3 小时没有新消息命中退 4、不重挂）与 `--new-watch`。`node --test` 131/131、
+  `python3 tests/run_tests.py` 122/0、全量 gate 全绿。运行中的 127.0.0.1:55562 未重启，
   仍是旧代码；真实 `state.json` 未被本轮写入。
 - **市场收录待合并**：条目 PR
   [#11669](https://github.com/awesome-dsh-plugin/awesome-dsh-plugin/pull/11669)。唯一的红是

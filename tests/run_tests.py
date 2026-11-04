@@ -428,6 +428,77 @@ def test_cache_refresh():
     shutil.rmtree(d, ignore_errors=True)
 
 
+def test_idle_exit():
+    """3 小时没有新消息命中 → 退出 4（不重挂）；命中重置时钟；--new-watch 重新计时。"""
+    import time
+    print("\n[闲置退出] 3 小时没有新消息命中就结束值守")
+    old = [{"id": "i1", "sender": "PEER", "content": "旧消息", "time": "2026-10-30 15:00:00"}]
+    d, data = setup("wecom", "wecom", old)
+    start = time.time()
+    r = listen("wecom", d, data, "wecom", "--user-id", "PEER", "--init", "latest",
+               "--interval", "2", "--idle-exit-min", "0.02", "--timeout", "20")
+    elapsed = time.time() - start
+    check("闲置到点退出 4", r.returncode == 4, f"rc={r.returncode} err={r.stderr[:200]}")
+    check("stderr 标 idle-exit", "[idle-exit]" in r.stderr, r.stderr[:200])
+    check("不误报命中", '"hit": true' not in r.stdout, r.stdout[:200])
+    check("按时退出（<8s）", elapsed < 8, f"{elapsed:.1f}s")
+    state_file = os.path.join(d, "states", "wecom_PEER.pos")
+    try:
+        state = json.load(open(state_file))
+    except Exception:
+        state = {}
+    check("闲置时钟落盘", bool(state.get("idle_at")), str(state))
+    shutil.rmtree(d, ignore_errors=True)
+
+    # 命中会刷新 idle_at：下一次重挂从这次命中重新计 3 小时。
+    fresh = [{"id": "h1", "sender": "PEER", "content": "新消息", "time": "2026-10-30 15:10:00"}]
+    d2, data2 = setup("wecom", "wecom", fresh)
+    r2 = listen("wecom", d2, data2, "wecom", "--user-id", "PEER", "--init", "zero",
+                "--interval", "2", "--idle-exit-min", "0.02", "--timeout", "20")
+    check("命中仍退出 0", r2.returncode == 0, f"rc={r2.returncode} err={r2.stderr[:200]}")
+    try:
+        state2 = json.load(open(os.path.join(d2, "states", "wecom_PEER.pos")))
+    except Exception:
+        state2 = {}
+    check("命中刷新 idle_at", abs(float(state2.get("idle_at") or 0) - time.time()) < 10,
+          str(state2))
+    shutil.rmtree(d2, ignore_errors=True)
+
+    # 0 = 关闭：不因闲置退出，仍按 --timeout 到点退 3。
+    d3, data3 = setup("wecom", "wecom", old)
+    r3 = listen("wecom", d3, data3, "wecom", "--user-id", "PEER", "--init", "latest",
+                "--interval", "2", "--idle-exit-min", "0", "--timeout", "2")
+    check("--idle-exit-min 0 不触发闲置退出", r3.returncode == 3,
+          f"rc={r3.returncode} err={r3.stderr[:200]}")
+    shutil.rmtree(d3, ignore_errors=True)
+
+    # 旧的闲置时钟（4 小时前）：默认立刻停；用户明确重启时 --new-watch 重新计时。
+    d4, data4 = setup("wecom", "wecom", old)
+    state_file = os.path.join(d4, "states", "wecom_PEER.pos")
+    # 先正常挂一轮把复合水位写对（企微的消息 ID 是发送者+时间+正文的指纹）。
+    listen("wecom", d4, data4, "wecom", "--user-id", "PEER", "--init", "latest",
+           "--interval", "2", "--idle-exit-min", "0", "--timeout", "1")
+    with open(state_file) as f:
+        saved = json.load(f)
+    saved["idle_at"] = time.time() - 4 * 3600
+    with open(state_file, "w") as f:
+        json.dump(saved, f)
+    start = time.time()
+    r4 = listen("wecom", d4, data4, "wecom", "--user-id", "PEER", "--init", "latest",
+                "--interval", "2", "--idle-exit-min", "0.02", "--timeout", "20")
+    check("过期闲置时钟立即退出 4", r4.returncode == 4 and time.time() - start < 1.5,
+          f"rc={r4.returncode} {time.time() - start:.1f}s")
+    saved["idle_at"] = time.time() - 4 * 3600
+    with open(state_file, "w") as f:
+        json.dump(saved, f)
+    start = time.time()
+    r5 = listen("wecom", d4, data4, "wecom", "--user-id", "PEER", "--init", "latest",
+                "--interval", "2", "--idle-exit-min", "0.02", "--new-watch", "--timeout", "20")
+    check("--new-watch 重新计时", r5.returncode == 4 and time.time() - start >= 0.8,
+          f"rc={r5.returncode} {time.time() - start:.1f}s")
+    shutil.rmtree(d4, ignore_errors=True)
+
+
 def test_profile_compact():
     """画像超限整理：去重、历史结论 ≤20、旧结论进 history、dry-run 不落盘。"""
     print("\n[画像] 超限整理 / 去重 / 归档")
@@ -552,6 +623,8 @@ def test_safety_docs():
     check("README 说明 55 分钟缓存续期", "55 分钟" in readme and "缓存" in readme)
     check("文档禁止重挂重置截止时间", "重置截止时间" in skill)
     check("文档提供显式数据删除命令", "--delete-data --yes" in skill)
+    check("文档提供 --idle-exit-min", "--idle-exit-min" in skill)
+    check("文档说明闲置退出不重挂", "不要重挂" in skill and "闲置" in skill)
 
 
 def test_plugin_polling():
@@ -586,6 +659,7 @@ if __name__ == "__main__":
     test_find_command()
     test_absolute_deadline()
     test_cache_refresh()
+    test_idle_exit()
     test_profile_compact()
     test_privacy_and_redaction()
     test_schema_error_redaction()

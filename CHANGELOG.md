@@ -8,6 +8,9 @@
 - **值守心跳**：闲置每 `dsh.warm_min`（默认 55 分钟）在已绑定会话里跑一轮很轻的维护——
   续上下文缓存，并让 agent 按 skill 规则归并当前对象画像；不计入轮次、不推进闲置时钟，
   真实消息到达即打断。两项都可在面板「设置 → 会话生命周期」改，0 = 关闭。
+- **独立 skill 的闲置退出**：监听脚本默认连续 180 分钟没有新消息命中就退出 `4`
+  （stderr 带 `[idle-exit]`），agent 不再重挂、不新建会话；`--idle-exit-min 0` 关闭，
+  用户明确要求继续值守时重挂加 `--new-watch`。55 分钟保温退出后先按 skill 规则归并画像再重挂。
 - **进插件市场名单**：向 awesome-dsh-plugin 投稿，在 dsh-market 与 DSH「发现」页可按名字搜到装到；
   此前只有手动加自托管索引源的人才看得见。流程与环境落进
   `docs/implementation/runbooks/market-listing.md`。

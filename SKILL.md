@@ -8,8 +8,8 @@ description: 赛博办公 IM 分身——以用户本人身份值守飞书 / 企
 以本人身份值守一个 IM 会话：**监听 → 命中唤醒 → 分析回复 → 重挂**。
 
 与“人格复刻”类 skill 的本质区别：分身绑定会话，用**脚本阻塞轮询**代替 agent 定时任务。
-等待期进程停在 `sleep`，不跑模型；每 55 分钟主动退出一次续上下文缓存，只有命中才处理消息。
-值守 8 小时的成本仍远低于定时任务。
+等待期进程停在 `sleep`，不跑模型；每 55 分钟主动退出一次续上下文缓存，连续 3 小时没有
+新消息命中就结束值守。只有命中才处理消息。值守 8 小时的成本仍远低于定时任务。
 
 ## 在 DSH 插件壳里（首轮唤醒载荷带「运行形态：DSH 插件壳」）
 
@@ -87,12 +87,14 @@ python3 scripts/bootstrap.py --learn-style feishu --chats oc_xxx
 # 2. 验证目标私聊通路
 python3 scripts/bootstrap.py --selftest feishu <chat_id>    # 3 秒自检
 
-# 3. 挂监听（后台任务，等命中或 55 分钟缓存续期）；临时值守用绝对截止时间
+# 3. 挂监听（后台任务，等命中或 55 分钟缓存续期）
+#    连续 3 小时没有新消息命中会退出 4（值守结束，不重挂）
 UNTIL=$(python3 -c 'import time; print(int(time.time() + 1800))')
 python3 scripts/feishu_listen_cli.py --chat-id oc_xxx --sender ou_yyy --until "$UNTIL"
 ```
 
-退出码：`0`=命中（stdout 单行 JSON）· `3`=超时未命中或 55 分钟缓存续期（重挂即可）· `2`=参数/环境/schema 错误。
+退出码：`0`=命中（stdout 单行 JSON）· `3`=超时未命中或 55 分钟缓存续期（重挂即可）·
+`4`=3 小时没有新消息命中（值守结束，**不要重挂、不要开新会话**）· `2`=参数/环境/schema 错误。
 
 ## 标准闭环
 
@@ -105,10 +107,20 @@ lark-cli im +chat-messages-list --chat-id oc_xxx --order desc --limit 10 --as us
 lark-cli im +messages-send --chat-id oc_xxx --msg-type text --as user --text "$(cat /tmp/reply.txt)"
 # 5. 回复发出后：学到长期有效的新事实 → 按「服务对象画像」增量写回；没有就不动
 # 6. 重挂监听（水位已自增，勿回拨）；临时值守继续传同一个 --until，不得重置截止时间
+#    退出原因是 [cache-refresh]：先按「服务对象画像」检查/归并当前画像，再重挂
+#    退出码 4（[idle-exit]）是值守结束：不要重挂、不要开新会话
 ```
 
 一轮里有多条新消息时**只唤醒一次**，报最新那条，并给出 `pending_in_burst` 提示还有几条。
 agent 拉一次上下文就能看到整批，不会把用户连续唤醒 N 次。
+
+- **闲置退出**：默认连续 180 分钟没有新消息命中就退出 `4`，stderr 带 `[idle-exit]`。
+  这不是超时要重挂，而是值守结束：**不要重挂、不要新建会话**，向用户报一句
+  「3 小时没有新消息，值守已结束」即可。用户之后明确要求继续值守时，重挂才加
+  `--new-watch` 重新计时；自动重挂永远不加。
+- **55 分钟保温**：退出 `3` 且 stderr 带 `[cache-refresh]` 时，重挂前先按
+  「服务对象画像」的整理规则检查当前画像（该归并就归并，不需要就跳过），不要发消息；
+  再按原参数重挂，这次模型调用会续上上下文缓存。
 
 ## 服务对象画像：一轮只碰当前对象
 
@@ -200,11 +212,16 @@ agent 拉一次上下文就能看到整批，不会把用户连续唤醒 N 次�
 ## 监听脚本公共参数
 
 `--chat-id` / `--user-id`（二选一）· `--sender` · `--keyword` · `--interval 60` ·
-`--lookback-min 60`（时间窗平台用）· `--init latest|zero` · `--state` · `--timeout` · `--until` · `--cache-refresh-min 55`
+`--lookback-min 60`（时间窗平台用）· `--init latest|zero` · `--state` · `--timeout` · `--until` ·
+`--cache-refresh-min 55` · `--idle-exit-min 180` · `--new-watch`
 
 - `--init latest`：只盯今后新消息（默认）；`--init zero`：立刻对存量最新一条判定，用于验证通路。
 - `--user-id`：私聊免查 chat_id。飞书传对方 `ou_...`；企微把 userid 当 chat_id；钉钉走 `--user`。
-- `--until`：Unix 时间戳或 ISO 8601 绝对截止时间，与 `--timeout` 互斥；命中后重挂必须沿用原值。默认 55 分钟主动退出一次续上下文缓存（`--cache-refresh-min 0` 关闭），退出码 3，重挂即可。
+- `--until`：Unix 时间戳或 ISO 8601 绝对截止时间，与 `--timeout` 互斥；命中后重挂必须沿用原值。
+  默认 55 分钟主动退出一次续上下文缓存（`--cache-refresh-min 0` 关闭，退出码 3，重挂即可），
+  以及 180 分钟没有新消息命中就退出 4（`--idle-exit-min 0` 关闭，不重挂）。
+- `--idle-exit-min`：只认「命中」——被 `--sender` / `--keyword` 过滤掉的、自己发的都不算新消息。
+- `--new-watch`：用户重新要求值守时把闲置时钟归零（不碰水位）；自动重挂不要带。
 
 ## 平台差异与字段漂移：改配置，不改代码
 

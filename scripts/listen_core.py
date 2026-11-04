@@ -10,10 +10,11 @@
    ADAPTER 任意键（命令或字段路径）。schema 漂移就地修配置，不动代码。
 4. **失败可诊断**：字段路径全不命中时上抛 `SCHEMA_MISMATCH` + 原始输出，供 agent/人
    对照写出 override。
-5. **55 分钟缓存续期**：模型上下文缓存通常 1 小时过期；到 55 分钟主动退出（退出码 3），
-   agent 重挂时那次模型调用会命中并续上缓存，等待期仍然只有本地轮询。
+5. **55 分钟缓存续期 + 3 小时闲置退出**：模型上下文缓存通常 1 小时过期；到 55 分钟主动退出
+   （退出码 3），agent 重挂时那次模型调用会命中并续上缓存。连续 180 分钟没有新消息命中就
+   退出 4（stand down），agent 不再重挂、也不开新会话；等待期仍然只有本地轮询。
 
-退出码: 0=命中(stdout 单行 JSON) · 3=超时未命中/缓存续期 · 2=参数/环境错误
+退出码: 0=命中(stdout 单行 JSON) · 3=超时未命中/缓存续期 · 4=闲置退出(不重挂) · 2=参数/环境错误
 """
 import argparse
 import hashlib
@@ -30,6 +31,7 @@ ENV_DIR = os.environ.get("IM_STANDIN_DIR") or os.path.expanduser("~/.im-standin"
 ENV_PATH = os.path.join(ENV_DIR, "env.json")
 STATE_DIR = os.path.join(ENV_DIR, "states")
 DEFAULT_CACHE_REFRESH_MIN = 55.0
+DEFAULT_IDLE_EXIT_MIN = 180.0
 
 
 def dig(obj, paths):
@@ -204,16 +206,40 @@ class Listener:
         return msgs
 
 
-def load_watermark(state_file):
+def load_state(state_file):
     try:
         with open(state_file) as f:
-            return json.load(f).get("last_id")
+            return json.load(f)
     except Exception:
-        return None
+        return {}
 
 
-def save_watermark(state_file, last_id):
-    atomic_write_json(state_file, {"last_id": last_id, "ts": time.time()})
+def load_watermark(state_file):
+    return load_state(state_file).get("last_id")
+
+
+def load_idle_at(state_file):
+    """上一次命中（或本轮值守起点）的 epoch；没有/坏值按 0 处理。"""
+    try:
+        return float(load_state(state_file).get("idle_at") or 0)
+    except (TypeError, ValueError):
+        return 0.0
+
+
+def save_idle_at(state_file, idle_at):
+    """只写闲置时钟，不碰水位：首轮/--new-watch 不能把 last_id 写成空串。"""
+    data = load_state(state_file)
+    data["idle_at"] = float(idle_at)
+    atomic_write_json(state_file, data)
+
+
+def save_watermark(state_file, last_id, idle_at=None):
+    data = load_state(state_file)
+    data["last_id"] = last_id
+    data["ts"] = time.time()
+    if idle_at is not None:
+        data["idle_at"] = float(idle_at)
+    atomic_write_json(state_file, data)
 
 
 def time_window(lookback_min):
@@ -267,11 +293,15 @@ def main(platform, adapter):
                     help="latest=只盯今后新消息；zero=立刻对存量最新一条判定")
     ap.add_argument("--state", default="", help="水位文件路径")
     ap.add_argument("--timeout", type=int, default=0,
-                    help="相对超时秒，0=不设额外上限（仍受缓存续期约束）；到点退出码 3")
+                    help="相对超时秒，0=不设额外上限（仍受缓存续期与闲置退出约束）；到点退出码 3")
     ap.add_argument("--until", default="",
                     help="绝对截止时间（Unix 时间戳/ISO 8601）；重挂沿用，不能和 --timeout 同用")
     ap.add_argument("--cache-refresh-min", type=float, default=DEFAULT_CACHE_REFRESH_MIN,
                     help="到点主动退出以续模型上下文缓存（分钟，0=关闭）")
+    ap.add_argument("--idle-exit-min", type=float, default=DEFAULT_IDLE_EXIT_MIN,
+                    help="连续这么久没有新消息命中就退出，不重挂（分钟，0=关闭）")
+    ap.add_argument("--new-watch", action="store_true",
+                    help="用户重新要求值守：把闲置时钟归零（不碰水位）")
     args = ap.parse_args()
 
     try:
@@ -308,6 +338,28 @@ def main(platform, adapter):
     ensure_private_dir(STATE_DIR)
     safe_target = target.replace("/", "_")
     state_file = args.state or os.path.join(STATE_DIR, f"{platform}_{safe_target}.pos")
+
+    idle_min = max(0.0, args.idle_exit_min)
+    idle_deadline = None
+    if idle_min > 0:
+        idle_at = 0.0 if args.new_watch else load_idle_at(state_file)
+        if idle_at <= 0:
+            idle_at = time.time()
+            save_idle_at(state_file, idle_at)
+        idle_deadline = idle_at + idle_min * 60
+
+    def idle_exit():
+        print(f"[idle-exit] {idle_min:g} 分钟没有新消息命中，值守结束；"
+              "不要重挂、不要开新会话", file=sys.stderr)
+        sys.exit(4)
+
+    def next_deadline():
+        vals = [d for d in (deadline, idle_deadline) if d is not None]
+        return min(vals) if vals else None
+
+    if idle_deadline is not None and time.time() >= idle_deadline:
+        idle_exit()
+
     ln = Listener(platform, adapter)
 
     self_id = ln.get_self_id()
@@ -329,6 +381,9 @@ def main(platform, adapter):
     fail_streak = 0
 
     while True:
+        # 闲置退出优先于续期：到点就不要再用一次重挂把值守拉起来。
+        if idle_deadline is not None and time.time() >= idle_deadline:
+            idle_exit()
         if deadline and time.time() > deadline:
             timeout_exit()
         ln.window = time_window(args.lookback_min)
@@ -339,7 +394,7 @@ def main(platform, adapter):
                 print(f"ERROR: 连续 5 轮拉取失败（登录态/权限/schema 漂移）: {res}",
                       file=sys.stderr)
                 sys.exit(2)
-            sleep_capped(args.interval, deadline)
+            sleep_capped(args.interval, next_deadline())
             continue
         fail_streak = 0
 
@@ -364,7 +419,8 @@ def main(platform, adapter):
             break
 
         if hit:
-            save_watermark(state_file, newest)  # 命中即推水位，防重复唤醒
+            # 命中即推水位，并把闲置时钟归零；下次重挂从这次命中重新计 3 小时。
+            save_watermark(state_file, newest, idle_at=time.time())
             print(json.dumps({
                 "hit": True, "platform": platform,
                 "chat_id": args.chat_id or "",
@@ -379,4 +435,4 @@ def main(platform, adapter):
             wm = newest
             save_watermark(state_file, wm)
 
-        sleep_capped(args.interval, deadline)
+        sleep_capped(args.interval, next_deadline())
