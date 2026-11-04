@@ -272,6 +272,15 @@ export class Poller {
     return out.filter(Boolean);
   }
 
+  /** 该平台能不能判定「@ 我」（结构化 mentions，或本人显示名兜底）。 */
+  canMention(platform) {
+    try {
+      return !!this.im.adapter(platform).canMention;
+    } catch {
+      return false;
+    }
+  }
+
   async cycle({ force = false, note = "" } = {}) {
     if (this.cycleLock) return { ok: false, busy: true, reason: "上一轮还没跑完" };
     this.cycleLock = true;
@@ -473,9 +482,12 @@ export class Poller {
       if (isNew) newIds.add(String(m.msg_id));
       const isSelf = !!selfId && m.sender_id === selfId;
       const allMode = chat.kind === "group" && chat.wake_mode === "all";
+      // 私聊「只认 @」：非 @ 记知会，正文不落盘、不算待回、不进唤醒批次。
+      const dmMention = chat.kind !== "group" && chat.wake_mode === "mention";
       let kind;
       if (isSelf) kind = "out";
       else if (chat.kind === "group") kind = isMention(m, selfId, names) ? "mention" : "fyi";
+      else if (dmMention) kind = isMention(m, selfId, names) ? "dm" : "fyi";
       else kind = "dm";
       let state;
       if (baseline) {

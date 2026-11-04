@@ -445,6 +445,67 @@ test("mention-mode groups still ignore non-mentions (regression)", async () => {
   assert.equal(chat.wake_mode, "mention");
 });
 
+test("mention-mode DMs ignore chatter and wake on structured or literal @", async () => {
+  const { state, poller, adapter, turns } = setup();
+  const chat = state.ensureChat("feishu", "oc_dm_mention", { name: "客户", kind: "p2p" });
+  chat.watching = true;
+  chat.wake_mode = "mention";
+  adapter.messages = [msg("d1", 6010)];
+  await poller.pollChat("feishu", "oc_dm_mention");
+
+  // 闲聊：记知会见、不落正文、不算待回、不唤醒。
+  adapter.messages = [msg("d2", 6020, { content: "中午吃啥" }), msg("d1", 6010)];
+  let r = await poller.pollChat("feishu", "oc_dm_mention", { force: true });
+  assert.equal(r.woke, false);
+  assert.equal(turns.wakes.length, 0);
+  assert.equal(state.pendingCount(chat), 0);
+  const chatter = chat.recent.find((m) => m.msg_id === "d2");
+  assert.equal(chatter.kind, "fyi");
+  assert.equal(chatter.state, "ignored");
+  assert.equal(chatter.content, "");
+
+  // 结构化 @：唤醒、批次只带这一条，kind 仍是 dm（留在「私聊」筛选里）。
+  adapter.messages = [
+    msg("d3", 6030, { content: "@_user_1 看下这个", mentions: [{ id: { open_id: "ou_me" } }] }),
+    msg("d2", 6020, { content: "中午吃啥" }), msg("d1", 6010),
+  ];
+  r = await poller.pollChat("feishu", "oc_dm_mention", { force: true });
+  assert.equal(r.woke, true);
+  assert.equal(turns.wakes.length, 1);
+  assert.deepEqual(turns.wakes[0].opts.batch.map((m) => m.msg_id), ["d3"]);
+  assert.equal(chat.recent.find((m) => m.msg_id === "d3").kind, "dm");
+
+  // 正文 @ 本人显示名：同样唤醒。
+  adapter.messages = [msg("d4", 6040, { content: "@我 帮看下" }), msg("d3", 6030), msg("d2", 6020), msg("d1", 6010)];
+  r = await poller.pollChat("feishu", "oc_dm_mention", { force: true });
+  assert.equal(r.woke, true);
+  assert.deepEqual(turns.wakes.at(-1).opts.batch.map((m) => m.msg_id), ["d4"]);
+
+  // @ 别人不算：不误唤醒。
+  adapter.messages = [
+    msg("d5", 6050, { content: "@张三丰 看下", mentions: [{ id: { open_id: "ou_other" }, name: "张三丰" }] }),
+    msg("d4", 6040, { content: "@我 帮看下" }), msg("d3", 6030), msg("d2", 6020), msg("d1", 6010),
+  ];
+  r = await poller.pollChat("feishu", "oc_dm_mention", { force: true });
+  assert.equal(r.woke, false);
+  assert.equal(turns.wakes.length, 2);
+  assert.equal(chat.recent.find((m) => m.msg_id === "d5").kind, "fyi");
+});
+
+test("DMs keep every message waking by default (all mode)", async () => {
+  const { state, poller, adapter, turns } = setup();
+  const chat = state.ensureChat("feishu", "oc_dm_all", { name: "客户", kind: "p2p" });
+  chat.watching = true;
+  assert.equal(chat.wake_mode, "all");
+  adapter.messages = [msg("e1", 7010)];
+  await poller.pollChat("feishu", "oc_dm_all");
+  adapter.messages = [msg("e2", 7020, { content: "随便聊聊" }), msg("e1", 7010)];
+  const r = await poller.pollChat("feishu", "oc_dm_all", { force: true });
+  assert.equal(r.woke, true);
+  assert.equal(turns.wakes.length, 1);
+  assert.equal(chat.recent.find((m) => m.msg_id === "e2").kind, "dm");
+});
+
 function warmChat(state, { platform = "feishu", chatId = "oc_warm", idleMin = 60 } = {}) {
   const chat = state.ensureChat(platform, chatId, { name: "保温对象", kind: "p2p" });
   chat.watching = true;

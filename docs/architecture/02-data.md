@@ -27,7 +27,7 @@
 | 层 | 一行是什么 | 关键字段 |
 | --- | --- | --- |
 | `config` | 插件配置，改动即时生效 | `poll.*`、`platforms`、`dsh.timeout`、`dsh.full_access`、`dsh.idle_reset_min`、`dsh.warm_min` |
-| `chats` | 一个会话（一个人或一个群） | `watching`、`timer`、`blocked`、`last_msg_id`、`last_epoch`、`dsh_session`、`prompt_session`、`last_warm_at`、`last_reset` |
+| `chats` | 一个会话（一个人或一个群） | `watching`、`timer`、`wake_mode`、`blocked`、`last_msg_id`、`last_epoch`、`dsh_session`、`prompt_session`、`last_warm_at`、`last_reset` |
 | `chats[].recent` | 最近 10 条消息**指针** | `kind`(dm/mention/fyi/out)、`state`(new/opened/replied/ignored)、`msg_id`、`msg_type`、`app_link`、`media_id`、`media_paths` |
 
 `recent` 不是聊天记录库：最多 10 条、最新在前，`content` 只在 `new`/`opened` 的私聊与 @我 上保留；
@@ -95,16 +95,19 @@
 ```
 
 群默认不拉是有意的：一个 500 人群进了快车道就是每分钟一次拉取，等于用你的账号在群里做
-全量监听，既贵又不合适。真要做群客服，在那个群上勾「定时检测 @我」，它才进轮询
-（勾了也会按 `fast_sec` 拉，一天约 1440 次，体检页有估算）。
+全量监听，既贵又不合适。真要做群客服，把那个群的关注程度切到「只盯 @我」或「全部消息」，
+它才进轮询（进去也会按 `fast_sec` 拉，一天约 1440 次，体检页有估算）。
+
+私聊的「只认 @」只决定**叫不叫醒**，不决定拉不拉：仍按 `fast_sec` 拉，否则连 @ 也发现不了。
+非 @ 消息记 `fyi` / `ignored`，正文不落盘、不算待回，因此闲聊不花 turn 也不进收件箱。
 
 ## 消息分类与去重
 
 | kind | 判据 | 进收件箱 |
 | --- | --- | --- |
-| `dm` | 单聊里别人发的 | ✅ |
+| `dm` | 单聊里别人发的（私聊「只认 @」时仅 @ 我的那条） | ✅ |
 | `mention` | 群里 @我（匹配 `self_names`） | ✅ |
-| `fyi` | 群里没 @我，但会话在盯 | 只在「全部」里出现 |
+| `fyi` | 群里没 @我 / 私聊「只认 @」时的非 @ 消息，但会话在盯 | 只在「全部」里出现 |
 | `out` | 我自己发的（防回环） | ❌ |
 
 分类在 `poller.process()` 里**只判一次**，判完写进 `recent`，前端不再重算。

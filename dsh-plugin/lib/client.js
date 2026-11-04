@@ -1287,38 +1287,14 @@ window.__ModuleLoader__.load({
               .catch(function (e) { say("拉取失败：" + shortReason(e)); });
           }
         }, h("span", { class: "ims-ico", html: icon("sync", 13) }), "拉一次"),
-        chat.kind === "group" ? modeSelect(chat) : null,
-        chat.kind === "group" ? null : h("label", { class: "ims-switch", title: "值守：这个会话的新消息会唤醒 agent" },
-          h("input", {
-            type: "checkbox", checked: watched,
-            onchange: function (e) {
-              if (e.target.checked && !watched) {
-                var ws = S.wsPicked ? S.detailWs : (chat.workspace || joinWorkspace());
-                joinWatch(d.platform, d.chat_id, chat.name, chat.kind, function () {
-                  refreshDetail(); loadChats();
-                }, ws).then(function (r) {
-                  if (!r || r.ok === false) e.target.checked = false;
-                });
-                return;
-              }
-              api("/api/watch", { body: { platform: d.platform, chat_id: d.chat_id,
-                                          watching: e.target.checked, name: chat.name,
-                                          kind: chat.kind } })
-                .then(function (r) {
-                  if (!e.target.checked) return say("已移出值守");
-                  if (r && r.open && r.open.ok === false) {
-                    return say("已加入值守；会话没起来：" + (r.open.reason || "未知原因") +
-                               "，下一条消息会重试");
-                  }
-                  say(r && r.open && r.open.ok ? "已加入值守 · 会话已开" : "已加入值守");
-                })
-                .then(loadChats)
-                .then(refreshDetail);
-            }
-          }), "值守"));
+        modeSelect(chat));
       wrap.appendChild(dhead);
       wrap.appendChild(h("div", { class: "ims-hint", style: "padding:6px var(--pad) 0",
                                   text: "只显示最近 30 条；更早消息去 IM 客户端或 DSH 会话看" }));
+      if (chat.kind !== "group" && chat.watching && chat.wake_mode === "mention") {
+        wrap.appendChild(h("div", { class: "ims-hint", style: "padding:2px var(--pad) 0",
+          text: "只盯 @我：对方 @ 你（或正文写 @你的名字）才唤醒 agent；其它消息只记知会、不算待回。" }));
+      }
 
       // 工作区常显：没值守也能先选好，加入时直接带上，避免「先跑默认、再改」。
       var wsCur = S.wsPicked ? S.detailWs
@@ -1487,7 +1463,8 @@ window.__ModuleLoader__.load({
       return wrap;
     }
 
-    // 群的「关注程度」：一档三态，后端一次写 watching / timer / wake_mode。
+    // 「关注程度」：一档三态，后端一次写 watching / timer / wake_mode。
+    // 群与私聊共用；私聊的 mention = 只认 @，all = 每条都唤醒。
     function setChatMode(c, mode) {
       api("/api/chat/mode", { body: { platform: c.platform, chat_id: c.chat_id,
                                       name: c.name, kind: c.kind, mode: mode } })
@@ -1496,31 +1473,49 @@ window.__ModuleLoader__.load({
           c.watching = !!r.chat.watching;
           c.timer = r.chat.timer;
           c.wake_mode = r.chat.wake_mode;
+          var isGroup = c.kind === "group";
           var opened = r.open && r.open.ok ? " · 会话已开"
             : (r.open && r.open.ok === false ? "；会话没起来：" + (r.open.reason || "未知原因") : "");
-          say((mode === "off" ? "已改为不盯：不再拉这个群"
-            : (mode === "all" ? "已改为全部消息：非 @ 只看不回，@ 你照常回"
-            : "已改为只盯 @我")) + opened);
+          say((mode === "off"
+            ? "已改为不盯：不再拉这个" + (isGroup ? "群" : "会话")
+            : (mode === "all"
+                ? (isGroup ? "已改为全部消息：非 @ 只看不回，@ 你照常回"
+                           : "已改为全部消息：每条新消息都唤醒")
+                : "已改为只盯 @我：" + (isGroup ? "只有 @ 你才唤醒"
+                                               : "对方 @ 你才唤醒，闲聊只记知会"))) + opened);
+          // 详情头部也挂这个下拉：切完把会话行 / 提示刷成服务端的最新状态。
           loadChats(); loadStatus();
+          if (S.detail) refreshDetail();
         });
     }
 
     function chatModeOf(c) {
       // timer 没起来 = 实际一条都不拉，按「不盯」显示，别让卡片说谎。
-      if (!c.watching || c.timer !== 1) return "off";
+      if (!c.watching) return "off";
+      if (c.kind === "group" ? c.timer !== 1 : c.timer === -1) return "off";
       return c.wake_mode === "all" ? "all" : "mention";
     }
 
-    // 群卡片/详情头部共用：不盯 / 只盯 @我 / 全部消息
+    // 群卡片 / 详情头部 / 分身卡片共用：不盯 / 只盯 @我 / 全部消息
     function modeSelect(c) {
       var cur = chatModeOf(c);
+      var isGroup = c.kind === "group";
+      var canMention = c.mentionable !== false;
+      var title = isGroup
+        ? "关注程度：不盯=一条不拉；只盯 @我=只有 @你的消息唤醒 agent；" +
+          "全部消息=非 @ 也唤醒（只看不回、要你表态的进日报），@ 你照常回"
+        : "关注程度：不盯=一条不拉；只盯 @我=对方 @ 你（或正文写 @你的名字）才唤醒 agent，" +
+          "其它消息只记知会；全部消息=每条新消息都唤醒" +
+          (canMention ? "" : "。该平台私聊读不到 @ 信息，只认 @ 用不了");
       var sel = h("select", {
-        class: "ims-select ims-mode", title: "关注程度：不盯=一条不拉；只盯 @我=只有 @你的消息唤醒 agent；" +
-          "全部消息=非 @ 也唤醒（只看不回、要你表态的进日报），@ 你照常回",
+        class: "ims-select ims-mode", title: title,
         onchange: function (e) { setChatMode(c, e.target.value); }
       },
         h("option", { value: "off", text: "不盯" }),
-        h("option", { value: "mention", text: "只盯 @我" }),
+        h("option", {
+          value: "mention", text: "只盯 @我", disabled: !canMention,
+          title: canMention ? "" : "该平台私聊读不到 @ 信息（没有 mentions，也拿不到你的显示名），这个模式不会触发"
+        }),
         h("option", { value: "all", text: "全部消息" }));
       sel.value = cur;
       return sel;
@@ -1661,15 +1656,7 @@ window.__ModuleLoader__.load({
             h("span", { class: "ims-note-body", text: prof }))
             : h("div", { class: "ims-hint", text: "还没画像，去「服务对象」补一份；agent 起草时会更像你" }),
           h("div", { class: "ims-rowline" },
-            c.kind === "group" ? modeSelect(c) : h("label", { class: "ims-switch" },
-              h("input", {
-                type: "checkbox", checked: true,
-                onchange: function (e) {
-                  api("/api/watch", { body: { platform: c.platform, chat_id: c.chat_id,
-                                              watching: e.target.checked } })
-                    .then(loadChats);
-                }
-              }), "值守"),
+            modeSelect(c),
             h("span", { class: "ims-grow" }),
             c.last_error ? h("span", { class: "ims-hint ims-err", text: String(c.last_error).slice(0, 36) }) : null,
             h("button", {

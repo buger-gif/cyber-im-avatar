@@ -16,15 +16,15 @@
 | GET | `/api/inbox` | `filter`、`limit`、`group` | 收件箱；默认按会话聚合，`group=msg` 逐条；只从每会话最近 10 条派生 |
 | GET | `/api/inbox/cleanup` | — | 把未值守会话的待回批量标成 ignored |
 | GET | `/api/thread` | `platform`、`chat_id`、`fetch`、`limit` | 会话正文：默认在线拉 30 条；`fetch=1` 先补拉分类（**只读，不唤醒**；冷却中直接用本地指针）；失败回退本地 10 条并带 `offline` / `error` |
-| GET | `/api/chats` | — | 会话清单，含 `blocked` / `timer` / `timed` / `watching` / `dsh_session` / `session_turns` / `turn_state`；工作区字段见下 |
+| GET | `/api/chats` | — | 会话清单，含 `blocked` / `timer` / `timed` / `watching` / `wake_mode` / `mentionable` / `dsh_session` / `session_turns` / `turn_state`；`mentionable=false` 表示该平台判不了 @（面板置灰「只盯 @我」）。工作区字段见下 |
 | GET | `/api/send` | `platform`、`chat_id`、`text`、`msg_id` | 以本人身份发出；不写发送历史 |
 | GET | `/api/state` | `platform`、`msg_id`、`state`、`chat_id` | 改最近 10 条里的一条：new / opened / replied / ignored；更早的返回 `not_cached` |
-| GET | `/api/watch` | `platform`、`chat_id`、`watching`、`name`、`kind`、`workspace` | 加入 / 移出值守；`workspace` 非空时一并绑定，空串不改变已有绑定。群加入值守默认 `timer=1` + `wake_mode=mention`（只盯 @我）；要全量得显式调 `/api/chat/mode`。**加入即开会话**：补拉一次（`wake=false, force=true`，不推进水位）后起一轮开场 turn；失败不影响值守，只在返回的 `open: {ok, reason, skipped}` 里说明（在飞时 `skipped="running"`） |
+| GET | `/api/watch` | `platform`、`chat_id`、`watching`、`name`、`kind`、`workspace` | 加入 / 移出值守；`workspace` 非空时一并绑定，空串不改变已有绑定。群加入值守默认 `timer=1` + `wake_mode=mention`（只盯 @我），私聊默认 `wake_mode=all`（每条都唤醒）；要改得显式调 `/api/chat/mode`。**加入即开会话**：补拉一次（`wake=false, force=true`，不推进水位）后起一轮开场 turn；失败不影响值守，只在返回的 `open: {ok, reason, skipped}` 里说明（在飞时 `skipped="running"`） |
 | GET | `/api/unwatch` | `platform`、`chat_id` | 移出值守（保留目标与最近指针） |
 | GET | `/api/search` | `platform`、`q` | 在线搜人；每条含 `id`、`chat_id`（可空，飞书为 `p2p_chat_id`）、`name`（仅可读名称）、`department` |
 | GET | `/api/search/chats` | `platform`、`q` | 按名字搜会话（找群用）；`name` 为空时表示没有可读群名，不回退 `chat_id` |
 | GET | `/api/chat/timer` | `platform`、`chat_id`、`timer` | 定时拉开关：-1 / 0 / 1；群默认 -1 |
-| POST | `/api/chat/mode` | `platform`、`chat_id`、`mode`、`name`、`kind` | 群的关注程度一档三态：`off` / `mention` / `all`，一次写 `watching` / `timer` / `wake_mode`；`off` 会取消在飞 turn，`all` 只对群生效（私聊返回 `只对群生效`）；`off` → 开启同样立刻起一场开场 turn，返回 `open` |
+| POST | `/api/chat/mode` | `platform`、`chat_id`、`mode`、`name`、`kind` | 关注程度一档三态：`off` / `mention` / `all`，一次写 `watching` / `timer` / `wake_mode`；群 `mention`=只 @ 唤醒、`all`=非 @ 也进批次；私聊 `mention`=只认 @、`all`=每条都唤醒。`off` 会取消在飞 turn；`mentionable=false` 的平台私聊选 `mention` 返回 `{ok:false}`；`off` → 开启同样立刻起一场开场 turn，返回 `open` |
 | GET | `/api/chat/block` | `platform`、`chat_id`、`blocked` | 屏蔽 / 取消屏蔽（屏蔽即不同步） |
 | GET | `/api/poll` | `platform`、`chat_id` | 立即拉一轮；带会话=只拉它并同步返回，不带=后台跑整轮，结果从 `/api/status` 的 `poll.last_result` 读。受 `cooldown_sec` 约束；post-turn 补拉是唯一 `force` 例外 |
 | GET | `/api/pause` | `paused` | 暂停 / 恢复定时轮询（不取消在飞 turn） |

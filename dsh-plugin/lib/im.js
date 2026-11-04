@@ -402,6 +402,15 @@ export class Adapter {
     this.cli = this.resolveCli();
   }
 
+  /**
+   * 能不能判定「@ 我」：有结构化 mentions，或拿得到本人显示名做正文兜底。
+   * 企微两者都没有（没有 mentions，auth show 只给 Bot ID），只认 @ 会永远不触发，
+   * 界面据此禁掉那个选项，别给一个装好却不动开关。
+   */
+  get canMention() {
+    return !!(this.ad.f_mentions || this.ad.f_self_name);
+  }
+
   resolveCli() {
     const configured = this.env?.platforms?.[this.platform]?.cli_path;
     if (configured && fs.existsSync(configured)) return configured;

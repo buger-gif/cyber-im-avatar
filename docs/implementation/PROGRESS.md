@@ -5,13 +5,14 @@
 
 ## 更新时间
 
-2026-11-04（0.12.0 已发布，npm latest；spec 0026 闲置重开 / 值守心跳已实现并通过测试，
-真机待重启宿主后验；0024 / 0025 已归档）
+2026-11-04（0.12.0 已发布；spec 0027 私聊仅 @ 唤醒已实现并通过测试，真机待验；
+spec 0026 真机仍待重启宿主；0024 / 0025 已归档）
 
 ## 最近批次
 
 | 日期 | 主题 | 证据 |
 | --- | --- | --- |
+| 2026-11-04 | 私聊仅 @ 唤醒（spec 0027）：`wake_mode` 扩到私聊、`state.version` 1→2 迁移、`mentionable` 能力位、面板私聊三态 | `lib/state.js`、`lib/poller.js`、`lib/app.js`、`lib/turns.js`、`web/panel.js`、契约 01/02 |
 | 2026-11-04 | 0.12.0 发布：闲置重开 / 心跳 / skill 闲置退出进 npm latest 与市场索引 | `CHANGELOG.md`、`dsh-plugin/market/index.json` |
 | 2026-11-04 | 闲置重开 + 值守心跳（spec 0026）：`dsh.idle_reset_min` / `dsh.warm_min`、`last_warm_at` / `last_warm_ok` / `last_reset`、设置页「会话生命周期」；skill 加 `--idle-exit-min 180` / `--new-watch` | `lib/turns.js`、`lib/poller.js`、`lib/state.js`、`web/panel.js`、`scripts/listen_core.py`、契约 02/03、`docs/implementation/log/2026-11-04.md` |
 | 2026-11-03 | 进插件市场名单：条目 PR [#11669](https://github.com/awesome-dsh-plugin/awesome-dsh-plugin/pull/11669)，`screenshots.json` 进详情页，流程落 runbook | `docs/implementation/runbooks/market-listing.md`、`dsh-plugin/screenshots.json` |
@@ -37,11 +38,15 @@
 
 ## 当前断点
 
+- **0027 已实现，真机未验**：`chats[].wake_mode` 扩到私聊（`mention`=只认 @、`all`=每条都唤醒，
+  默认 all），`state.version` 1→2 一次性把存量私聊迁到 all；`/api/chats` 增 `mentionable`，
+  企微私聊「只盯 @我」置灰；唤醒载荷按 kind 区分口径。`node --test` 142/142、
+  `python3 tests/run_tests.py` 127/0、`gate.sh --quick` 全绿；用合成 fixture 在 360 / 430
+  走查详情选择器与置灰项，无横向溢出。运行中的宿主未重启，真实 `state.json` 未被本轮写入。
 - **0026 已实现，真机未验**：插件闲置重开（`dsh.idle_reset_min=180`）与值守心跳
   （`dsh.warm_min=55`）已进契约、state、面板与测试；skill 形态新增 `--idle-exit-min 180`
-  （3 小时没有新消息命中退 4、不重挂）与 `--new-watch`。`node --test` 134/134、
-  `python3 tests/run_tests.py` 127/0、全量 gate 全绿。运行中的 127.0.0.1:55562 未重启，
-  仍是旧代码；真实 `state.json` 未被本轮写入。
+  （3 小时没有新消息命中退 4、不重挂）与 `--new-watch`。测试与全量 gate 已过（读数见
+  `docs/implementation/log/2026-11-04.md`）。运行中的宿主未重启，仍是旧代码。
 - **市场收录待合并**：条目 PR
   [#11669](https://github.com/awesome-dsh-plugin/awesome-dsh-plugin/pull/11669)。唯一的红是
   「仓库满 1 天」自动检查（仓库 2026-11-02T15:59Z 建），该检查自己重跑，约 6 小时后达标；
@@ -85,9 +90,10 @@
 
 ## 下一步
 
-1. 重启宿主后验 0026：临时把 `warm_min` 调到 1、`idle_reset_min` 调到 3，在合成或测试会话上
-   看 1 分钟后自动起心跳、3 分钟后下一条消息换新会话，再把值改回 55 / 180；
-   验收逐条对勾后归档 spec 0026。
+1. 重启宿主后验 0026 与 0027：临时把 `warm_min` 调到 1、`idle_reset_min` 调到 3，在合成或
+   测试会话上看 1 分钟后自动起心跳、3 分钟后下一条消息换新会话；再给一个测试私聊切到
+   「只盯 @我」，发普通消息（不唤醒、记知会）与 @ 消息（唤醒一次），最后把值改回 55 / 180；
+   验收逐条对勾后归档 0026 / 0027。
 2. 等真实客户消息/媒体命中；只观察，不主动给真实客户发消息。
 3. 用户确认后清理历史待回；清理前不要当作用户已同意。
 4. 钉钉补完真人闭环：在环境里启用钉钉，给一个真人会话跑「命中 → 草稿 → 发送 → 重挂」，

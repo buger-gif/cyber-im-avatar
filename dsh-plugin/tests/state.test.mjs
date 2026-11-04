@@ -4,7 +4,7 @@ import os from "node:os";
 import path from "node:path";
 import test from "node:test";
 
-import { State, RECENT_LIMIT, normalizeConfig, publicConfig } from "../lib/state.js";
+import { State, RECENT_LIMIT, STATE_VERSION, normalizeConfig, publicConfig } from "../lib/state.js";
 
 function tempState() {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "im-state-"));
@@ -259,4 +259,55 @@ test("old state gets warm/reset defaults; setSession records the reset reason", 
   // 已有空绑定再清一次不覆盖上次原因，也不报错。
   state.setSession(chat, "", "manual");
   assert.equal(chat.last_reset.reason, "idle");
+});
+
+test("version 1 DMs migrate to wake_mode=all once and keep an explicit mention afterwards", () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "im-state-wake-"));
+  fs.writeFileSync(path.join(dir, "state.json"), JSON.stringify({
+    version: 1,
+    chats: {
+      "feishu:oc_dm": {
+        platform: "feishu", chat_id: "oc_dm", name: "旧私聊", kind: "p2p",
+        watching: true, wake_mode: "mention", recent: [],
+      },
+      "feishu:oc_grp": {
+        platform: "feishu", chat_id: "oc_grp", name: "旧群", kind: "group",
+        watching: true, timer: 1, wake_mode: "all", recent: [],
+      },
+    },
+  }, null, 2));
+
+  const state = new State(dir);
+  state.load();
+  assert.equal(state.data.version, STATE_VERSION);
+  // 老数据里私聊的 mention 只是群策略默认值，私聊当时恒为 dm，按真实行为落成 all。
+  assert.equal(state.getChat("feishu", "oc_dm").wake_mode, "all");
+  assert.equal(state.getChat("feishu", "oc_grp").wake_mode, "all", "群的选择不受迁移影响");
+
+  state.save();
+  const saved = JSON.parse(fs.readFileSync(path.join(dir, "state.json"), "utf8"));
+  assert.equal(saved.version, STATE_VERSION);
+
+  // 迁移只做一次：用户改成只认 @ 后，重新加载不能被改回 all。
+  const dm = state.getChat("feishu", "oc_dm");
+  dm.wake_mode = "mention";
+  state.save();
+  const again = new State(dir);
+  again.load();
+  assert.equal(again.getChat("feishu", "oc_dm").wake_mode, "mention");
+});
+
+test("new chats default to group mention / DM all", () => {
+  const { state } = tempState();
+  assert.equal(state.ensureChat("feishu", "oc_new_dm", { name: "新私聊" }).wake_mode, "all");
+  assert.equal(state.ensureChat("feishu", "oc_new_grp", { name: "新群", kind: "group" }).wake_mode, "mention");
+});
+
+test("kind correction resets wake_mode to that kind's default", () => {
+  const { state } = tempState();
+  const chat = state.ensureChat("feishu", "oc_kind", { name: "先当私聊" });
+  assert.equal(chat.wake_mode, "all");
+  state.ensureChat("feishu", "oc_kind", { name: "其实是群", kind: "group" });
+  assert.equal(chat.kind, "group");
+  assert.equal(chat.wake_mode, "mention", "私聊的 all 不能带进群的 all");
 });

@@ -59,6 +59,7 @@ function makeApp() {
     },
     reload() {},
     turnInfo() { return { state: "idle", since: 0, last_ok: null, last_reason: "", last_at: 0 }; },
+    canMention(platform) { return platform !== "wecom"; },
     candidates() { return []; },
     async pollChat(platform, chatId, opts = {}) {
       calls.poll.push({ platform, chatId, opts });
@@ -325,7 +326,7 @@ test("dingtalk joins watch and auto-enables; unknown platforms are rejected", as
   assert.match(bad.body.reason, /不支持/);
 });
 
-test("chat mode writes watching/timer/wake_mode in one call and refuses non-groups", async () => {
+test("chat mode writes watching/timer/wake_mode for groups and now for DMs", async () => {
   const { app, state, calls } = makeApp();
   let out = await app.handle("/api/chat/mode", "POST", null, {
     platform: "feishu", chat_id: "oc_grp", name: "示例群", kind: "group", mode: "all",
@@ -350,11 +351,46 @@ test("chat mode writes watching/timer/wake_mode in one call and refuses non-grou
   assert.equal(chat.timer, -1);
   assert.deepEqual(calls.cancel, ["oc_grp"]);
 
+  // 私聊：all = 每条都唤醒（默认口径），mention = 只认 @。
   out = await app.handle("/api/chat/mode", "POST", null, {
-    platform: "feishu", chat_id: "oc_dm", kind: "p2p", mode: "all",
+    platform: "feishu", chat_id: "oc_dm", name: "示例对象", kind: "p2p", mode: "all",
+  });
+  assert.equal(out.body.ok, true);
+  const dm = state.getChat("feishu", "oc_dm");
+  assert.equal(dm.wake_mode, "all");
+  assert.equal(dm.watching, true);
+  assert.equal(dm.timer, 1);
+  assert.equal(out.body.chat.mentionable, true);
+
+  out = await app.handle("/api/chat/mode", "POST", null, {
+    platform: "feishu", chat_id: "oc_dm", mode: "mention",
+  });
+  assert.equal(out.body.ok, true);
+  assert.equal(dm.wake_mode, "mention");
+
+  // 企微读不到 @ 信息：私聊 mention 明确拒绝，all 照常。
+  out = await app.handle("/api/chat/mode", "POST", null, {
+    platform: "wecom", chat_id: "zhangsan", name: "示例对象", kind: "p2p", mode: "mention",
   });
   assert.equal(out.body.ok, false);
-  assert.match(out.body.reason, /只对群/);
+  assert.match(out.body.reason, /读不到 @/);
+  assert.equal(state.getChat("wecom", "zhangsan").watching, false, "拒绝时不能留下半开状态");
+  out = await app.handle("/api/chat/mode", "POST", null, {
+    platform: "wecom", chat_id: "zhangsan", kind: "p2p", mode: "all",
+  });
+  assert.equal(out.body.ok, true);
+  assert.equal(out.body.chat.mentionable, false);
+});
+
+test("chat list exposes whether mention mode can work per platform", async () => {
+  const { app, state } = makeApp();
+  state.ensureChat("feishu", "oc_dm", { name: "飞书对象", kind: "p2p" }).watching = true;
+  state.ensureChat("wecom", "wx_dm", { name: "企微对象", kind: "p2p" }).watching = true;
+  const out = await app.handle("/api/chats", "GET");
+  assert.equal(out.status, 200);
+  const byPlatform = Object.fromEntries(out.body.items.map((c) => [c.platform, c]));
+  assert.equal(byPlatform.feishu.mentionable, true);
+  assert.equal(byPlatform.wecom.mentionable, false);
 });
 
 test("joining watch on a group defaults to mention mode and starts polling", async () => {

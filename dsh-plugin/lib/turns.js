@@ -139,7 +139,7 @@ function payloadNote(count) {
  */
 export function buildWakePrompt(platform, chatName, chatId, messages, {
   profilePath = "", interrupted = false, firstTurn = false, mediaMap = null, wakeMode = "mention",
-  resetMin = 0,
+  resetMin = 0, kind = "group",
 } = {}) {
   const label = PLAT_LABEL[platform] || platform;
   const safeName = sanitizeUntrusted(chatName || chatId);
@@ -148,12 +148,15 @@ export function buildWakePrompt(platform, chatName, chatId, messages, {
     .sort((a, b) => (a.ts_epoch - b.ts_epoch))
     .map((m) => formatMsgLine(m, mediaFor(mediaMap, m.msg_id), platform));
 
-  // 全量模式的回复口径每轮都带一行：模式可以在会话中途切换，不能只靠首轮记住。
-  const allMode = wakeMode === "all";
-  const modeNote = allMode
+  // 口径每轮都带一行：模式可以在会话中途切换，不能只靠首轮记住。
+  // 全量提示只对群成立；私聊的 mention 是「只有 @ 才叫醒我」，得让 agent 知道缺上下文。
+  const modeNote = (wakeMode === "all" && kind === "group")
     ? "（全量模式：非点名的群消息只看不回，要本人表态的写进当日日报等用户拍板；" +
       "标了「（@你）」的消息照常处理，该回就回。）"
-    : "";
+    : ((wakeMode === "mention" && kind !== "group")
+        ? "（只认 @ 模式：这通私聊只有对方 @ 你（或正文写 @你的名字）才唤醒；" +
+          "其它消息没有转给你，需要上下文时按 skill 在线拉。）"
+        : "");
   // 已有会话：只列本次新消息。chat_id / 运行形态 / 画像路径 / 媒体说明都已在本会话里，
   // 不再每一轮重复；新增媒体消息的本地路径与降级提示仍由 formatMsgLine 带在行内。
   if (!firstTurn) return [lines.join("\n"), modeNote].filter(Boolean).join("\n");
@@ -185,7 +188,7 @@ export function buildWakePrompt(platform, chatName, chatId, messages, {
  * 消息只当上下文，回不回由 agent 按 skill 判断；插件不在这里发任何东西。
  */
 export function buildOpenPrompt(platform, chatName, chatId, messages, {
-  profilePath = "", wakeMode = "mention", resetMin = 0,
+  profilePath = "", wakeMode = "mention", resetMin = 0, kind = "group",
 } = {}) {
   const label = PLAT_LABEL[platform] || platform;
   const safeName = sanitizeUntrusted(chatName || chatId);
@@ -208,9 +211,13 @@ export function buildOpenPrompt(platform, chatName, chatId, messages, {
   } else {
     parts.push("最近 30 分钟没有新消息。");
   }
-  parts.push(wakeMode === "all"
-    ? "全量模式：非点名的群消息只看不回，要本人表态的写进当日日报；标了「（@你）」的照常处理。"
-    : "只盯 @我：非点名的群消息不需要处理。");
+  parts.push(kind === "group"
+    ? (wakeMode === "all"
+        ? "全量模式：非点名的群消息只看不回，要本人表态的写进当日日报；标了「（@你）」的照常处理。"
+        : "只盯 @我：非点名的群消息不需要处理。")
+    : (wakeMode === "all"
+        ? "关注程度：全部消息（每条新消息都会唤醒）。"
+        : "关注程度：只认 @（对方 @ 你（或正文写 @你的名字）才唤醒；其它消息不会转给你）。"));
   parts.push("这一轮是用户点「加入值守」触发的：先把上下文和画像读进来；" +
     "有该回的就按 skill 处理，**没有需要回的就不要往会话里发任何消息**。");
   if (lines.length) parts.push("上下文来自本地最近消息；更早的按 skill 在线拉，不要重发已经处理过的。");
@@ -435,11 +442,11 @@ export class Turns {
       const media = await this.resolveMedia(current, messages, agent);
       const prompt = opening
         ? buildOpenPrompt(current.platform, current.name, current.chat_id, messages, {
-            profilePath, wakeMode: current.wake_mode || "mention", resetMin,
+            profilePath, wakeMode: current.wake_mode || "mention", resetMin, kind: current.kind,
           })
         : buildWakePrompt(current.platform, current.name, current.chat_id, messages, {
             profilePath, interrupted, firstTurn, mediaMap: media.map,
-            wakeMode: current.wake_mode || "mention", resetMin,
+            wakeMode: current.wake_mode || "mention", resetMin, kind: current.kind,
           });
       const message = await makeUserMessage(prompt, media.parts);
       handle.promptId = message.id;

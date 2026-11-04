@@ -19,8 +19,13 @@ export const RECENT_LIMIT = 10;
 /** 插件壳支持的平台；config.platforms 是启用开关，缺省只开飞书 / 企微。 */
 export const SUPPORTED_PLATFORMS = ["feishu", "wecom", "dingtalk"];
 const DM_SCOPES = ["recent", "all", "watched"];
-/** 群唤醒策略：mention=只 @ 唤醒；all=非 @ 也进批次（只看不回）。 */
+/** 关注程度：mention=只有 @ 我唤醒；all=全部消息都唤醒（群里是只看不回）。 */
 export const WAKE_MODES = ["mention", "all"];
+/**
+ * state.json 格式版本。1 → 2：私聊开始读 wake_mode；老 state 里私聊的 mention
+ * 只是当年「群策略」的默认值，加载时按当时的真实行为迁到 all（见 load()）。
+ */
+export const STATE_VERSION = 2;
 
 export const DEFAULT_CONFIG = {
   poll: {
@@ -43,7 +48,7 @@ export const RETIRED_KEYS = ["llm", "reply", "reply_guard", "ui", "seed_targets"
 
 export function defaultState() {
   return {
-    version: 1,
+    version: STATE_VERSION,
     config: clone(DEFAULT_CONFIG),
     paused: false,
     runtime: { cycles: 0, last_cycle_at: 0, last_cycle_ms: 0, last_result: {} },
@@ -197,7 +202,14 @@ export class State {
         const c = this.normalizeChat(chat);
         if (c) base.chats[key] = c;
       }
-      base.version = 1;
+      base.version = STATE_VERSION;
+      // version 1 的私聊 wake_mode 只是「群策略」的默认值（当年私聊恒记 dm，没人读它）。
+      // 迁到 2 时按当时的真实行为落成 all，否则存量私聊会静默变成只认 @。
+      if ((Number(raw.version) || 1) < 2) {
+        for (const c of Object.values(base.chats)) {
+          if (c.kind !== "group") c.wake_mode = "all";
+        }
+      }
     }
     this.data = base;
     // 上一次进程在 turn 中途退出：不能假装成功，也不能永远挂着。
@@ -238,20 +250,21 @@ export class State {
     const platform = String(input.platform);
     const chatId = String(input.chat_id);
     const key = chatKey(platform, chatId);
+    const isGroup = input.kind === "group";
     const chat = {
       platform,
       chat_id: chatId,
       name: String(input.name || chatId),
-      kind: input.kind === "group" ? "group" : "p2p",
+      kind: isGroup ? "group" : "p2p",
       target: !!input.target,
       watching: !!input.watching,
       blocked: !!input.blocked,
       blocked_at: Number(input.blocked_at) || 0,
       timer: Number.isFinite(Number(input.timer))
         ? Number(input.timer)
-        : (input.kind === "group" ? -1 : 0),
-      // 群唤醒策略：缺省 mention = 现状，老数据不会突然开始全量唤醒。
-      wake_mode: WAKE_MODES.includes(input.wake_mode) ? input.wake_mode : "mention",
+        : (isGroup ? -1 : 0),
+      // 关注程度缺省按 kind：群 mention 是现状；私聊 all = 每条都唤醒，与升级前一致。
+      wake_mode: WAKE_MODES.includes(input.wake_mode) ? input.wake_mode : (isGroup ? "mention" : "all"),
       last_wake_at: Number(input.last_wake_at) || 0,
       last_wake_epoch: Number(input.last_wake_epoch) || 0,
       workspace: typeof input.workspace === "string" ? input.workspace : "",
@@ -316,7 +329,15 @@ export class State {
       const desired = target ? this.uniqueName(platform, name, chatId) : String(name);
       if (desired && desired !== chat.name) chat.name = desired;
     }
-    if (kind) chat.kind = kind === "group" ? "group" : "p2p";
+    if (kind) {
+      const nextKind = kind === "group" ? "group" : "p2p";
+      // kind 纠正时关注程度回到该 kind 的默认口径：私聊的 all 不等于群的 all，
+      // 沿用会让一个刚认成群的会话突然全量唤醒（或反过来静默只认 @）。
+      if (nextKind !== chat.kind) {
+        chat.kind = nextKind;
+        chat.wake_mode = nextKind === "group" ? "mention" : "all";
+      }
+    }
     if (target) chat.target = true;
     return chat;
   }

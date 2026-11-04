@@ -116,6 +116,8 @@ export class App {
     const ti = this.poller.turnInfo(chat);
     out.timer = Number(chat.timer) || 0;
     out.wake_mode = chat.wake_mode === "all" ? "all" : "mention";
+    // 该平台能不能判定「@ 我」；false 时面板不该给一个永远不会触发的「只盯 @我」。
+    out.mentionable = this.poller.canMention(chat.platform);
     out.last_wake_at = Number(chat.last_wake_at) || 0;
     out.blocked = !!chat.blocked;
     out.watching = !!chat.watching;
@@ -455,8 +457,11 @@ export class App {
   }
 
   /**
-   * 群的「关注程度」一档三态，一次写 watching / timer / wake_mode 三个字段，
-   * 面板不用再记两套开关的组合。off 会取消在飞 turn，与 unwatch 一致。
+   * 「关注程度」一档三态，一次写 watching / timer / wake_mode 三个字段，
+   * 面板不用再记两套开关的组合。按会话 kind 解释：
+   * 群 mention=只 @ 唤醒、all=非 @ 也进批次；私聊 mention=只认 @、all=每条都唤醒。
+   * 读不到 @ 信息的平台（企微）只拒绝私聊的 mention，别给一个永远不动的开关。
+   * off 会取消在飞 turn，与 unwatch 一致。
    */
   async chatMode(q, body = {}) {
     const platform = pick(q, body, "platform");
@@ -470,8 +475,8 @@ export class App {
     const chat = this.state.ensureChat(platform, chatId, {
       name: pick(q, body, "name"), kind: pick(q, body, "kind"),
     });
-    if (mode === "all" && chat.kind !== "group") {
-      return { ok: false, reason: "全部消息模式只对群生效" };
+    if (mode === "mention" && chat.kind !== "group" && !this.poller.canMention(platform)) {
+      return { ok: false, reason: "该平台私聊读不到 @ 信息，不能只认 @我" };
     }
     const on = mode !== "off";
     const wasOn = !!chat.watching;

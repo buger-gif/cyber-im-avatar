@@ -24,7 +24,7 @@ const W2 = "/Users/demo/work/im-standin";
 const chats = [
   {
     platform: "feishu", chat_id: "oc_demo_lin", name: "林一帆", kind: "p2p",
-    tracked: 0, watching: 1, turn_state: "running", blocked: 0, pending: 3,
+    tracked: 0, watching: 1, timer: 1, wake_mode: "mention", mentionable: true, turn_state: "running", blocked: 0, pending: 3,
     dsh_session: "session-demo-lin", session_turns: 12, session_bound_at: now - day * 3,
     last_warm_at: now - 120, last_warm_ok: true,
     last_ts: stamp(1800), last_epoch: now - 1800, last_sync: now - 20,
@@ -33,7 +33,7 @@ const chats = [
   },
   {
     platform: "wecom", chat_id: "wm_demo_zhou", name: "周敏", kind: "p2p",
-    tracked: 0, watching: 1, turn_state: "warm", blocked: 0, pending: 0,
+    tracked: 0, watching: 1, timer: 1, wake_mode: "all", mentionable: false, turn_state: "warm", blocked: 0, pending: 0,
     dsh_session: "session-demo-zhou", session_turns: 5, session_bound_at: now - day * 2,
     last_warm_at: now - 30, last_warm_ok: true,
     last_reset: { at: now - day * 2, reason: "idle" },
@@ -43,7 +43,7 @@ const chats = [
   },
   {
     platform: "feishu", chat_id: "oc_demo_unwatched", name: "未值守示例", kind: "p2p",
-    tracked: 0, watching: 0, turn_state: "idle", blocked: 0, pending: 0,
+    tracked: 0, watching: 0, timer: 0, wake_mode: "all", mentionable: true, turn_state: "idle", blocked: 0, pending: 0,
     dsh_session: "", session_turns: 0, session_bound_at: 0,
     last_ts: "", last_epoch: 0, last_sync: 0,
     last_error: "", added_at: now - day * 4, workspace: "",
@@ -51,7 +51,7 @@ const chats = [
   },
   {
     platform: "feishu", chat_id: "oc_demo_grp", name: "云雀项目 · 交付群", kind: "group",
-    tracked: 0, watching: 1, timer: 1, wake_mode: "mention", turn_state: "idle", blocked: 0, pending: 3,
+    tracked: 0, watching: 1, timer: 1, wake_mode: "mention", mentionable: true, turn_state: "idle", blocked: 0, pending: 3,
     last_ts: stamp(60000), last_epoch: now - 60000, last_sync: now - 20,
     last_error: "", added_at: now - day, workspace: "",
     workspace_effective: W1,
@@ -75,13 +75,13 @@ const thread = [
     sender_name: "林一帆", content: "接口文档我看了，鉴权那节能不能补个示例？现在只有字段说明。", is_self: false,
     ts: stamp(2400), ts_epoch: now - 2400, kind: "dm", state: "new" },
   { msg_id: "om_d3", platform: "feishu", chat_id: "oc_demo_lin", sender_id: "u_lin",
-    sender_name: "林一帆", content: "另外周五前能给个联调的时间点吗", is_self: false,
+    sender_name: "林一帆", content: "@我 另外周五前能给个联调的时间点吗", is_self: false,
     ts: stamp(1800), ts_epoch: now - 1800, kind: "dm", state: "new" },
 ];
 
 const inboxMessages = [
   { id: "feishu:om_d3", platform: "feishu", chat_id: "oc_demo_lin", msg_id: "om_d3",
-    sender_id: "u_lin", sender_name: "林一帆", content: "另外周五前能给个联调的时间点吗",
+    sender_id: "u_lin", sender_name: "林一帆", content: "@我 另外周五前能给个联调的时间点吗",
     ts: stamp(1800), ts_epoch: now - 1800, kind: "dm", state: "new", is_self: false,
     chat_name: "林一帆", chat_kind: "p2p", chat_mode: "service" },
   { id: "feishu:om_d2", platform: "feishu", chat_id: "oc_demo_lin", msg_id: "om_d2",

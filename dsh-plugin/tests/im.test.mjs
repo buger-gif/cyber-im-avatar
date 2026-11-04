@@ -55,6 +55,19 @@ test("isMention never treats @张三丰 or other people's mentions as @me", () =
   assert.equal(isMention({ content: "邮箱a@张三.com" }, me, ["张三"]), false);
 });
 
+test("canMention follows the adapter's ability to see @ info", () => {
+  assert.equal(new Adapter("feishu", { dir: "/nonexistent-im-test" }).canMention, true);
+  assert.equal(new Adapter("dingtalk", { dir: "/nonexistent-im-test" }).canMention, true);
+  // 企微没有 mentions、auth show 也只给 Bot ID：只认 @ 会永远不触发。
+  assert.equal(new Adapter("wecom", { dir: "/nonexistent-im-test" }).canMention, false);
+
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "im-canmention-"));
+  fs.writeFileSync(path.join(dir, "env.json"), JSON.stringify({
+    overrides: { wecom: { f_mentions: [["mentions"]] } },
+  }));
+  assert.equal(new Adapter("wecom", { dir }).canMention, true, "用户用 overrides 补了字段就该放开");
+});
+
 test("search maps localized_name and p2p_chat_id into readable results", async () => {
   const a = new Adapter("feishu", { dir: "/nonexistent-im-test" });
   a.run = async () => ({

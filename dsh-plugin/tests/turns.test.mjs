@@ -625,6 +625,30 @@ test("all-mode prompt marks mentions and keeps the reply rule explicit", () => {
   assert.match(prompt, /照常处理，该回就回/);
 });
 
+test("DM prompts never claim the group rule and spell out the @-only mode", () => {
+  const rows = [
+    { msg_id: "p1", sender_id: "ou_x", sender_name: "对象", content: "@我 帮看下",
+      ts: "t1", ts_epoch: 100, kind: "dm", state: "new" },
+  ];
+  const mention = buildWakePrompt("feishu", "示例对象 A", "oc_dm", rows, {
+    firstTurn: true, wakeMode: "mention", kind: "p2p",
+  });
+  assert.match(mention, /只认 @ 模式/);
+  assert.doesNotMatch(mention, /非点名的群消息/);
+
+  const all = buildWakePrompt("feishu", "示例对象 A", "oc_dm", rows, {
+    firstTurn: true, wakeMode: "all", kind: "p2p",
+  });
+  assert.doesNotMatch(all, /非点名的群消息/);
+  assert.doesNotMatch(all, /只认 @ 模式/);
+
+  const open = buildOpenPrompt("feishu", "示例对象 A", "oc_dm", [], {
+    wakeMode: "mention", kind: "p2p",
+  });
+  assert.match(open, /关注程度：只认 @/);
+  assert.doesNotMatch(open, /群消息/);
+});
+
 test("open prompt works with no messages and tells the agent not to send anything", () => {
   const prompt = buildOpenPrompt("feishu", "示例群", "oc_grp", [], {
     profilePath: "/tmp/profile.md",
