@@ -5,14 +5,15 @@
 
 ## 更新时间
 
-2026-11-04（0.12.0 已发布；spec 0027 私聊仅 @ 唤醒、0028 重开会话即开新会话已实现并通过测试，
-真机待重启宿主后验；spec 0026 真机仍待验；0024 / 0025 已归档）
+2026-11-04（0.12.0 已发布；spec 0027 私聊仅 @ 唤醒、0028 重开会话即开新会话、0029 私聊 @ 自己
+对替身说话已实现并通过测试，真机待重启宿主后验；spec 0026 真机仍待验；0024 / 0025 已归档）
 
 ## 最近批次
 
 | 日期 | 主题 | 证据 |
 | --- | --- | --- |
 | 2026-11-04 | 重开会话即开新会话 + 关注程度接线修正（spec 0027/0028）：解绑后立刻起开场轮、`busy()` 放行刚取消的旧轮、`off` 不改写模式、重新加入恢复拉取 | `lib/app.js`、`lib/state.js`、`lib/turns.js`、`lib/poller.js`、`web/panel.js`、契约 01/02、`tests/app.test.mjs` |
+| 2026-11-04 | 私聊 @ 自己 = 对替身说话（spec 0029）：`kind=cmd` 进批次、载荷身份与防回环规则、10 分钟 5 次熔断 | `lib/poller.js`、`lib/state.js`、`lib/turns.js`、`web/panel.js`、契约 02、`tests/poller.test.mjs` |
 | 2026-11-04 | 私聊仅 @ 唤醒（spec 0027）：`wake_mode` 扩到私聊、`state.version` 1→2 迁移、`mentionable` 能力位、面板私聊三态 | `lib/state.js`、`lib/poller.js`、`lib/app.js`、`lib/turns.js`、`web/panel.js`、契约 01/02 |
 | 2026-11-04 | 0.12.0 发布：闲置重开 / 心跳 / skill 闲置退出进 npm latest 与市场索引 | `CHANGELOG.md`、`dsh-plugin/market/index.json` |
 | 2026-11-04 | 闲置重开 + 值守心跳（spec 0026）：`dsh.idle_reset_min` / `dsh.warm_min`、`last_warm_at` / `last_warm_ok` / `last_reset`、设置页「会话生命周期」；skill 加 `--idle-exit-min 180` / `--new-watch` | `lib/turns.js`、`lib/poller.js`、`lib/state.js`、`web/panel.js`、`scripts/listen_core.py`、契约 02/03、`docs/implementation/log/2026-11-04.md` |
@@ -39,6 +40,9 @@
 
 ## 当前断点
 
+- **0029 已实现，真机待验**：私聊里自己 @ 自己 = 对替身说话——记 `kind=cmd`、进唤醒批次，
+  不算待回/角标；载荷带「本人指令」规则（不对外发、不 @ 自己）；10 分钟 5 次熔断防回环；
+  群里自己 @ 自己仍是 `out`。`node --test` 155/155、全量 gate 全绿。宿主重启后生效。
 - **0028 已实现，真机待验**：重开会话在解绑后立刻起开场轮（值守且未屏蔽时），
   `/api/chat/session/reset` 返回 `open`；已值守但没绑会话时切模式、换工作区把旧会话解绑时
   也会补开。起因是 0027 的 @-only 私聊让「下一轮命中」可能很久不来，重开会话后看着像没反应。
@@ -99,7 +103,7 @@
 
 ## 下一步
 
-1. 重启宿主后验 0026 / 0027 / 0028：临时把 `warm_min` 调到 1、`idle_reset_min` 调到 3，在合成或
+1. 重启宿主后验 0026 / 0027 / 0028 / 0029：临时把 `warm_min` 调到 1、`idle_reset_min` 调到 3，在合成或
    测试会话上看 1 分钟后自动起心跳、3 分钟后下一条消息换新会话；给一个测试私聊切到
    「只盯 @我」，发普通消息（不唤醒、记知会）与 @ 消息（唤醒一次）；点「重开会话」确认
    立刻起新会话与开场轮。最后把值改回 55 / 180；验收逐条对勾后归档 0026 / 0027 / 0028。

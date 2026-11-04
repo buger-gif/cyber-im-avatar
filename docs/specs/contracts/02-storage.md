@@ -61,8 +61,8 @@
 | content | string | 正文；仅 `new` / `opened` 的非 `out` 消息保留，其余为空（群里非 @ 的 `fyi`、私聊只认 @ 时的闲聊都恒为 `ignored`，实际不会多存）|
 | ts | string | 平台时间戳原样 |
 | ts_epoch | number | 归一 epoch |
-| kind | string | `dm` / `mention` / `fyi` / `out`（`service` 仅存量数据）；私聊只认 @ 时，非 @ 消息记 `fyi`，被 @ 的仍记 `dm` |
-| state | string | `new` / `opened` / `replied` / `ignored` |
+| kind | string | `dm` / `mention` / `fyi` / `out` / `cmd`（`service` 仅存量数据）；私聊只认 @ 时，非 @ 消息记 `fyi`，被 @ 的仍记 `dm`；`cmd` = 私聊里本人 @ 自己、对替身说的话（进批次唤醒，但不算待回），其它自己发的仍记 `out` |
+| state | string | `new` / `opened` / `replied` / `ignored`；`cmd` 非 baseline 时记 `new`（进批次，但不进 `isPendingMessage`） |
 | msg_type | string | 平台消息类型（`text` / `image` / `file` / `post` …）；老数据缺省为空 |
 | app_link | string | 平台提供的“在 IM 客户端打开”链接（飞书 `message_app_link`）；没有为空 |
 | media_id | string | 平台结构化媒体键（企微 `media_id`；飞书从 content 解析出的 `img_`/`file_` key，多个逗号分隔） |

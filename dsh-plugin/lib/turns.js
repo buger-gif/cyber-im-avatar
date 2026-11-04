@@ -52,7 +52,8 @@ function formatMsgLine(m, mediaInfo = null, platform = "") {
       (m.msg_type === "file" && text.startsWith("[文件:"));
     body = bare ? note : `${text} ${note}`;
   }
-  const who = m.kind === "out" ? "我" : (m.sender_name || "对方");
+  // cmd = 本人在私聊里 @ 自己，对替身说的话（spec 0029），别当成客户消息。
+  const who = m.kind === "cmd" ? "本人（@自己）" : (m.kind === "out" ? "我" : (m.sender_name || "对方"));
   // 点名是事实，不是判断：全量模式下 agent 要能一眼分清哪条是 @ 它。
   const tag = sanitizeUntrusted(m.kind === "mention" ? `${who}（@你）` : who);
   return `- [${m.ts || ""}] ${tag}: ${body}`;
@@ -148,6 +149,12 @@ export function buildWakePrompt(platform, chatName, chatId, messages, {
     .sort((a, b) => (a.ts_epoch - b.ts_epoch))
     .map((m) => formatMsgLine(m, mediaFor(mediaMap, m.msg_id), platform));
 
+  // 本人指令：私聊里本人 @ 自己留给替身的话，不是客户消息，也不是已回复对面。
+  const cmdNote = messages.some((m) => m.kind === "cmd")
+    ? "【本人指令】带「本人（@自己）」的行是本人（你要替的人）在会话里 @ 自己留给你的话，" +
+      "不是客户消息：按它执行或回答；除非指令明确要求对外回复、或按 skill 判断确有必要，" +
+      "否则不要往会话里发消息。你的回复里不要 @ 本人自己——那会再次触发唤醒，形成回环。"
+    : "";
   // 口径每轮都带一行：模式可以在会话中途切换，不能只靠首轮记住。
   // 全量提示只对群成立；私聊的 mention 是「只有 @ 才叫醒我」，得让 agent 知道缺上下文。
   const modeNote = (wakeMode === "all" && kind === "group")
@@ -159,7 +166,7 @@ export function buildWakePrompt(platform, chatName, chatId, messages, {
         : "");
   // 已有会话：只列本次新消息。chat_id / 运行形态 / 画像路径 / 媒体说明都已在本会话里，
   // 不再每一轮重复；新增媒体消息的本地路径与降级提示仍由 formatMsgLine 带在行内。
-  if (!firstTurn) return [lines.join("\n"), modeNote].filter(Boolean).join("\n");
+  if (!firstTurn) return [lines.join("\n"), cmdNote, modeNote].filter(Boolean).join("\n");
 
   const parts = ["/cyber-im-avatar"];
   if (interrupted) {
@@ -176,6 +183,7 @@ export function buildWakePrompt(platform, chatName, chatId, messages, {
     parts.push(`画像文件：${profilePath}（起草前自己读；学到长期事实就直接改这个文件，插件不代写。）`);
   }
   parts.push(...lines);
+  if (cmdNote) parts.push(cmdNote);
   if (modeNote) parts.push(modeNote);
   if (mediaSize(mediaMap)) parts.push(MEDIA_HINT);
   parts.push(payloadNote(messages.length));
@@ -208,6 +216,10 @@ export function buildOpenPrompt(platform, chatName, chatId, messages, {
   if (lines.length) {
     parts.push(`最近上下文（最近 30 分钟，共 ${lines.length} 条）：`);
     parts.push(...lines);
+    if (messages.some((m) => m.kind === "cmd")) {
+      parts.push("（带「本人（@自己）」的行是本人对替身说的话，不是客户消息；按它执行即可，" +
+        "回复里不要 @ 本人自己。）");
+    }
   } else {
     parts.push("最近 30 分钟没有新消息。");
   }

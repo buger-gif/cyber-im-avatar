@@ -506,6 +506,118 @@ test("DMs keep every message waking by default (all mode)", async () => {
   assert.equal(chat.recent.find((m) => m.msg_id === "e2").kind, "dm");
 });
 
+test("self-@ in a DM is a command to the stand-in and wakes it (mention mode)", async () => {
+  const { state, poller, adapter, turns } = setup();
+  const chat = state.ensureChat("feishu", "oc_cmd", { name: "客户", kind: "p2p" });
+  chat.watching = true;
+  chat.wake_mode = "mention";
+  adapter.messages = [msg("c1", 8010)];
+  await poller.pollChat("feishu", "oc_cmd");
+
+  // 本人 @ 自己：记 cmd/new、保留正文、唤醒，但不算待回。
+  adapter.messages = [
+    msg("c2", 8020, { sender_id: "ou_me", sender_name: "我", content: "@我 帮我回他一句" }),
+    msg("c1", 8010),
+  ];
+  const r = await poller.pollChat("feishu", "oc_cmd", { force: true });
+  assert.equal(r.woke, true);
+  assert.equal(turns.wakes.length, 1);
+  assert.deepEqual(turns.wakes[0].opts.batch.map((m) => m.msg_id), ["c2"]);
+  const cmd = chat.recent.find((m) => m.msg_id === "c2");
+  assert.equal(cmd.kind, "cmd");
+  assert.equal(cmd.state, "new");
+  assert.match(cmd.content, /帮我回他一句/, "指令正文要留给 agent");
+  assert.equal(state.pendingCount(chat), 0, "指令不算客户待回");
+  assert.equal(state.counts().unread, 0, "不刷未读角标");
+
+  // 本人不 @ 的消息仍然是 out，不唤醒（防回环回归）。
+  adapter.messages = [
+    msg("c3", 8030, { sender_id: "ou_me", sender_name: "我", content: "我自己说一句" }),
+    msg("c2", 8020, { sender_id: "ou_me", sender_name: "我", content: "@我 帮我回他一句" }),
+    msg("c1", 8010),
+  ];
+  const r2 = await poller.pollChat("feishu", "oc_cmd", { force: true });
+  assert.equal(r2.woke, false);
+  assert.equal(turns.wakes.length, 1);
+  assert.equal(chat.recent.find((m) => m.msg_id === "c3").kind, "out");
+});
+
+test("self-@ wakes in DM all mode too, and never in groups", async () => {
+  const { state, poller, adapter, turns } = setup();
+  const dm = state.ensureChat("feishu", "oc_cmd_all", { name: "客户", kind: "p2p" });
+  dm.watching = true;
+  assert.equal(dm.wake_mode, "all");
+  adapter.messages = [msg("a1", 9010)];
+  await poller.pollChat("feishu", "oc_cmd_all");
+  adapter.messages = [
+    msg("a2", 9020, { sender_id: "ou_me", sender_name: "我", content: "@我 在吗" }),
+    msg("a1", 9010),
+  ];
+  let r = await poller.pollChat("feishu", "oc_cmd_all", { force: true });
+  assert.equal(r.woke, true);
+  assert.equal(turns.wakes.length, 1);
+  assert.equal(dm.recent.find((m) => m.msg_id === "a2").kind, "cmd");
+
+  // 群里的自己消息（哪怕 @ 自己）不特殊处理，仍是 out、不唤醒。
+  const grp = state.ensureChat("feishu", "oc_cmd_grp", { name: "群", kind: "group" });
+  grp.watching = true;
+  grp.timer = 1;
+  adapter.messages = [msg("g1", 9030)];
+  await poller.pollChat("feishu", "oc_cmd_grp");
+  adapter.messages = [
+    msg("g2", 9040, { sender_id: "ou_me", sender_name: "我", content: "@我 测试一下" }),
+    msg("g1", 9030),
+  ];
+  r = await poller.pollChat("feishu", "oc_cmd_grp", { force: true });
+  assert.equal(r.woke, false);
+  assert.equal(turns.wakes.length, 1);
+  assert.equal(grp.recent.find((m) => m.msg_id === "g2").kind, "out");
+});
+
+test("a command does not swallow a pending counterpart message as replied", async () => {
+  const { state, poller, adapter, turns } = setup();
+  const chat = state.ensureChat("feishu", "oc_cmd_keep", { name: "客户", kind: "p2p" });
+  chat.watching = true;
+  chat.wake_mode = "mention";
+  adapter.messages = [msg("k1", 9510)];
+  await poller.pollChat("feishu", "oc_cmd_keep");
+
+  // 同一批里：对面 @ 我 + 我下指令。指令不算"已回复"，对面那条仍是待回。
+  adapter.messages = [
+    msg("k3", 9530, { sender_id: "ou_me", sender_name: "我", content: "@我 先看下" }),
+    msg("k2", 9520, { content: "@我 在吗" }),
+    msg("k1", 9510),
+  ];
+  const r = await poller.pollChat("feishu", "oc_cmd_keep", { force: true });
+  assert.equal(r.woke, true);
+  assert.deepEqual(turns.wakes[0].opts.batch.map((m) => m.msg_id).sort(), ["k2", "k3"]);
+  assert.equal(chat.recent.find((m) => m.msg_id === "k2").state, "new");
+  assert.equal(chat.recent.find((m) => m.msg_id === "k3").kind, "cmd");
+});
+
+test("command wake has a circuit breaker (5 per 10 minutes)", async () => {
+  const { state, poller, adapter, turns } = setup();
+  const chat = state.ensureChat("feishu", "oc_cmd_loop", { name: "客户", kind: "p2p" });
+  chat.watching = true;
+  chat.wake_mode = "mention";
+  adapter.messages = [msg("z0", 10000)];
+  await poller.pollChat("feishu", "oc_cmd_loop");
+  let prev = "z0";
+  for (let i = 1; i <= 6; i += 1) {
+    const id = `z${i}`;
+    adapter.messages = [
+      msg(id, 10000 + i * 10, { sender_id: "ou_me", sender_name: "我", content: "@我 第 " + i + " 条" }),
+      msg(prev, 10000 + (i - 1) * 10, { sender_id: i === 1 ? "ou_other" : "ou_me",
+                                       sender_name: i === 1 ? "对方" : "我",
+                                       content: i === 1 ? "正文-z0" : "@我 第 " + (i - 1) + " 条" }),
+    ];
+    await poller.pollChat("feishu", "oc_cmd_loop", { force: true });
+    prev = id;
+  }
+  assert.equal(turns.wakes.length, 5, "前 5 条唤醒，第 6 条被熔断");
+  assert.match(chat.last_error, /本人指令.*暂停唤醒/);
+});
+
 function warmChat(state, { platform = "feishu", chatId = "oc_warm", idleMin = 60 } = {}) {
   const chat = state.ensureChat(platform, chatId, { name: "保温对象", kind: "p2p" });
   chat.watching = true;

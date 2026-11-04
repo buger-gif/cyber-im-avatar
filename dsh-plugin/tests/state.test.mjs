@@ -4,7 +4,8 @@ import os from "node:os";
 import path from "node:path";
 import test from "node:test";
 
-import { State, RECENT_LIMIT, STATE_VERSION, normalizeConfig, publicConfig } from "../lib/state.js";
+import { State, RECENT_LIMIT, STATE_VERSION, isPendingMessage, messageMatches,
+  normalizeConfig, publicConfig } from "../lib/state.js";
 
 function tempState() {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "im-state-"));
@@ -322,4 +323,25 @@ test("kind correction keeps the chosen wake_mode but keeps watched groups pullin
   assert.equal(g.kind, "p2p");
   assert.equal(g.wake_mode, "mention");
   assert.equal(g.timer, 1, "私聊 timer=-1 才表示不盯；1 保持拉取");
+});
+
+test("cmd pointers survive normalization and never count as pending", () => {
+  const { state } = tempState();
+  const chat = state.ensureChat("feishu", "oc_cmd", { name: "对象", kind: "p2p" });
+  chat.watching = true;
+  state.mergeRecent(chat, [
+    { msg_id: "c1", sender_id: "ou_me", sender_name: "我", content: "@我 帮我回一句",
+      ts: "t1", ts_epoch: 100, kind: "cmd", state: "new" },
+    { msg_id: "c2", sender_id: "ou_other", sender_name: "对方", content: "在吗",
+      ts: "t2", ts_epoch: 101, kind: "dm", state: "new" },
+  ]);
+  const cmd = chat.recent.find((m) => m.msg_id === "c1");
+  assert.equal(cmd.kind, "cmd", "normalize 不能把 cmd 降级成 fyi");
+  assert.equal(cmd.content, "@我 帮我回一句");
+  assert.equal(isPendingMessage(cmd, chat), false);
+  assert.equal(messageMatches(cmd, "todo"), false);
+  assert.equal(messageMatches(cmd, "unread"), false);
+  assert.equal(messageMatches(cmd, "all"), true, "「全部」筛选里能看到本人指令");
+  assert.equal(state.pendingCount(chat), 1, "只有对面那条算待回");
+  assert.equal(state.counts().unread, 1);
 });

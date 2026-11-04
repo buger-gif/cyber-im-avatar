@@ -51,6 +51,8 @@ export class Poller {
     this.lastResult = runtime.last_result || {};
     this.fastAt = 0;
     this.lastFast = {};
+    // 本人指令（私聊 @ 自己）的唤醒时间：只用于防回环熔断，不落 state。
+    this.cmdWakes = new Map();
   }
 
   get cfg() {
@@ -460,8 +462,12 @@ export class Poller {
     const indexOf = new Map(messages.map((m, i) => [String(m.msg_id), i]));
     const hasWatermark = !!lastId && indexOf.has(lastId);
     const stopAt = hasWatermark ? indexOf.get(lastId) : -1;
+    // 私聊里本人 @ 自己 = 对替身说话（spec 0029）。它不是"已经回复了对面"，
+    // 不该参与 selfEpoch——否则会把自己刚下指令时对面还没处理的 @ 吞掉。
+    const isCmdMsg = (m) => chat.kind !== "group" && !!selfId && m.sender_id === selfId &&
+      isMention(m, selfId, names);
     const selfEpoch = Math.max(0, ...messages
-      .filter((m) => selfId && m.sender_id === selfId)
+      .filter((m) => selfId && m.sender_id === selfId && !isCmdMsg(m))
       .map((m) => Number(m.ts_epoch) || 0));
     // 消息列表是最新在前；同秒多条时第一个最大的就是最新，不能只按 epoch 收口。
     let best = null;
@@ -485,13 +491,16 @@ export class Poller {
       // 私聊「只认 @」：非 @ 记知会，正文不落盘、不算待回、不进唤醒批次。
       const dmMention = chat.kind !== "group" && chat.wake_mode === "mention";
       let kind;
-      if (isSelf) kind = "out";
+      if (isSelf) kind = isCmdMsg(m) ? "cmd" : "out";
       else if (chat.kind === "group") kind = isMention(m, selfId, names) ? "mention" : "fyi";
       else if (dmMention) kind = isMention(m, selfId, names) ? "dm" : "fyi";
       else kind = "dm";
       let state;
       if (baseline) {
         state = isSelf ? "replied" : "ignored";
+      } else if (kind === "cmd") {
+        // 本人指令进批次，不当待回、不刷角标；正文保留给 agent 看。
+        state = "new";
       } else if (isSelf) {
         state = "replied";
       } else if (selfEpoch && (Number(m.ts_epoch) || 0) < selfEpoch) {
@@ -548,7 +557,8 @@ export class Poller {
     if (!allMode) {
       return classified.filter((m) => {
         if (!newIds.has(m.msg_id)) return false;
-        if (m.kind !== "dm" && m.kind !== "mention" && m.kind !== "service") return false;
+        if (m.kind !== "dm" && m.kind !== "mention" && m.kind !== "service" &&
+            m.kind !== "cmd") return false;
         const row = chat.recent.find((x) => x.msg_id === m.msg_id);
         return !!row && row.state === "new";
       });
@@ -562,8 +572,34 @@ export class Poller {
       .slice(-RECENT_LIMIT);
   }
 
+  /**
+   * 本人指令的防回环熔断：同一会话 10 分钟最多 5 次 cmd 唤醒。
+   * 一旦 agent 的回复里也 @ 了自己，每轮都会带一条 cmd；不拦会无限烧 token。
+   * 超限写 chat.last_error（面板与 /api/logs 可见），窗口过后自然恢复。
+   */
+  allowCmdWake(chat) {
+    const key = chatKey(chat.platform, chat.chat_id);
+    const now = nowSec();
+    const win = 600;
+    const max = 5;
+    const list = (this.cmdWakes.get(key) || []).filter((t) => now - t < win);
+    if (list.length >= max) {
+      const msg = `本人指令 10 分钟内超过 ${max} 条，已暂停唤醒（疑似回环）`;
+      if (chat.last_error !== msg) {
+        chat.last_error = msg;
+        this.state.save();
+        this.logError(chat.platform, chat.name, msg);
+      }
+      return false;
+    }
+    list.push(now);
+    this.cmdWakes.set(key, list);
+    return true;
+  }
+
   async maybeWake(chat, batch) {
     if (!chat.watching || chat.blocked) return false;
+    if (batch.some((m) => m.kind === "cmd") && !this.allowCmdWake(chat)) return false;
     const key = chatKey(chat.platform, chat.chat_id);
     // 已被取消、正在收尾的旧轮不算在飞：它不该让新消息的载荷被标成「上一轮被打断」。
     const active = typeof this.turns?.busy === "function"

@@ -802,3 +802,38 @@ test("open starts a new turn right after the old one was cancelled", async () =>
   assert.equal(host.followups.length, 2, "取消后 open 要真的起一轮，而不是静默跳过");
   assert.equal(host.created.length, 1, "复用已绑定会话，不额外建一个");
 });
+
+test("self-@ command lines are marked as the owner talking to the stand-in", () => {
+  const rows = [
+    { msg_id: "cmd1", sender_id: "ou_me", sender_name: "我", content: "@我 帮我回他一句",
+      ts: "t1", ts_epoch: 100, kind: "cmd", state: "new" },
+    { msg_id: "dm1", sender_id: "ou_x", sender_name: "对象", content: "在吗",
+      ts: "t2", ts_epoch: 101, kind: "dm", state: "new" },
+  ];
+  const prompt = buildWakePrompt("feishu", "示例对象 A", "oc_dm", rows, {
+    firstTurn: true, wakeMode: "mention", kind: "p2p",
+  });
+  assert.match(prompt, /本人（@自己）/);
+  assert.match(prompt, /【本人指令】/);
+  assert.match(prompt, /不要 @ 本人自己/);
+  assert.doesNotMatch(prompt, /非点名的群消息/);
+  assert.match(prompt, /对象: 在吗/);
+
+  // 后续轮（无首轮头）也要带指令规则。
+  const next = buildWakePrompt("feishu", "示例对象 A", "oc_dm", [rows[0]], {
+    wakeMode: "mention", kind: "p2p", firstTurn: false,
+  });
+  assert.match(next, /【本人指令】/);
+  assert.match(next, /本人（@自己）/);
+
+  // 普通消息不带指令规则；开场上下文含指令时有轻量说明。
+  const plain = buildWakePrompt("feishu", "示例对象 A", "oc_dm", [rows[1]], {
+    wakeMode: "mention", kind: "p2p",
+  });
+  assert.doesNotMatch(plain, /【本人指令】/);
+  const open = buildOpenPrompt("feishu", "示例对象 A", "oc_dm", rows, {
+    wakeMode: "mention", kind: "p2p",
+  });
+  assert.match(open, /本人（@自己）/);
+  assert.match(open, /不是客户消息/);
+});

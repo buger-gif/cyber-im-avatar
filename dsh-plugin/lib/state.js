@@ -144,7 +144,7 @@ function safeReadJson(file) {
   }
 }
 
-const RECENT_KINDS = ["dm", "mention", "service", "fyi", "out"];
+const RECENT_KINDS = ["dm", "mention", "service", "fyi", "out", "cmd"];
 const RECENT_STATES = ["new", "opened", "replied", "ignored"];
 
 /**

@@ -19,7 +19,8 @@
     mention: { label: "@我", color: "var(--dsw-alias-state-warn-primary,#f59e0b)" },
     service: { label: "客服", color: "var(--dsw-alias-state-success-primary,#22c55e)" },
     fyi: { label: "知会", color: "var(--dsw-alias-label-tertiary,#81858c)" },
-    out: { label: "已发", color: "var(--dsw-alias-label-tertiary,#81858c)" }
+    out: { label: "已发", color: "var(--dsw-alias-label-tertiary,#81858c)" },
+    cmd: { label: "指令", color: "var(--accent,var(--dsw-alias-label-secondary,#6b7280))" }
   };
   var MEDIA_LABEL = {
     image: "[图片]", file: "[文件]", audio: "[语音]", voice: "[语音]",
@@ -954,6 +955,7 @@
       if (state === "replied" || state === "ignored") return "历史消息 · 点开在线查看";
       if (kind === "fyi") return "知会消息 · 点开在线查看";
       if (kind === "out") return "已发消息 · 点开在线查看";
+      if (kind === "cmd") return "本人指令 · 点开在线查看";
       return "";
     }
 
