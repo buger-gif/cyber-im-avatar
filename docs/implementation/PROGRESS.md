@@ -5,13 +5,14 @@
 
 ## 更新时间
 
-2026-11-04（0.11.0 仍是 npm latest；spec 0026 闲置重开 / 值守心跳已实现并通过测试，
+2026-11-04（0.12.0 已发布，npm latest；spec 0026 闲置重开 / 值守心跳已实现并通过测试，
 真机待重启宿主后验；0024 / 0025 已归档）
 
 ## 最近批次
 
 | 日期 | 主题 | 证据 |
 | --- | --- | --- |
+| 2026-11-04 | 0.12.0 发布：闲置重开 / 心跳 / skill 闲置退出进 npm latest 与市场索引 | `CHANGELOG.md`、`dsh-plugin/market/index.json` |
 | 2026-11-04 | 闲置重开 + 值守心跳（spec 0026）：`dsh.idle_reset_min` / `dsh.warm_min`、`last_warm_at` / `last_warm_ok` / `last_reset`、设置页「会话生命周期」；skill 加 `--idle-exit-min 180` / `--new-watch` | `lib/turns.js`、`lib/poller.js`、`lib/state.js`、`web/panel.js`、`scripts/listen_core.py`、契约 02/03、`docs/implementation/log/2026-11-04.md` |
 | 2026-11-03 | 进插件市场名单：条目 PR [#11669](https://github.com/awesome-dsh-plugin/awesome-dsh-plugin/pull/11669)，`screenshots.json` 进详情页，流程落 runbook | `docs/implementation/runbooks/market-listing.md`、`dsh-plugin/screenshots.json` |
 | 2026-11-03 | 0024 / 0025 真机验收通过并归档（群三态 + 加入即开会话） | `docs/specs/archive/README.md` |
@@ -45,14 +46,9 @@
   [#11669](https://github.com/awesome-dsh-plugin/awesome-dsh-plugin/pull/11669)。唯一的红是
   「仓库满 1 天」自动检查（仓库 2026-11-02T15:59Z 建），该检查自己重跑，约 6 小时后达标；
   合并后市场当日构建即可搜到。自托管索引仍在，两者并存。
-- **0.9.0 代码面已完成**：`docs/specs/active/` 已清空；本轮按 panel / 验收归档 / 收尾
-  三组主题本地提交（含后续修正），工作区干净、已推 main；已有会话的后续醒来只发消息行，
-  完整上下文只在首轮载荷里出现。0013、0017–0023 全部逐条对勾后
-  `git mv` 进 `docs/specs/archive/`，归档表已登记。ADR 0006 已从 proposed 移到 implemented。
-- **0.9.0 已发布**：npm `dist-tags.latest = 0.9.0`（publish 时间 2026-11-03T08:59:09Z）；
-  `v0.9.0` tag 指向发布代码 `82c11a0`，`market/index.json` 按 runbook 在其后单独提交，
-  已由 `make-market-index --source npm` 重生成到 0.9.0 并通过 format-1 校验。CI 的「版本自检」只等 10 秒，registry 复制约 2 分钟，
-  该 run 曾误报红；自检已改成最多轮询 3 分钟。
+- **0.12.0 已发布**：`dist-tags.latest = 0.12.0`（publish 2026-11-04T07:20:09Z），`v0.12.0`
+  tag 指向发布代码 `9467c00`；`market/index.json` 按 runbook 在其后单独提交（npm 源），
+  已由 `make-market-index --source npm` 重生成并通过 format-1 校验。
 - **验证环境**：3080 使用 `IM_STANDIN_DIR=/tmp/im-standin-accept` 的隔离状态，只有合成会话
   `oc_e2e_local_only`；web profile 已 link 本地插件。**没有向真实客户外发**，也没有拉真实消息。
 - **合成 live turn**：`chatWake` 创建 `session-76a20026…` → turn/end → `session_turns=1`、
@@ -69,8 +65,6 @@
 - **面板走查**：320 / 360 / 420，浅/深两套，六个页签；`.ims-panel` 各宽度
   `scrollWidth === clientWidth`，越界元素 0；设置页三个数字框均 92px；详情「重开会话」
   在 DSH 会话行右侧不换行。走查截图在本地临时目录（未入库）。
-- **测试**：`node --test` 103/103；`python3 -I tests/run_tests.py` 110/0；
-  `bash scripts/gate.sh` 全量六项全绿。
 - **状态文件**：真实 `~/.im-standin/state.json` 未被本轮写入；所有演练写入
   `/tmp/im-standin-accept/`（验收后已清理）。桌面 DSH 与 3080 不要同时写同一份 state。
 - **钉钉真机已通，发送未验证**：组织开通「CLI 数据访问」后 `dws auth login --device` 一次成功
