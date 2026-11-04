@@ -25,6 +25,8 @@
 | `platforms` | `["feishu", "wecom"]` | 平台名数组 | 插件支持 `feishu` / `wecom` / `dingtalk`；缺省只开前两个，其他值被忽略。启用的平台才跑 `whoami` 与轮询；加入某平台值守会自动启用它 |
 | `dsh.timeout` | `600` | 30–3600 秒 | 单轮 live turn 最长等多久；超时按失败处理并取消 |
 | `dsh.full_access` | `false` | true / false | 为 true 时把值守会话切到 DSH 内置 `danger-full-access`，agent 可直接写 `~/.im-standin/profiles`；默认关闭，开启后 agent 能写整个 home |
+| `dsh.idle_reset_min` | `180` | 0–1440 分钟 | 超过这么久没有真实 turn（保温轮不算）→ 下次唤醒前清空会话绑定，在新会话里处理；旧会话留在 DSH 侧边栏；`0` = 关闭 |
+| `dsh.warm_min` | `55` | 0–1440 分钟 | 闲置达到这么久跑一次保温轮（续上下文缓存 + 按 skill 归并画像）；`0` = 关闭。只在 `idle_reset_min` 窗口内跑，`warm_min >= idle_reset_min` 时不触发 |
 
 > 退役：`llm.*`、`reply.*`、`reply_guard`、`ui.*`、`seed_targets`、`dsh.profile`、
 > `dsh.pre_draft` 不再有消费者，`normalizeConfig()` 直接丢掉；老 `panel.json` 里残留不影响行为。
@@ -44,6 +46,8 @@
 | `poll.cooldown_sec` | 0 | 600 |
 | `poll.group_wake_sec` | 0 | 3600 |
 | `dsh.timeout` | 30 | 3600 |
+| `dsh.idle_reset_min` | 0 | 1440 |
+| `dsh.warm_min` | 0 | 1440 |
 
 ## 老键迁移
 

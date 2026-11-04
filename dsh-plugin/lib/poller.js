@@ -125,7 +125,54 @@ export class Poller {
       this.logError(null, null, (full ? "cycle: " : "fast cycle: ") +
         (e && e.message ? e.message : e));
     }
+    try {
+      await this.maybeWarm();
+    } catch (e) {
+      this.logError(null, null, "warm: " + (e && e.message ? e.message : e));
+    }
     this.scheduleNext();
+  }
+
+  /**
+   * 值守心跳：续上下文缓存 + 让 agent 归并画像。
+   * 一次 tick 最多启动一个，避免整点同时叫醒一批会话；只在「已绑定、已消费首轮载荷、
+   * 没有待回、闲置在重开阈值内」的会话上跑，失败也按 warm_min 退避。
+   */
+  async maybeWarm() {
+    const turns = this.turns;
+    const cfg = this.cfg?.dsh || {};
+    const warmMin = Math.max(0, Number(cfg.warm_min) || 0);
+    if (!warmMin || !turns?.hostReady?.()) return false;
+    const idleMin = Math.max(0, Number(cfg.idle_reset_min) || 0);
+    const now = nowSec();
+    const platforms = this.cfg.platforms || [];
+    for (const chat of this.state.listChats()) {
+      if (!chat.watching || chat.blocked || !chat.dsh_session) continue;
+      if (!platforms.includes(chat.platform)) continue;
+      if (chat.prompt_session !== chat.dsh_session) continue;
+      // 和候选口径一致：不轮询的会话不会再有唤醒，焐它没有意义。
+      const timer = Number(chat.timer) || 0;
+      if (chat.kind === "group" ? timer !== 1 : timer === -1) continue;
+      if (this.state.pendingCount(chat) > 0) continue;
+      if (turns.isActive(chat.platform, chat.chat_id)) continue;
+      const lastReal = Math.max(Number(chat.last_turn?.at) || 0,
+        Number(chat.session_bound_at) || 0);
+      if (!lastReal) continue;
+      const idle = now - lastReal;
+      if (idle < warmMin * 60) continue;
+      // 快到重开阈值就不再焐：下一条消息会直接换新会话。
+      if (idleMin > 0 && idle >= idleMin * 60) continue;
+      const lastWarm = Number(chat.last_warm_at) || 0;
+      if (lastWarm && now - lastWarm < warmMin * 60) continue;
+      const r = await turns.warm(chat);
+      if (!r.ok && r.reason !== "running") {
+        chat.last_warm_at = nowSec();
+        chat.last_warm_ok = false;
+        this.state.save();
+      }
+      return true;
+    }
+    return false;
   }
 
   scheduleNext() {
@@ -565,6 +612,8 @@ export class Poller {
         session_bound_at: c.session_bound_at || 0, session_turns: c.session_turns || 0,
         turn_state: ti.state, turn_since: ti.since,
         last_ok: ti.last_ok, last_reason: ti.last_reason, last_at: ti.last_at,
+        last_warm_at: c.last_warm_at || 0, last_warm_ok: c.last_warm_ok ?? null,
+        last_reset: c.last_reset || { at: 0, reason: "" },
         pending: this.state.pendingCount(c),
         watching: !!c.watching,
       });

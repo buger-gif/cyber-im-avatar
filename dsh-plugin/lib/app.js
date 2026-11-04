@@ -163,7 +163,7 @@ export class App {
       interrupted = this.turns.cancel(platform, chatId, "workspace_changed");
       const sid = chat.dsh_session || "";
       if (sid && !sessions.sessionInWorkspace(sid, newEff)) {
-        this.state.setSession(chat, "");
+        this.state.setSession(chat, "", "workspace");
       }
     }
     chat.workspace = ws;
@@ -696,7 +696,7 @@ export class App {
     }
     interrupted = this.turns.cancel(platform, chatId, "session_reset") || interrupted;
     const chat = this.state.ensureChat(platform, chatId, {});
-    this.state.setSession(chat, "");
+    this.state.setSession(chat, "", "manual");
     this.state.save();
     return { ok: true, previous: old, interrupted, chat: this.publicChat(chat) };
   }

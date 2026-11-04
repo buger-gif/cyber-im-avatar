@@ -35,7 +35,7 @@ export const DEFAULT_CONFIG = {
     group_wake_sec: 60,
   },
   platforms: ["feishu", "wecom"],
-  dsh: { timeout: 600, full_access: false },
+  dsh: { timeout: 600, full_access: false, idle_reset_min: 180, warm_min: 55 },
 };
 
 /** 退役配置键：旧 panel.json 里有，也不许混进运行配置。 */
@@ -102,6 +102,8 @@ export function normalizeConfig(input) {
   const d = cfg.dsh || (cfg.dsh = {});
   d.timeout = int(d.timeout, 30, 3600, 600);
   d.full_access = d.full_access === true || d.full_access === "true" || d.full_access === 1;
+  d.idle_reset_min = int(d.idle_reset_min, 0, 24 * 60, 180);
+  d.warm_min = int(d.warm_min, 0, 24 * 60, 55);
   if (!Array.isArray(cfg.platforms) || cfg.platforms.length === 0) cfg.platforms = ["feishu", "wecom"];
   cfg.platforms = cfg.platforms
     .filter((x) => typeof x === "string" && x)
@@ -270,6 +272,11 @@ export class State {
       added_at: Number(input.added_at) || 0,
       recent: [],
       prompt_session: typeof input.prompt_session === "string" ? input.prompt_session : "",
+      last_warm_at: Number(input.last_warm_at) || 0,
+      last_warm_ok: input.last_warm_ok === true ? true : (input.last_warm_ok === false ? false : null),
+      last_reset: input.last_reset && typeof input.last_reset === "object"
+        ? { at: Number(input.last_reset.at) || 0, reason: String(input.last_reset.reason || "") }
+        : { at: 0, reason: "" },
     };
     const seen = new Set();
     for (const m of (Array.isArray(input.recent) ? input.recent : [])) {
@@ -521,9 +528,16 @@ export class State {
     return chat;
   }
 
-  setSession(chat, sessionId) {
+  /**
+   * 换会话绑定。清空时可选记原因，供面板说明「为什么换了一个会话」：
+   * idle / manual / workspace / missing。
+   */
+  setSession(chat, sessionId, resetReason = "") {
     const sid = String(sessionId || "");
     if (sid !== (chat.dsh_session || "")) {
+      if (!sid && resetReason) {
+        chat.last_reset = { at: Date.now() / 1000, reason: String(resetReason) };
+      }
       chat.dsh_session = sid;
       chat.session_bound_at = sid ? Date.now() / 1000 : 0;
       chat.session_turns = 0;

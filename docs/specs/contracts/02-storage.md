@@ -47,6 +47,9 @@
 | added_at | number | 入库时刻 |
 | recent | array | 最近消息指针，最多 10 条，最新在前；字段见下 |
 | prompt_session | string | 已消费过唤醒载荷的 DSH session id；用于判断首轮是否带完整上下文（`/cyber-im-avatar`、chat_id、运行形态、画像路径），之后只追加消息行 |
+| last_warm_at | number | 最近一次保温轮的墙钟时刻（epoch 秒）；`0` = 没跑过。失败也写，用于退避，不推进闲置时钟 |
+| last_warm_ok | bool/null | 最近一次保温轮结果；null = 没跑过，失败不覆盖 `last_error` |
+| last_reset | object | `at` / `reason`；reason = `idle`（闲置重开）/ `manual` / `workspace` / `missing`；`at=0` 表示没重开过 |
 
 ## recent 里的一条消息
 
@@ -66,7 +69,8 @@
 | media_paths | array | 插件下载后的本地绝对路径；只在命中唤醒时写入，清理失效文件时回写 |
 
 老 state 缺字段时按默认补：`last_msg_id` 为空串、`msg_type` / `app_link` / `media_id` 为空串、
-`media_paths` 为空数组；不改变存量会话行为。
+`media_paths` 为空数组、`last_warm_at` / `last_warm_ok` 为 0 / null、`last_reset` 为
+`{at:0, reason:""}`；不改变存量会话行为。
 
 待回口径：`dm` / `mention` / `service`，以及 `wake_mode="all"` 群里的 `fyi`；`isPendingMessage()` 一处定义，`pendingCount` / `pendingMessages` / `counts()` 共用。
 

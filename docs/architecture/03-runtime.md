@@ -23,6 +23,7 @@ dsh plugin --profile web add dsh-cyber-im-avatar
 poller 判定命中
   └─ turns.wake(chat)
        ├─ 先取消同会话在飞 turn（agent.inbox.remove / agent.cancel）
+       ├─ 闲置超阈值先解绑旧会话：这一轮进新会话
        ├─ resolveAgent(dsh_session) 或 create({workspaceId|cwd})
        ├─ 每次唤醒只追加本次新消息（首轮带入口与上下文，之后只发消息行）
        ├─ 只对本批待回消息下载媒体：图片 → attachments image block，
@@ -32,9 +33,12 @@ poller 判定命中
        └─ 听 session/event：turn/start → user/message(id 匹配) → turn/end
 ```
 
-- 一通 IM 会话 ↔ 一个 DSH 会话（`chats.dsh_session`），默认永久复用；
-  用户点「新建会话」才换。显式工作区目录存在但未在 DSH 登记时，仍先尝试恢复旧会话，
-  只有 cwd 漂移才在正确工作区重开。
+- 一通 IM 会话 ↔ 一个 DSH 会话（`chats.dsh_session`），默认复用。手动「新建会话」、
+  工作区漂移、会话丢失，或闲置超过 `dsh.idle_reset_min`（默认 180 分钟）后的下一条消息，
+  都会换新会话；旧会话留在侧边栏。显式工作区目录存在但未在 DSH 登记时，仍先尝试恢复旧会话。
+- 闲置达到 `dsh.warm_min`（默认 55 分钟）、又没到重开阈值时，轮询器起一轮「值守心跳」：
+  在已绑定会话里续上下文缓存，并让 agent 按 skill 规则归并画像。它不写 `session_turns` /
+  `last_turn`，真实消息到达即取消；结果记 `chats.last_warm_at` / `last_warm_ok`。
 - 首轮带 `/cyber-im-avatar`、平台/对象、chat_id、运行形态与画像路径；之后同一
   `dsh_session` 只发本次新消息行，不再重复这些说明。`chats.prompt_session == dsh_session`
   时判定为后续轮；换会话/重置会清空，下一次重新带完整上下文。
@@ -56,6 +60,7 @@ poller 判定命中
 - `poll.interval_min` 有硬下限 10 分钟，填 1 会被夹回 10——不是在防备谁，是不想把 IM 接口当靶子打。
 - `poll.dm_scope` 是 legacy no-op：老配置还能加载，实际候选只看 `watching` 私聊，群只有 `timer=1`。
 - `dsh.full_access` 默认 `false`；为 `true` 时插件把值守会话切到 `danger-full-access`，agent 才能写工作区外的画像。这是唯一放开沙箱的开关。
+- `dsh.idle_reset_min` / `dsh.warm_min` 控制会话寿命与保温（默认 180 / 55 分钟，0 = 关闭）；保温只在重开窗口内跑，且不推进闲置时钟。
 - 平台白名单只有 `feishu` / `wecom`；`platforms` 里其他值被忽略，存量钉钉会话保留不拉取。
 - 风险拦截在 skill 铁律里（钱、承诺、对外群由 agent 停下等本人），插件不再有 `reply_guard` 开关。
 

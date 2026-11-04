@@ -6,7 +6,7 @@ import test from "node:test";
 
 import { State } from "../lib/state.js";
 import { Profiles } from "../lib/profiles.js";
-import { Turns, buildOpenPrompt, buildWakePrompt, sanitizeUntrusted } from "../lib/turns.js";
+import { Turns, buildOpenPrompt, buildWakePrompt, buildWarmPrompt, sanitizeUntrusted } from "../lib/turns.js";
 
 function recent(n = 2) {
   const out = [];
@@ -76,8 +76,9 @@ test("untrusted chat text cannot inject a DSH skill gesture or HTML comment", ()
 });
 
 class FakeHost {
-  constructor({ reply = "收到" } = {}) {
+  constructor({ reply = "收到", auto = true } = {}) {
     this.reply = reply;
+    this.auto = auto;
     this.events = [];
     this.listeners = new Set();
     this.followups = [];
@@ -93,6 +94,7 @@ class FakeHost {
       cancel: () => { this.cancelled = true; },
       followup: (message) => {
         this.followups.push(message);
+        if (!this.auto) return;
         queueMicrotask(() => {
           this.emit({ type: "turn/start", seq: 1, data: { turn: 1 } });
           this.emit({ type: "user/message", seq: 2, data: { id: message.id } });
@@ -104,11 +106,16 @@ class FakeHost {
       },
     };
     this.sessionController = {
-      resolveAgent: async (sid) => (sid === "session-1" ? { agent: this.agent } : null),
+      resolveAgent: async (sid) => (sid === this.agent.id ? { agent: this.agent } : {
+        error: { code: "session/not-found", message: "missing" },
+      }),
       create: async (req) => {
         this.created.push(req);
         if (req.cwd) this.agent.session.header.cwd = req.cwd;
-        return { sessionId: "session-1" };
+        const id = `session-${this.created.length}`;
+        this.agent.id = id;
+        this.agent.session.id = id;
+        return { sessionId: id };
       },
     };
     this.sessions = { flush: async () => { this.flushed += 1; return true; } };
@@ -637,4 +644,100 @@ test("open prompt carries the recent context and the group mode rule", () => {
   assert.match(prompt, /最近上下文（最近 30 分钟，共 1 条）/);
   assert.match(prompt, /- \[t1\] 同事: 这个谁看下/);
   assert.match(prompt, /非点名的群消息只看不回/);
+});
+
+test("warm prompt says it is a heartbeat, not a customer message", () => {
+  const p = buildWarmPrompt("feishu", "示例对象 A", "oc_abc", {
+    profilePath: "/tmp/profile.md", idleMin: 60,
+  });
+  assert.match(p, /^（值守心跳，不是客户消息）/);
+  assert.match(p, /已闲置约 60 分钟/);
+  assert.match(p, /画像文件：\/tmp\/profile\.md/);
+  assert.match(p, /不要拉 IM 消息/);
+  assert.match(p, /不要给任何人发消息/);
+});
+
+test("idle session is reset before the next wake and gets a fresh first turn", async () => {
+  const { chat, host, turns } = setup({ reply: "新会话" });
+  const old = Date.now() / 1000 - 181 * 60;
+  chat.dsh_session = "session-old";
+  chat.prompt_session = "session-old";
+  chat.session_turns = 7;
+  chat.session_bound_at = old;
+  chat.last_turn = { ok: true, reason: "", at: old };
+
+  const r = await turns.wake(chat);
+  assert.equal(r.ok, true);
+  assert.equal(host.created.length, 1);
+  assert.equal(chat.dsh_session, "session-1");
+  assert.equal(chat.session_turns, 1);
+  assert.equal(chat.last_reset.reason, "idle");
+  assert.match(host.followups[0].content[0].text, /^\/cyber-im-avatar/);
+  assert.match(host.followups[0].content[0].text, /闲置超过 180 分钟，已自动重开/);
+});
+
+test("idle_reset_min=0 keeps the bound session no matter how old", async () => {
+  const { state, chat, host, turns } = setup();
+  state.data.config.dsh.idle_reset_min = 0;
+  const old = Date.now() / 1000 - 400 * 60;
+  chat.dsh_session = "session-1";
+  chat.prompt_session = "session-1";
+  chat.session_turns = 1;
+  chat.session_bound_at = old;
+  chat.last_turn = { ok: true, reason: "", at: old };
+
+  const r = await turns.wake(chat);
+  assert.equal(r.ok, true);
+  assert.equal(host.created.length, 0);
+  assert.equal(chat.session_turns, 2);
+  assert.equal(chat.last_reset.reason, "");
+  assert.doesNotMatch(host.followups[0].content[0].text, /已自动重开/);
+});
+
+test("warm turn renews the bound session without counting as a work turn", async () => {
+  const { chat, host, turns } = setup();
+  await turns.wake(chat);
+  const turnAt = chat.last_turn.at;
+  const followups = host.followups.length;
+
+  const r = await turns.warm(chat);
+  assert.equal(r.ok, true);
+  assert.equal(r.state, "warm");
+  await new Promise((resolve) => setTimeout(resolve, 10));
+  assert.equal(host.followups.length, followups + 1);
+  const text = host.followups.at(-1).content[0].text;
+  assert.match(text, /^（值守心跳，不是客户消息）/);
+  assert.match(text, /画像文件：/);
+  assert.equal(chat.session_turns, 1);
+  assert.equal(chat.last_turn.at, turnAt);
+  assert.equal(chat.last_warm_ok, true);
+  assert.ok(chat.last_warm_at > 0);
+  assert.equal(turns.isActive("feishu", "oc_abc"), false);
+});
+
+test("warm skips a session that has not consumed the first wake payload", async () => {
+  const { chat, host, turns } = setup();
+  chat.dsh_session = "session-1";
+  chat.prompt_session = "";
+  const r = await turns.warm(chat);
+  assert.equal(r.ok, false);
+  assert.equal(r.reason, "no_prompt_session");
+  assert.equal(host.followups.length, 0);
+});
+
+test("a real message cancels an in-flight warm turn", async () => {
+  const { chat, host, turns } = setup();
+  await turns.wake(chat);
+  host.auto = false;
+  const warm = await turns.warm(chat);
+  assert.equal(warm.ok, true);
+  assert.equal(turns.isActive("feishu", "oc_abc"), true);
+
+  const before = host.followups.length;
+  const r = await turns.wake(chat);
+  assert.equal(r.ok, true);
+  assert.equal(host.followups.length, before + 1);
+  assert.doesNotMatch(host.followups.at(-1).content[0].text, /值守心跳/);
+  assert.equal(chat.last_warm_at, 0);
+  assert.equal(chat.session_turns, 1);
 });

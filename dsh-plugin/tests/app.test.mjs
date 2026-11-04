@@ -255,6 +255,16 @@ test("config POST clamps and persists", async () => {
   assert.equal(out.body.poll.interval_min, 10);
   assert.equal(state.data.config.poll.per_chat_limit, 5);
   assert.equal((await app.handle("/api/config", "GET")).body.poll.interval_min, 10);
+
+  const life = await app.handle("/api/config", "POST", null,
+    { dsh: { idle_reset_min: 0, warm_min: 99999 } });
+  assert.equal(life.body.dsh.idle_reset_min, 0);
+  assert.equal(life.body.dsh.warm_min, 1440);
+  const readback = (await app.handle("/api/config", "GET")).body;
+  assert.equal(readback.dsh.idle_reset_min, 0);
+  assert.equal(readback.dsh.warm_min, 1440);
+  // 只改 dsh 不能把 poll 的已存值带回默认。
+  assert.equal(readback.poll.per_chat_limit, 5);
 });
 
 test("opening a thread only polls; it never starts a turn", async () => {

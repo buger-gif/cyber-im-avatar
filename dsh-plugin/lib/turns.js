@@ -139,6 +139,7 @@ function payloadNote(count) {
  */
 export function buildWakePrompt(platform, chatName, chatId, messages, {
   profilePath = "", interrupted = false, firstTurn = false, mediaMap = null, wakeMode = "mention",
+  resetMin = 0,
 } = {}) {
   const label = PLAT_LABEL[platform] || platform;
   const safeName = sanitizeUntrusted(chatName || chatId);
@@ -164,6 +165,10 @@ export function buildWakePrompt(platform, chatName, chatId, messages, {
   parts.push(`值守命中 · ${label} · ${safeName} · 新消息`);
   parts.push(`chat_id：${chatId}`);
   parts.push("运行形态：DSH 插件壳；监听、水位、唤醒由插件负责，不要挂监听，不要运行 listen_cli/bootstrap.py。");
+  if (resetMin > 0) {
+    parts.push(`会话：上一次会话闲置超过 ${resetMin} 分钟，已自动重开；更早上下文不在本会话，` +
+      "需要时按 skill 在线拉，别把新消息当成新客户。");
+  }
   if (profilePath) {
     parts.push(`画像文件：${profilePath}（起草前自己读；学到长期事实就直接改这个文件，插件不代写。）`);
   }
@@ -180,7 +185,7 @@ export function buildWakePrompt(platform, chatName, chatId, messages, {
  * 消息只当上下文，回不回由 agent 按 skill 判断；插件不在这里发任何东西。
  */
 export function buildOpenPrompt(platform, chatName, chatId, messages, {
-  profilePath = "", wakeMode = "mention",
+  profilePath = "", wakeMode = "mention", resetMin = 0,
 } = {}) {
   const label = PLAT_LABEL[platform] || platform;
   const safeName = sanitizeUntrusted(chatName || chatId);
@@ -192,6 +197,10 @@ export function buildOpenPrompt(platform, chatName, chatId, messages, {
   parts.push(`值守已开启 · ${label} · ${safeName} · 会话开场（人工开启，不是新消息唤醒）`);
   parts.push(`chat_id：${chatId}`);
   parts.push("运行形态：DSH 插件壳；监听、水位、唤醒由插件负责，不要挂监听，不要运行 listen_cli/bootstrap.py。");
+  if (resetMin > 0) {
+    parts.push(`会话：上一次会话闲置超过 ${resetMin} 分钟，已自动重开；更早上下文不在本会话，` +
+      "需要时按 skill 在线拉。");
+  }
   if (profilePath) parts.push(`画像文件：${profilePath}（先读它；学到长期事实就直接改这个文件，插件不代写。）`);
   if (lines.length) {
     parts.push(`最近上下文（最近 30 分钟，共 ${lines.length} 条）：`);
@@ -205,6 +214,29 @@ export function buildOpenPrompt(platform, chatName, chatId, messages, {
   parts.push("这一轮是用户点「加入值守」触发的：先把上下文和画像读进来；" +
     "有该回的就按 skill 处理，**没有需要回的就不要往会话里发任何消息**。");
   if (lines.length) parts.push("上下文来自本地最近消息；更早的按 skill 在线拉，不要重发已经处理过的。");
+  return parts.join("\n");
+}
+
+/**
+ * 值守心跳：续上下文缓存 + 按 skill 规则归并画像。不是客户消息，不能触发发送。
+ * 只在已经消费过首轮载荷的会话里跑，所以不带 `/cyber-im-avatar` 与平台说明。
+ */
+export function buildWarmPrompt(platform, chatName, chatId, { profilePath = "", idleMin = 0 } = {}) {
+  const label = PLAT_LABEL[platform] || platform;
+  const safeName = sanitizeUntrusted(chatName || chatId);
+  const parts = ["（值守心跳，不是客户消息）"];
+  parts.push(`保温轮 · ${label} · ${safeName}` +
+    (idleMin > 0 ? ` · 已闲置约 ${idleMin} 分钟` : ""));
+  parts.push(`chat_id：${chatId}`);
+  if (profilePath) parts.push(`画像文件：${profilePath}`);
+  parts.push("这一轮只做两件事：");
+  parts.push("1. 续上下文缓存——不需要输出正文，也不需要汇报缓存状态。");
+  parts.push("2. 按 skill「服务对象画像」的整理规则检查上面这份画像：该归并就归并" +
+    "（保留四段、合并重复、删一次性/已失效、把日期流水改写成结论）；不需要改就一个字都别改。");
+  parts.push("边界：不要拉 IM 消息，不要给任何人发消息，不要调用发送类命令，" +
+    "不要把这一轮当成客户来信回复。");
+  parts.push("写不进去（沙箱拒绝）就跳过，不要重试、不要换路径；" +
+    "最后用一句话说明「已归并」或「无需改动」，然后结束本轮。");
   return parts.join("\n");
 }
 
@@ -225,6 +257,7 @@ export class Turns {
     this.ctx = null;
     this.active = new Map();
     this.starting = new Map();
+    this.warming = new Map();
   }
 
   setHost(hostCtx, rootCtx = null) {
@@ -261,6 +294,10 @@ export class Turns {
 
   hostReady() {
     return !!(this.sessionController && this.sessions && this.ctx);
+  }
+
+  idleResetMinutes() {
+    return Math.max(0, Number(this.state.data.config?.dsh?.idle_reset_min) || 0);
   }
 
   snapshot() {
@@ -326,6 +363,9 @@ export class Turns {
   async _wake(chat, { interrupted = false, batch = null, open = false } = {}) {
     const key = chatKey(chat.platform, chat.chat_id);
     const current = this.state.getChat(chat.platform, chat.chat_id) || chat;
+    // 真实消息优先：正在启动的保温轮让位。
+    const pendingWarm = this.warming.get(key);
+    if (pendingWarm) pendingWarm.cancelled = true;
     if (!current.watching || current.blocked) {
       return { ok: false, reason: "not_watching" };
     }
@@ -339,6 +379,19 @@ export class Turns {
       if (old.cancel) old.cancel();
       else this.cancelHandle(old);
       try { await old.done; } catch { /* old turn already gone */ }
+    }
+    // 闲置重开：只在下一条消息到来时做，不动旧会话文件。
+    // 时钟只认真实 turn（last_turn / session_bound_at），保温轮不推后它。
+    const idleMin = this.idleResetMinutes();
+    let resetMin = 0;
+    if (idleMin > 0 && current.dsh_session && !this.active.has(key)) {
+      const lastReal = Math.max(Number(current.last_turn?.at) || 0,
+        Number(current.session_bound_at) || 0);
+      if (lastReal && nowSec() - lastReal >= idleMin * 60) {
+        resetMin = idleMin;
+        this.state.setSession(current, "", "idle");
+        this.logger.info?.(`[im-standin] idle reset ${key}: idle >= ${idleMin}min`);
+      }
     }
     const turnId = crypto.randomUUID();
     const handle = {
@@ -376,11 +429,11 @@ export class Turns {
       const media = await this.resolveMedia(current, messages, agent);
       const prompt = opening
         ? buildOpenPrompt(current.platform, current.name, current.chat_id, messages, {
-            profilePath, wakeMode: current.wake_mode || "mention",
+            profilePath, wakeMode: current.wake_mode || "mention", resetMin,
           })
         : buildWakePrompt(current.platform, current.name, current.chat_id, messages, {
             profilePath, interrupted, firstTurn, mediaMap: media.map,
-            wakeMode: current.wake_mode || "mention",
+            wakeMode: current.wake_mode || "mention", resetMin,
           });
       const message = await makeUserMessage(prompt, media.parts);
       handle.promptId = message.id;
@@ -674,14 +727,17 @@ export class Turns {
         resolved = await this.sessionController.resolveAgent(sid);
       } catch (e) {
         const code = e?.code || "";
-        if (code === "session/not-found") resolved = null;
-        else if (code === "session/writer-held") throw new Error("session_locked_other_host");
+        if (code === "session/not-found") {
+          resolved = null;
+          chat.last_reset = { at: nowSec(), reason: "missing" };
+        } else if (code === "session/writer-held") throw new Error("session_locked_other_host");
         else throw new Error(`${e?.name || "Error"}: ${e?.message || e}`);
       }
       if (resolved && resolved.error) {
         const code = resolved.error.code || "";
         if (code === "session/not-found") {
           sid = "";
+          chat.last_reset = { at: nowSec(), reason: "missing" };
         } else if (code === "session/writer-held") {
           throw new Error("session_locked_other_host");
         } else {
@@ -697,6 +753,7 @@ export class Turns {
           // 绑定工作区变过：旧 session 在别的 cwd，丢掉绑定，按新工作区开新会话。
           agent = null;
           sid = "";
+          chat.last_reset = { at: nowSec(), reason: "workspace" };
         }
       }
     }
@@ -713,7 +770,82 @@ export class Turns {
     return { agent, sessionId: sid, cwd: effective };
   }
 
-  runTurn(handle, { chat, agent, sid, cwd, message }) {
+  /** 只解析已绑定的会话，不新建；会话不在或工作区不符都返回 null。 */
+  async resolveExisting(chat) {
+    const sid = String(chat.dsh_session || "");
+    if (!sid || !this.hostReady()) return null;
+    let resolved;
+    try {
+      resolved = await this.sessionController.resolveAgent(sid);
+    } catch (e) {
+      if (e?.code === "session/not-found") return null;
+      throw e;
+    }
+    if (!resolved || resolved.error || !resolved.agent) return null;
+    const agent = resolved.agent;
+    const effective = workspaces.resolveForChat(chat).path || "";
+    if (effective) {
+      const cwd = agent.session?.header?.cwd || agent.session?.cwd || agent.cwd || "";
+      const norm = cwd ? workspaces.normalize(cwd) : "";
+      if (norm && norm !== effective) return null;
+    }
+    return { agent, sessionId: sid, cwd: effective };
+  }
+
+  /**
+   * 值守心跳：在已绑定的会话里跑一轮维护（续上下文缓存 + 按 skill 归并画像）。
+   * 不新建会话、不计入 session_turns、不推进真实 turn 的时钟；真实消息到达时会被取消。
+   */
+  async warm(chat) {
+    if (!this.hostReady()) return { ok: false, reason: "host_unavailable" };
+    const current = this.state.getChat(chat.platform, chat.chat_id) || chat;
+    const key = chatKey(current.platform, current.chat_id);
+    if (!current.watching || current.blocked) return { ok: false, reason: "not_watching" };
+    if (!current.dsh_session) return { ok: false, reason: "no_session" };
+    // 首轮完整载荷还没被消费过：让真实唤醒先把 skill 入口送进去，别让保温轮当首轮。
+    if (current.prompt_session !== current.dsh_session) return { ok: false, reason: "no_prompt_session" };
+    if (this.active.has(key)) return { ok: false, reason: "running" };
+    const token = { cancelled: false };
+    this.warming.set(key, token);
+    try {
+      const existing = await this.resolveExisting(current);
+      if (token.cancelled || this.active.has(key)) return { ok: false, reason: "cancelled" };
+      if (!existing) return { ok: false, reason: "no_session" };
+      const { agent, sessionId: sid, cwd } = existing;
+      this.applySessionPermission(agent);
+      const profilePath = this.profiles.pathFor(current.platform, current.chat_id, current.name);
+      const lastReal = Math.max(Number(current.last_turn?.at) || 0,
+        Number(current.session_bound_at) || 0);
+      const idleMin = lastReal ? Math.round((nowSec() - lastReal) / 60) : 0;
+      const prompt = buildWarmPrompt(current.platform, current.name, current.chat_id, {
+        profilePath, idleMin,
+      });
+      const message = await makeUserMessage(prompt);
+      // 构造载荷期间可能已有真实消息进来：再确认一次，别把心跳插到真实回复后面。
+      if (token.cancelled || this.active.has(key)) return { ok: false, reason: "cancelled" };
+      const turnId = crypto.randomUUID();
+      const handle = {
+        turnId, platform: current.platform, chatId: current.chat_id,
+        cancelled: false, state: "warm", since: nowSec(), startedAt: nowSec(),
+        lastOk: null, lastReason: "", lastAt: 0, promptId: message.id, agent, done: null,
+        warm: true,
+      };
+      this.active.set(key, handle);
+      handle.done = this.runTurn(handle, {
+        chat: current, agent, sid, cwd, message, warm: true,
+      });
+      this.state.save();
+      return { ok: true, started: true, turn_id: turnId, state: "warm" };
+    } catch (e) {
+      const reason = typeof e === "string" ? e : (e?.message || e?.name || "warm_failed");
+      this.logger.warn?.(`[im-standin] warm ${key}: ${reason}`);
+      return { ok: false, reason };
+    } finally {
+      if (this.warming.get(key) === token) this.warming.delete(key);
+    }
+  }
+
+  runTurn(handle, { chat, agent, sid, cwd, message, warm = false }) {
     return new Promise((resolve) => {
       const key = chatKey(chat.platform, chat.chat_id);
       const timeoutSec = Math.max(30, Number(this.state.data.config?.dsh?.timeout) || 600);
@@ -739,10 +871,12 @@ export class Turns {
           const wasActive = this.active.get(key)?.turnId === handle.turnId;
           if (wasActive) {
             this.active.delete(key);
-            chat.wake.active = false;
-            chat.wake.failed = false;
-            chat.wake.turn_id = "";
-            this.state.save();
+            if (!warm) {
+              chat.wake.active = false;
+              chat.wake.failed = false;
+              chat.wake.turn_id = "";
+              this.state.save();
+            }
           }
           settle({ ok: false, reason: "cancelled" });
           return;
@@ -752,6 +886,21 @@ export class Turns {
           return;
         }
         this.active.delete(key);
+        if (warm) {
+          // 保温轮不是真实工作：只记自己的结果，不碰 session_turns / last_turn / wake，
+          // 否则闲置时钟会被每小时一次心跳推后，3 小时重开永远不触发。
+          chat.last_warm_at = nowSec();
+          chat.last_warm_ok = !!result.ok;
+          handle.lastOk = !!result.ok;
+          handle.lastReason = result.ok ? "" : (result.reason || "turn_failed");
+          handle.lastAt = nowSec();
+          this.state.save();
+          if (!result.ok) {
+            this.logger.warn?.(`[im-standin] warm turn ${key}: ${handle.lastReason}`);
+          }
+          settle(result);
+          return;
+        }
         if (result.ok) {
           // turn 成功说明 prompt 已被消费；事件漏掉时也补一次。
           if (chat.prompt_session !== sid) {

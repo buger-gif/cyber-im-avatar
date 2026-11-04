@@ -45,7 +45,8 @@ for (const [k, v] of Object.entries(DEFAULT_CONFIG)) {
   } else flat[k] = v;
 }
 const RANGE_KEYS = ["poll.interval_min", "poll.fast_sec", "poll.dm_recent", "poll.per_chat_limit",
-  "poll.backfill_hours", "poll.cooldown_sec", "poll.group_wake_sec", "dsh.timeout"];
+  "poll.backfill_hours", "poll.cooldown_sec", "poll.group_wake_sec", "dsh.timeout",
+  "dsh.idle_reset_min", "dsh.warm_min"];
 function extreme(value) {
   const cfg = { poll: {}, dsh: {} };
   for (const key of RANGE_KEYS) {

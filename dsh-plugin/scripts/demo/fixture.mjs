@@ -26,14 +26,17 @@ const chats = [
     platform: "feishu", chat_id: "oc_demo_lin", name: "林一帆", kind: "p2p",
     tracked: 0, watching: 1, turn_state: "running", blocked: 0, pending: 3,
     dsh_session: "session-demo-lin", session_turns: 12, session_bound_at: now - day * 3,
+    last_warm_at: now - 120, last_warm_ok: true,
     last_ts: stamp(1800), last_epoch: now - 1800, last_sync: now - 20,
     last_error: "", added_at: now - day * 3, workspace: W1,
     workspace_in_dsh: 1, workspace_effective: W1,
   },
   {
     platform: "wecom", chat_id: "wm_demo_zhou", name: "周敏", kind: "p2p",
-    tracked: 0, watching: 1, turn_state: "idle", blocked: 0, pending: 3,
+    tracked: 0, watching: 1, turn_state: "warm", blocked: 0, pending: 0,
     dsh_session: "session-demo-zhou", session_turns: 5, session_bound_at: now - day * 2,
+    last_warm_at: now - 30, last_warm_ok: true,
+    last_reset: { at: now - day * 2, reason: "idle" },
     last_ts: stamp(5400), last_epoch: now - 5400, last_sync: now - 20,
     last_error: "", added_at: now - day * 2, workspace: W2,
     workspace_in_dsh: 1, workspace_effective: W2,
@@ -233,10 +236,13 @@ const status = {
   instances: [
     { platform: "feishu", chat_id: "oc_demo_lin", name: "林一帆", kind: "p2p",
       workspace: W1, dsh_session: "session-demo-lin", session_bound_at: now - day * 3,
-      session_turns: 12, turn_state: "running", watching: true },
+      session_turns: 12, turn_state: "running", watching: true,
+      last_warm_at: now - 120, last_warm_ok: true },
     { platform: "wecom", chat_id: "wm_demo_zhou", name: "周敏", kind: "p2p",
       workspace: W2, dsh_session: "session-demo-zhou", session_bound_at: now - day * 2,
-      session_turns: 5, turn_state: "idle", watching: true },
+      session_turns: 5, turn_state: "warm", watching: true,
+      last_warm_at: now - 30, last_warm_ok: true,
+      last_reset: { at: now - day * 2, reason: "idle" } },
   ],
 };
 
@@ -244,7 +250,7 @@ const config = {
   poll: { interval_min: 10, dm_scope: "recent", dm_recent: 20, cooldown_sec: 20,
           min_interval_min: 10, max_interval_min: 240, interval_sec: 600, fast_sec: 60 },
   platforms: ["feishu", "wecom"],
-  dsh: { profile: "headless", timeout: 600, full_access: true },
+  dsh: { timeout: 600, full_access: true, idle_reset_min: 180, warm_min: 55 },
   resolved: { dsh_ready: true, label: "跟随 DSH 配置" },
 };
 // 面板的设置页从 /api/status 的 config 字段读配置（真实 server 也是这么给的）

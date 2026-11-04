@@ -35,12 +35,22 @@ class FakeAdapter {
 }
 
 class FakeTurns {
-  constructor() { this.active = new Set(); this.wakes = []; }
+  constructor() {
+    this.active = new Set();
+    this.wakes = [];
+    this.warmCalls = 0;
+    this.warmResult = { ok: true, started: true };
+  }
   hostReady() { return true; }
   isActive(platform, chatId) { return this.active.has(`${platform}:${chatId}`); }
   async wake(chat, opts = {}) {
     this.wakes.push({ chat, opts });
     return { ok: true, started: true, turn_id: `turn-${this.wakes.length}` };
+  }
+  async warm(chat) {
+    this.warmCalls += 1;
+    this.lastWarmChat = chat;
+    return this.warmResult;
   }
 }
 
@@ -433,4 +443,74 @@ test("mention-mode groups still ignore non-mentions (regression)", async () => {
   assert.equal(turns.wakes.length, 0);
   assert.equal(chat.recent.find((m) => m.msg_id === "c2").state, "ignored");
   assert.equal(chat.wake_mode, "mention");
+});
+
+function warmChat(state, { platform = "feishu", chatId = "oc_warm", idleMin = 60 } = {}) {
+  const chat = state.ensureChat(platform, chatId, { name: "保温对象", kind: "p2p" });
+  chat.watching = true;
+  chat.dsh_session = "session-1";
+  chat.prompt_session = "session-1";
+  chat.session_bound_at = Date.now() / 1000 - idleMin * 60;
+  chat.last_turn = { ok: true, reason: "", at: chat.session_bound_at };
+  state.save();
+  return chat;
+}
+
+test("heartbeat warms one eligible session per tick and backs off after a failure", async () => {
+  const { state, poller, turns } = setup();
+  const chat = warmChat(state);
+  assert.equal(await poller.maybeWarm(), true);
+  assert.equal(turns.warmCalls, 1);
+  assert.equal(turns.lastWarmChat, chat);
+
+  // 同一会话刚跑过保温：即使 last_warm_at 只有一份，也要等下一个窗口。
+  chat.last_warm_at = Date.now() / 1000;
+  assert.equal(await poller.maybeWarm(), false);
+  assert.equal(turns.warmCalls, 1);
+
+  // 启动失败也退避，不每个 tick 重试。
+  chat.last_warm_at = 0;
+  turns.warmResult = { ok: false, reason: "no_session" };
+  assert.equal(await poller.maybeWarm(), true);
+  assert.equal(turns.warmCalls, 2);
+  assert.equal(chat.last_warm_ok, false);
+  assert.ok(chat.last_warm_at > 0);
+  assert.equal(await poller.maybeWarm(), false);
+  assert.equal(turns.warmCalls, 2);
+});
+
+test("heartbeat skips pending chats, active turns, unwatched, and the reset window", async () => {
+  const { state, poller, turns } = setup();
+  const chat = warmChat(state);
+  state.mergeRecent(chat, [msg("m1", 1010, { kind: "dm", state: "new" })]);
+  assert.equal(await poller.maybeWarm(), false);   // 有待回：交给正常唤醒
+  turns.warmCalls = 0;
+
+  state.setMessageState("feishu", "m1", "replied");
+  turns.active.add("feishu:oc_warm");
+  assert.equal(await poller.maybeWarm(), false);   // 在飞
+  turns.active.clear();
+
+  const old = Date.now() / 1000 - 181 * 60;
+  chat.session_bound_at = old;
+  chat.last_turn = { ok: true, reason: "", at: old };
+  assert.equal(await poller.maybeWarm(), false);   // 已到重开阈值
+  assert.equal(turns.warmCalls, 0);
+
+  chat.session_bound_at = Date.now() / 1000 - 60 * 60;
+  chat.last_turn = { ok: true, reason: "", at: chat.session_bound_at };
+  chat.watching = false;
+  assert.equal(await poller.maybeWarm(), false);
+  chat.watching = true;
+
+  state.data.config.dsh.warm_min = 0;
+  assert.equal(await poller.maybeWarm(), false);   // 关闭
+});
+
+test("heartbeat waits for the first turn to consume the skill payload", async () => {
+  const { state, poller, turns } = setup();
+  const chat = warmChat(state);
+  chat.prompt_session = "";
+  assert.equal(await poller.maybeWarm(), false);
+  assert.equal(turns.warmCalls, 0);
 });

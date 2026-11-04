@@ -26,8 +26,8 @@
 
 | 层 | 一行是什么 | 关键字段 |
 | --- | --- | --- |
-| `config` | 插件配置，改动即时生效 | `poll.*`、`platforms`、`dsh.timeout`、`dsh.full_access` |
-| `chats` | 一个会话（一个人或一个群） | `watching`、`timer`、`blocked`、`last_msg_id`、`last_epoch`、`dsh_session`、`prompt_session` |
+| `config` | 插件配置，改动即时生效 | `poll.*`、`platforms`、`dsh.timeout`、`dsh.full_access`、`dsh.idle_reset_min`、`dsh.warm_min` |
+| `chats` | 一个会话（一个人或一个群） | `watching`、`timer`、`blocked`、`last_msg_id`、`last_epoch`、`dsh_session`、`prompt_session`、`last_warm_at`、`last_reset` |
 | `chats[].recent` | 最近 10 条消息**指针** | `kind`(dm/mention/fyi/out)、`state`(new/opened/replied/ignored)、`msg_id`、`msg_type`、`app_link`、`media_id`、`media_paths` |
 
 `recent` 不是聊天记录库：最多 10 条、最新在前，`content` 只在 `new`/`opened` 的私聊与 @我 上保留；

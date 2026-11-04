@@ -394,7 +394,7 @@
       chats: [], targets: [], workspaces: [], doctor: null, cfg: null,
       search: { q: "", platform: "feishu", items: null, err: "", seq: 0,
                 wc: { name: "", id: "", kind: "group" } },
-      composerDrafts: {}, pollDraft: {},
+      composerDrafts: {}, pollDraft: {}, lifeDraft: {},
       addWs: readWsMemory(), addWsPicked: false, detailWs: "", wsPicked: false,
       targetEdit: "", targetDrafts: {}, dead: false, timer: null,
       digest: null, digestDate: ""
@@ -1124,6 +1124,10 @@
 
     function stateChip(chat) {
       if (chat.blocked) return h("span", { class: "ims-tag", style: "color:var(--danger)", text: "已屏蔽" });
+      if ((chat.turn_state || "") === "warm") {
+        return h("span", { class: "ims-tag", style: "color:var(--fg3)",
+                           title: "正在续上下文缓存并按 skill 规则归并画像", text: "画像归并中" });
+      }
       if ((chat.turn_state || "") === "running") {
         return h("span", { class: "ims-tag", style: "color:var(--ok)",
                            title: "agent 正在处理这通会话", text: "处理中" });
@@ -1133,6 +1137,18 @@
       }
       if (chat.watching) return h("span", { class: "ims-tag", style: "color:var(--accent)", text: "值守中" });
       return h("span", { class: "ims-tag", style: "color:var(--fg3)", text: "未值守" });
+    }
+
+    function resetReasonText(r) {
+      if (!r || !r.reason) return "";
+      if (r.reason === "idle") {
+        var m = (S.cfg && S.cfg.dsh && S.cfg.dsh.idle_reset_min) || 180;
+        return "闲置超过 " + m + " 分钟，已自动重开";
+      }
+      if (r.reason === "manual") return "手动重开";
+      if (r.reason === "workspace") return "工作区变更，已重开";
+      if (r.reason === "missing") return "原会话在 DSH 里找不到，已重开";
+      return "已重开";
     }
 
     /* 去 DSH 会话：优先用 DSH 客户端自己的 uiWorkspace.openSession（和侧边栏点会话同一条路），
@@ -1328,7 +1344,20 @@
                       text: (chat.session_turns || 0) + " 轮" }),
           h("span", { class: "ims-grow" }),
           newSessionBtn(d)));
-        if (running) {
+        if (chat.last_warm_at || (chat.last_reset && chat.last_reset.at)) {
+          wrap.appendChild(h("div", { class: "ims-hint", style: "padding:0 var(--pad) 6px",
+            text: [
+              (chat.last_reset && chat.last_reset.at)
+                ? resetReasonText(chat.last_reset) + "（" + fmtTime(chat.last_reset.at) + "）" : "",
+              chat.last_warm_at
+                ? "上次保温 " + fmtTime(chat.last_warm_at) + (chat.last_warm_ok === false ? "（失败）" : "")
+                : ""
+            ].filter(Boolean).join(" · ") }));
+        }
+        if ((chat.turn_state || "") === "warm") {
+          wrap.appendChild(h("div", { class: "ims-hint", style: "padding:0 var(--pad) 6px",
+                                      text: "正在跑值守心跳：续上下文缓存 + 按 skill 规则归并画像；有新消息会立刻打断它。" }));
+        } else if (running) {
           wrap.appendChild(h("div", { class: "ims-hint", style: "padding:0 var(--pad) 6px",
                                       text: "agent 正在这通会话里处理；去会话能看到它拉消息、查工作区的过程。" }));
         } else if (chat.last_ok === false) {
@@ -1558,9 +1587,11 @@
             h("span", { class: "ims-name", text: c.name || "未命名会话" }),
             h("span", { class: "ims-tag", style: "color:" + p.color, text: p.label }),
             running ? h("span", { class: "ims-tag", style: "color:var(--ok)", text: "处理中" })
-                    : (c.last_ok === false
-                        ? h("span", { class: "ims-tag", style: "color:var(--danger)", text: "上轮失败" })
-                        : h("span", { class: "ims-tag", style: "color:var(--accent)", text: "值守中" })),
+                    : (c.turn_state === "warm"
+                        ? h("span", { class: "ims-tag", style: "color:var(--fg3)", text: "画像归并中" })
+                        : (c.last_ok === false
+                            ? h("span", { class: "ims-tag", style: "color:var(--danger)", text: "上轮失败" })
+                            : h("span", { class: "ims-tag", style: "color:var(--accent)", text: "值守中" }))),
             c.kind === "group" ? h("span", { class: "ims-tag", style: "color:var(--fg3)", text: "群" }) : null,
             h("span", { class: "ims-grow" }),
             c.dsh_session ? goSessionBtn(c.platform, c.chat_id, true) : null,
@@ -2262,6 +2293,54 @@
             onclick: function () { syncNow(this); }
           }, "立即拉一轮"),
           h("span", { class: "ims-hint", text: "不受间隔限制；同一个会话 20 秒内不会重复拉。" }))));
+
+      // 会话生命周期：闲置重开 + 保温（续缓存 / 归并画像）
+      var dcfg = cfg.dsh || {};
+      var idleInp = h("input", { class: "ims-inp ims-num", type: "number",
+                                 min: "0", max: "1440", step: "10" });
+      idleInp.value = S.lifeDraft.idle_reset_min !== undefined ? S.lifeDraft.idle_reset_min
+        : String(dcfg.idle_reset_min == null ? 180 : dcfg.idle_reset_min);
+      var warmInp = h("input", { class: "ims-inp ims-num", type: "number",
+                                 min: "0", max: "1440", step: "5" });
+      warmInp.value = S.lifeDraft.warm_min !== undefined ? S.lifeDraft.warm_min
+        : String(dcfg.warm_min == null ? 55 : dcfg.warm_min);
+      idleInp.addEventListener("input", function () { S.lifeDraft.idle_reset_min = idleInp.value; });
+      warmInp.addEventListener("input", function () { S.lifeDraft.warm_min = warmInp.value; });
+      scroll.appendChild(h("div", { class: "ims-card" },
+        h("div", { class: "ims-card-h" },
+          h("span", { class: "ims-ico", html: icon("sync", 15) }), "会话生命周期",
+          h("span", { class: "ims-grow" }),
+          h("span", { class: "ims-tag",
+            text: "重开 " + (dcfg.idle_reset_min ? dcfg.idle_reset_min + " 分钟" : "关") +
+              " · 保温 " + (dcfg.warm_min ? dcfg.warm_min + " 分钟" : "关") })),
+        h("div", { class: "ims-rowline" },
+          h("span", { class: "ims-field" },
+            h("span", { class: "ims-hint", text: "闲置重开(分钟)" }), idleInp),
+          h("span", { class: "ims-field" },
+            h("span", { class: "ims-hint", text: "保温间隔(分钟)" }), warmInp),
+          h("span", { class: "ims-grow" }),
+          h("button", {
+            class: "ims-btn primary", type: "button",
+            onclick: function () {
+              var idleV = Math.max(0, Math.min(1440, parseInt(idleInp.value, 10) || 0));
+              var warmV = Math.max(0, Math.min(1440, parseInt(warmInp.value, 10) || 0));
+              api("/api/config", { body: { dsh: { idle_reset_min: idleV, warm_min: warmV } } })
+                .then(function (c) {
+                  S.cfg = c;
+                  S.lifeDraft = {};
+                  var cd = c.dsh || {};
+                  idleInp.value = String(cd.idle_reset_min == null ? 180 : cd.idle_reset_min);
+                  warmInp.value = String(cd.warm_min == null ? 55 : cd.warm_min);
+                  say("已保存：闲置 " + (cd.idle_reset_min ? cd.idle_reset_min + " 分钟重开" : "不重开") +
+                    " · " + (cd.warm_min ? cd.warm_min + " 分钟保温" : "不保温"));
+                  paint();
+                });
+            }
+          }, "保存")),
+        h("div", { class: "ims-hint", text: "超过「闲置重开」没有真实对话，下一条消息自动换新会话" +
+          "（旧会话留在 DSH 侧边栏，画像与最近消息还在）；闲置在阈值内时，每「保温间隔」跑一轮心跳：" +
+          "续上下文缓存，并按 skill 规则归并当前对象画像。0 = 关闭。" +
+          "保温不会推后重开时钟；保温间隔 ≥ 闲置重开时不会触发。" })));
 
       // 值守范围：群默认不拉，收件箱清理
       var groupTimerCount = ((S.chats || []).filter(function (c) {

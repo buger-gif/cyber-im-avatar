@@ -216,3 +216,42 @@ test("pruneMediaPaths removes deleted files and keeps live ones", () => {
   assert.equal(state.pruneMediaPaths(), true);
   assert.deepEqual(chat.recent[0].media_paths, [live]);
 });
+
+test("idle reset and warm keys have defaults, clamp to 0..1440, and 0 disables", () => {
+  const cfg = normalizeConfig({});
+  assert.equal(cfg.dsh.idle_reset_min, 180);
+  assert.equal(cfg.dsh.warm_min, 55);
+  assert.equal(normalizeConfig({ dsh: { idle_reset_min: 0 } }).dsh.idle_reset_min, 0);
+  assert.equal(normalizeConfig({ dsh: { warm_min: 0 } }).dsh.warm_min, 0);
+  assert.equal(normalizeConfig({ dsh: { idle_reset_min: -5 } }).dsh.idle_reset_min, 0);
+  assert.equal(normalizeConfig({ dsh: { warm_min: 99999 } }).dsh.warm_min, 1440);
+});
+
+test("old state gets warm/reset defaults; setSession records the reset reason", () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "im-state-life-"));
+  fs.writeFileSync(path.join(dir, "state.json"), JSON.stringify({
+    version: 1,
+    chats: {
+      "feishu:oc_life": {
+        platform: "feishu", chat_id: "oc_life", name: "旧会话", kind: "p2p",
+        watching: true, dsh_session: "session-1", recent: [],
+      },
+    },
+  }, null, 2));
+  const state = new State(dir);
+  state.load();
+  const chat = state.getChat("feishu", "oc_life");
+  assert.equal(chat.last_warm_at, 0);
+  assert.equal(chat.last_warm_ok, null);
+  assert.deepEqual(chat.last_reset, { at: 0, reason: "" });
+
+  state.setSession(chat, "", "idle");
+  assert.equal(chat.dsh_session, "");
+  assert.equal(chat.session_turns, 0);
+  assert.equal(chat.last_reset.reason, "idle");
+  assert.ok(chat.last_reset.at > 0);
+
+  // 已有空绑定再清一次不覆盖上次原因，也不报错。
+  state.setSession(chat, "", "manual");
+  assert.equal(chat.last_reset.reason, "idle");
+});
