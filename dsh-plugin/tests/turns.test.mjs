@@ -274,8 +274,8 @@ test("second wake reuses the bound session instead of creating another", async (
   assert.equal(chat.session_turns, 2);
 });
 
-test("a batched wake after the first turn only appends the new messages and sender profiles", async () => {
-  const { dir, chat, host, turns } = setup({ reply: "第一轮" });
+test("a batched wake after the first turn only appends the new messages, without repeating profiles", async () => {
+  const { chat, host, turns } = setup({ reply: "第一轮" });
   await turns.wake(chat);
   await new Promise((r) => setTimeout(r, 5));
   assert.equal(chat.prompt_session, "session-1");
@@ -288,11 +288,33 @@ test("a batched wake after the first turn only appends the new messages and send
   const second = host.followups[1].content[0].text;
   const lines = second.split("\n");
   assert.equal(lines[0], "- [t9] 客户: 新来的消息");
-  assert.equal(lines[1], "人物档案：");
-  assert.equal(lines[2],
-    `- 客户 · ou_other → ${path.join(dir, "profiles", "people", "feishu", "ou_other.md")}`);
+  // 同一人在首轮已经给过路径，后续轮不再重复。
+  assert.doesNotMatch(second, /人物档案：|客户 · ou_other/);
   assert.doesNotMatch(second,
     /\/cyber-im-avatar|值守命中|chat_id：|运行形态：|会话工作本：|本次只追加/);
+});
+
+test("later wakes only add people this session has not seen before", async () => {
+  const { dir, chat, host, turns } = setup({ reply: "第一轮" });
+  await turns.wake(chat);
+  await new Promise((r) => setTimeout(r, 5));
+
+  host.reply = "第二轮";
+  await turns.wake(chat, { batch: [{
+    msg_id: "m9", sender_id: "ou_new", sender_name: "新同事",
+    content: "新同事来了", ts: "t9", ts_epoch: 109, kind: "mention", state: "new",
+  }] });
+  const second = host.followups[1].content[0].text;
+  assert.match(second, /人物档案：\n- 新同事 · ou_new → /);
+  assert.ok(second.includes(path.join(dir, "profiles", "people", "feishu", "ou_new.md")));
+
+  host.reply = "第三轮";
+  await turns.wake(chat, { batch: [{
+    msg_id: "m10", sender_id: "ou_new", sender_name: "新同事",
+    content: "同一人又说一句", ts: "t10", ts_epoch: 110, kind: "mention", state: "new",
+  }] });
+  const third = host.followups[2].content[0].text;
+  assert.doesNotMatch(third, /人物档案：|新同事 · ou_new/);
 });
 
 test("a new message during the first turn interrupts into an append-only payload", async () => {
@@ -316,8 +338,7 @@ test("a new message during the first turn interrupts into an append-only payload
   const second = host.followups[1].content[0].text;
   const lines = second.split("\n");
   assert.equal(lines[0], "- [t9] 客户: 插进来的新消息");
-  assert.ok(lines.includes(
-    `- 客户 · ou_other → ${path.join(dir, "profiles", "people", "feishu", "ou_other.md")}`));
+  assert.doesNotMatch(second, /人物档案：|客户 · ou_other/);
   assert.doesNotMatch(second, /\/cyber-im-avatar|值守命中|上一轮被新消息打断|会话工作本：/);
 });
 

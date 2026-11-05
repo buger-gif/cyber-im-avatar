@@ -403,6 +403,9 @@ export class Turns {
     this.active = new Map();
     this.starting = new Map();
     this.warming = new Map();
+    // 同一条 DSH 会话里已经下发过的人物档案：同一人不再每轮重复一份路径。
+    // 换会话 / 重开 / 进程重启后从零开始（最多重复一次，不影响正确性）。
+    this.seenPeople = new Map();
   }
 
   setHost(hostCtx, rootCtx = null) {
@@ -457,7 +460,26 @@ export class Turns {
    * 私聊一条可判定的发言人都不剩时，用会话对端 ID 兜底（chatPersonId 决定平台形态）；
    * 两者都拿不到就只给会话工作本，不猜。
    */
-  peopleFor(platform, chat, messages, { cap = 5, p2pFallback = true } = {}) {
+  /** 本条绑定会话已经给过的人物 ID 集合；会话换了就是新集合。 */
+  peopleSeenFor(platform, chatId, sid) {
+    const key = `${platform}:${chatId}:${sid}`;
+    let set = this.seenPeople.get(key);
+    if (!set) {
+      set = new Set();
+      this.seenPeople.set(key, set);
+      if (this.seenPeople.size > 64) {
+        const oldest = this.seenPeople.keys().next().value;
+        this.seenPeople.delete(oldest);
+      }
+    }
+    return set;
+  }
+
+  /**
+   * 人物档案指针：firstTurn 给全量；后续轮只给这条会话还没给过的人（seen 过滤）。
+   * 都是确定性推导，不读正文、不建文件。
+   */
+  peopleFor(platform, chat, messages, { cap = 5, p2pFallback = true, seen = null } = {}) {
     const selfId = this.selfIdFor(platform);
     const refs = personRefs(messages, { selfId, cap });
     if (p2pFallback && !refs.length && chat?.kind === "p2p") {
@@ -470,7 +492,7 @@ export class Turns {
         name: r.name,
         path: this.profiles.personPathFor(platform, r.id),
       }))
-      .filter((r) => r.id && r.path);
+      .filter((r) => r.id && r.path && !(seen && seen.has(r.id)));
   }
 
   snapshot() {
@@ -616,8 +638,12 @@ export class Turns {
       this.applySessionPermission(agent);
       const bookPath = this.profiles.pathFor(current.platform, current.chat_id, current.name);
       const firstTurn = current.prompt_session !== sid;
+      const seen = this.peopleSeenFor(current.platform, current.chat_id, sid);
       const media = await this.resolveMedia(current, messages, agent);
-      const people = this.peopleFor(current.platform, current, messages, { cap: 5 });
+      const people = this.peopleFor(current.platform, current, messages, {
+        cap: 5, seen: firstTurn ? null : seen,
+      });
+      for (const p of people) seen.add(p.id);
       const prompt = opening
         ? buildOpenPrompt(current.platform, current.name, current.chat_id, messages, {
             bookPath, people, wakeMode: current.wake_mode || "mention", resetMin, kind: current.kind,
@@ -1011,6 +1037,8 @@ export class Turns {
         const people = this.peopleFor(current.platform, current, current.recent, {
           cap: 3, p2pFallback: false,
         });
+        const seenWarm = this.peopleSeenFor(current.platform, current.chat_id, sid);
+        for (const p of people) seenWarm.add(p.id);
         const lastReal = Math.max(Number(current.last_turn?.at) || 0,
           Number(current.session_bound_at) || 0);
         const idleMin = lastReal ? Math.round((nowSec() - lastReal) / 60) : 0;

@@ -26,7 +26,7 @@ poller 判定命中
        ├─ 闲置超阈值先解绑旧会话：这一轮进新会话
        ├─ resolveAgent(dsh_session) 或 create({workspaceId|cwd})
        ├─ 每次唤醒只追加本次新消息（首轮带入口、会话工作本与人物档案路径，
-       │  之后只发消息行 / 本批新发言人的档案行）
+       │  之后只发消息行 / 本会话还没给过的人的档案行）
        ├─ 只对本批待回消息下载媒体：图片 → attachments image block，
        │  文件/音视频 → 本地路径；未适配/失败只留标记
        ├─ agent.followup(createUserMessage(prompt, imageParts))
