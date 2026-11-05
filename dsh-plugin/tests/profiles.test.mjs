@@ -5,7 +5,7 @@ import path from "node:path";
 import test from "node:test";
 
 import {
-  Profiles, MAX_PROFILE, chatPersonId, excerpt, personRefs, personRel, profileRel, titleOf,
+  Profiles, MAX_PROFILE, chatPersonId, excerpt, memoryRel, personRefs, personRel, profileRel, titleOf,
 } from "../lib/profiles.js";
 
 function tempProfiles() {
@@ -164,4 +164,94 @@ test("chatPersonId derives a p2p counterpart id, never for groups", () => {
   assert.equal(chatPersonId("wecom", chat("p2p", "zhangsan", []), "me"), "zhangsan");
   // 钉钉 senderId ≠ userId，没消息时不猜。
   assert.equal(chatPersonId("dingtalk", chat("p2p", "cid_abc", []), "me"), "");
+});
+
+test("memoryRel: DM is the person file, groups keep a workbook, unknown DM falls back", () => {
+  const chat = (kind, chat_id, recent, name = "示例") => ({ kind, chat_id, name, recent });
+  assert.deepEqual(
+    memoryRel("feishu", chat("p2p", "oc_dm", [{ sender_id: "ou_zhang", kind: "dm" }]), ""),
+    { rel: personRel("feishu", "ou_zhang"), personId: "ou_zhang", single: true },
+  );
+  // 没有消息时按平台形态兜底：飞书 ou_ / 企微单聊 chat_id。
+  assert.equal(memoryRel("feishu", chat("p2p", "ou_li", []), "").single, true);
+  assert.equal(memoryRel("wecom", chat("p2p", "zhangsan", []), "").single, true);
+  // 钉钉与没有人物 ID 的私聊：沿用会话工作本，不猜人。
+  const ding = memoryRel("dingtalk", chat("p2p", "cid_abc", []), "me");
+  assert.equal(ding.single, false);
+  assert.equal(ding.rel, profileRel("dingtalk", "cid_abc", "示例"));
+  // 群永远是工作本 + 人物档案两层。
+  const group = memoryRel("feishu", chat("group", "oc_g", [{ sender_id: "ou_zhang", kind: "dm" }]), "");
+  assert.equal(group.single, false);
+  assert.equal(group.rel, profileRel("feishu", "oc_g", "示例"));
+  // 私聊里自己的消息不算「对方」。
+  assert.equal(memoryRel("feishu", chat("p2p", "oc_x", [
+    { sender_id: "ou_me", kind: "out" },
+  ]), "ou_me").single, false);
+  // 本人 @ 自己的 cmd 不是「对面那个人」；selfId 取不到时也不能把它当人物。
+  assert.equal(chatPersonId("feishu", chat("p2p", "oc_x", [
+    { sender_id: "ou_me", kind: "cmd" },
+  ]), ""), "");
+  // 人物 ID 全是非法字符（sanitize 后为空）时不能给空路径，退回工作本。
+  const weird = memoryRel("feishu", chat("p2p", "oc_w", [
+    { sender_id: "😀", kind: "dm" },
+  ]), "");
+  assert.equal(weird.single, false);
+  assert.equal(weird.rel, profileRel("feishu", "oc_w", "示例"));
+});
+
+test("ensureMemory adopts the legacy DM workbook byte for byte", () => {
+  const { profiles } = tempProfiles();
+  const chat = { kind: "p2p", chat_id: "ou_zhang", name: "张三" };
+  const legacy = profiles.ensure("feishu", "ou_zhang", "张三");
+  const body = "# 张三\n\n## 历史结论\n\n- 只在企微找他\n";
+  profiles.write("feishu", "ou_zhang", "张三", body);
+  const before = fs.readFileSync(legacy.path);
+
+  const m = profiles.ensureMemory("feishu", chat, "");
+  assert.equal(m.path, profiles.personPathFor("feishu", "ou_zhang"));
+  assert.equal(m.created, false, "旧文件搬过来就是内容，不另建模板");
+  assert.deepEqual(fs.readFileSync(m.path), before, "整文件搬运，一字不改");
+  assert.equal(fs.existsSync(legacy.path), false, "旧路径消失，私聊只剩一份");
+  assert.equal(fs.statSync(m.path).mode & 0o777, 0o600);
+  assert.equal(profiles.legacyBookFor("feishu", chat, ""), "", "搬完就没有待并入文件");
+});
+
+test("ensureMemory replaces a pristine legacy template with the person template", () => {
+  const { profiles } = tempProfiles();
+  const chat = { kind: "p2p", chat_id: "ou_zhang", name: "张三" };
+  const legacy = profiles.ensure("feishu", "ou_zhang", "张三");
+  assert.match(legacy.text, /## 群内工作要求/, "旧文件是没写过内容的工作本模板");
+
+  const m = profiles.ensureMemory("feishu", chat, "");
+  assert.equal(m.path, profiles.personPathFor("feishu", "ou_zhang"));
+  assert.match(m.text, /## 身份与角色/);
+  assert.doesNotMatch(m.text, /群内工作要求/, "按人物档案模板重建，不留工作本四段");
+  assert.equal(fs.existsSync(legacy.path), false, "空模板不留在磁盘上，单聊只剩一份");
+});
+
+test("ensureMemory keeps the legacy workbook when a person file already exists", () => {
+  const { profiles } = tempProfiles();
+  const chat = { kind: "p2p", chat_id: "ou_zhang", name: "张三" };
+  const person = profiles.writePerson("feishu", "ou_zhang", "张三", "# 张三\n\n- 已有档案\n");
+  const legacy = profiles.ensure("feishu", "ou_zhang", "张三");
+  profiles.write("feishu", "ou_zhang", "张三", "# 旧工作本\n\n- 待并入\n");
+
+  const m = profiles.ensureMemory("feishu", chat, "");
+  assert.equal(m.path, person.path);
+  assert.match(fs.readFileSync(person.path, "utf8"), /已有档案/);
+  assert.equal(fs.existsSync(legacy.path), true, "已有档案时不覆盖、不吞旧内容");
+  assert.equal(profiles.legacyBookFor("feishu", chat, ""), legacy.path);
+  assert.equal(
+    profiles.historyPathFor(legacy.path),
+    path.join(profiles.dir, "profiles", "feishu", "ou_zhang.history.md"),
+  );
+});
+
+test("ensureMemory on a group still creates the workbook and never a person file", () => {
+  const { profiles } = tempProfiles();
+  const chat = { kind: "group", chat_id: "oc_g", name: "示例群" };
+  const got = profiles.ensureMemory("feishu", chat, "ou_me");
+  assert.equal(got.path, profiles.pathFor("feishu", "oc_g", "示例群"));
+  assert.match(got.text, /## 群内工作要求/);
+  assert.equal(profiles.legacyBookFor("feishu", chat, "ou_me"), "", "群没有待并入概念");
 });

@@ -12,7 +12,7 @@
   python3 bootstrap.py                        # 全量探测
   python3 bootstrap.py --smoke feishu oc_xxx  # 对某会话冒烟测试
   python3 bootstrap.py --alias feishu "张三私聊" oc_xxx  # 注册会话别名
-  python3 bootstrap.py --note feishu "张三私聊" "周五前给结论"  # 给会话工作本补记一条
+  python3 bootstrap.py --note feishu "示例群" "周五前给结论"      # 给目标记忆文件补记一条
   python3 bootstrap.py --compact feishu "张三私聊" [--dry-run]  # 工作本去重/归档旧结论
   python3 bootstrap.py --person-path feishu ou_xxx [--name 张三]  # 人物档案路径（按需建模板）
   python3 bootstrap.py --person-note feishu ou_xxx "先结论后细节"  # 追加人物结论
@@ -108,6 +108,59 @@ def _person_template(name, platform, person_id):
 
 
 def ensure_profile(platform, alias, node):
+    """会话记忆文件：单聊＝对方的人物档案一份；群＝会话工作本（spec 0035）。
+
+    node.person_id（搜人登记时写入）存在就用人物档案；旧版单聊工作本在人物档案
+    还不存在时整文件搬过去（只搬、不改写），不让已有内容失联；群与手填别名不变。
+    """
+    person_id = str(node.get("person_id") or "")
+    if (not person_id and node.get("kind") == "user"
+            and platform in ("feishu", "wecom")):
+        # 钉钉 senderId ≠ userId：登记时拿到的 userId 不能当档案键，继续用工作本兜底。
+        person_id = str(node.get("open_id") or "")
+        if person_id:
+            node["person_id"] = person_id
+    rel = _person_rel(platform, person_id) if person_id else ""
+    if rel:
+        path = os.path.join(ENV_DIR, rel)
+        old_rel = node.get("profile_file") or _profile_rel(platform, node, alias)
+        old_path = os.path.join(ENV_DIR, old_rel)
+        if (not os.path.isfile(path) and old_rel != rel and os.path.isfile(old_path)
+                and os.path.getsize(old_path) > 0):
+            ensure_private_dir(os.path.dirname(path))
+            try:
+                with open(old_path, encoding="utf-8") as f:
+                    raw = f.read()
+                # 没写过内容的旧模板直接删，按人物档案模板重建；有内容才整文件搬。
+                if raw == _profile_template(alias, platform, node.get("chat_id") or ""):
+                    os.unlink(old_path)
+                else:
+                    with open(old_path, "rb") as src:
+                        data = src.read()
+                    # 排他创建：另一个人物写入方刚好建好档案时不覆盖它。
+                    with open(path, "xb") as dst:
+                        dst.write(data)
+                    try:
+                        os.chmod(path, 0o600)
+                    except OSError:
+                        pass  # 权限收紧失败不拦住搬迁；新增文件创建时已尽量 600
+                    try:
+                        os.unlink(old_path)
+                    except OSError:
+                        os.unlink(path)  # 删不掉旧文件就回滚，避免两份并存
+                        raise
+            except FileExistsError:
+                pass  # 人物档案已被另一路写好，保留它；旧文件留给载荷提示合并
+            except (OSError, UnicodeDecodeError):
+                pass  # 搬不动就保留旧文件，交给 agent 合并；下次再试
+        if not os.path.isfile(path):
+            for directory in (ENV_DIR, PROFILES_DIR, PEOPLE_DIR, os.path.dirname(path)):
+                ensure_private_dir(directory)
+            atomic_write_text(path, _person_template(alias, platform, person_id))
+        node["profile_file"] = rel
+        node.pop("profile", None)
+        return path
+
     rel = node.get("profile_file") or _profile_rel(platform, node, alias)
     path = os.path.join(ENV_DIR, rel)
     if not os.path.isfile(path):
@@ -212,7 +265,7 @@ def _archive_profile_bullets(path, bullets):
 
 
 def append_profile_note(platform, alias, node, note):
-    """给会话工作本补记一条结论：新版写「本会话结论与待办」，旧画像沿用「历史结论」。"""
+    """给目标补记一条结论：人物档案写「历史结论」，群工作本写「本会话结论与待办」。"""
     path = ensure_profile(platform, alias, node)
     try:
         with open(path) as f:
@@ -235,7 +288,7 @@ def append_profile_note(platform, alias, node, note):
         atomic_write_text(path, text)
         _archive_profile_bullets(path, removed)
         if too_big:
-            print("WARN: 会话工作本仍超过 12KB，请运行 --compact 或手动压缩", file=sys.stderr)
+            print("WARN: 记忆文件仍超过 12KB，请运行 --compact 或手动压缩", file=sys.stderr)
     return path
 
 
@@ -251,7 +304,7 @@ def compact_profile(platform, alias, dry_run=False):
         with open(path) as f:
             text = f.read()
     except OSError as e:
-        print(f"ERROR: 读不到会话工作本: {e}", file=sys.stderr)
+        print(f"ERROR: 读不到记忆文件: {e}", file=sys.stderr)
         return 2
     before = len(text.encode("utf-8"))
     section = _workbook_section(text)
@@ -260,14 +313,14 @@ def compact_profile(platform, alias, dry_run=False):
     summary = (f"{before / 1024:.1f}KB -> {after / 1024:.1f}KB，"
                f"去重 {dedup} 条，归档 {len(removed)} 条")
     if dry_run:
-        print(f"[dry-run] 会话工作本整理预演: {summary}")
+        print(f"[dry-run] 记忆文件整理预演: {summary}")
         return 0
     if new_text != text:
         atomic_write_text(path, new_text)
     dest = _archive_profile_bullets(path, removed)
-    print(f"[ok] 会话工作本已整理: {summary}" + (f" -> {dest}" if dest else ""))
+    print(f"[ok] 记忆文件已整理: {summary}" + (f" -> {dest}" if dest else ""))
     if too_big:
-        print("WARN: 会话工作本仍超过 12KB，请压缩「群内工作要求 / 成员与角色」等段落",
+        print("WARN: 记忆文件仍超过 12KB，请压缩「群内工作要求 / 成员与角色」等段落",
               file=sys.stderr)
         return 2
     return 0
@@ -947,6 +1000,10 @@ def resolve(env, platform, query, register=True):
         t = targets.setdefault(alias, {})
         t.update({"chat_id": h["chat_id"], "open_id": h["open_id"],
                   "kind": h["kind"], "added_at": time.strftime("%Y-%m-%d")})
+        # 单聊的搜人命中直接绑对方的人物档案（spec 0035）；钉钉 senderId ≠ userId，
+        # 不在登记时猜映射，继续用会话工作本兜底。
+        if h["kind"] == "user" and h["open_id"] and platform in ("feishu", "wecom"):
+            t["person_id"] = h["open_id"]
         ensure_profile(platform, alias, t)
         save_env(env)
         print(f"\n[ok] 已登记别名: {platform} / {alias}")
@@ -1002,9 +1059,9 @@ def main():
     ap.add_argument("--alias", nargs=3, metavar=("PLATFORM", "ALIAS", "CHAT_ID"),
                     help="注册会话别名，之后可用别名指代会话")
     ap.add_argument("--note", nargs=3, metavar=("PLATFORM", "ALIAS", "TEXT"),
-                    help="给会话工作本补记一条（新版落在「本会话结论与待办」）")
+                    help="给目标记忆文件补记一条（群工作本 / 单聊人物档案）")
     ap.add_argument("--compact", nargs=2, metavar=("PLATFORM", "ALIAS"),
-                    help="整理会话工作本：去重 + 把最旧结论归档到 .history.md")
+                    help="整理目标的记忆文件：去重 + 把最旧结论归档到 .history.md")
     ap.add_argument("--dry-run", action="store_true",
                     help="配合 --compact / --compact-person 只打印整理结果，不写盘")
     ap.add_argument("--person-path", nargs=2, metavar=("PLATFORM", "PERSON_ID"),
@@ -1094,7 +1151,7 @@ def main():
             sys.exit(2)
         path = append_profile_note(platform, alias, t, text)
         save_env(env)
-        print(f"[ok] 会话工作本已补记: {path}")
+        print(f"[ok] 记忆已补记: {path}")
         return
 
     if args.compact:

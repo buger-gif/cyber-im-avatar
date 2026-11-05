@@ -46,8 +46,8 @@
 - `ChatMessage` 的 `userid` 就是**人物 ID**，原样用作
   `~/.im-standin/profiles/people/wecom/<userid>.md` 的文件名；不用 `user_name`
   （显示名会改、会重名）。
-- 单聊的 chat_id 通常就是对方 userid（见语义 3）；私聊拿不到最近消息时，这是人物档案
-  唯一的兜底来源。
+- 单聊的 chat_id 通常就是对方 userid（见语义 3）；私聊只有这份人物档案，还没有消息时
+  就用它兜底。
 - 群聊里每条消息都带发送者 userid；本人消息按 self_id 过滤，别给自己建档案。
 
 ## 空结果与字段失配的区别

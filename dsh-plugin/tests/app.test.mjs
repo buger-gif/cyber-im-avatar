@@ -346,7 +346,7 @@ test("DELETE /api/persons deletes one file and reports whether it existed", asyn
   assert.equal((await app.handle("/api/persons/profile", "DELETE")).status, 404);
 });
 
-test("/api/targets attaches person info only to p2p rows, without creating files", async () => {
+test("/api/targets gives p2p rows the person file as their one memory file", async () => {
   const { app, state, profiles } = makeApp();
   state.ensureChat("feishu", "ou_zhang", { name: "张三", kind: "p2p", target: true });
   state.ensureChat("feishu", "oc_group", { name: "示例项目群", kind: "group", target: true });
@@ -359,22 +359,77 @@ test("/api/targets attaches person info only to p2p rows, without creating files
     out.body.items.find((t) => t.platform === platform && t.chat_id === chatId);
 
   const zhang = row("feishu", "ou_zhang");
-  assert.match(zhang.profile, /^# 张三/m, "profile* 仍是会话工作本");
-  assert.match(zhang.profile_path, /profiles[\\/]feishu[\\/]ou_zhang\.md$/);
+  assert.match(zhang.profile, /^# 张三/m, "单聊 profile* 就是人物档案");
+  assert.equal(zhang.profile_path, known.path);
   assert.equal(zhang.person.person_id, "ou_zhang");
   assert.equal(zhang.person.path, known.path);
   assert.match(zhang.person.excerpt, /采购负责人/);
   assert.ok(zhang.person.updated_at > 0);
   assert.equal(zhang.person.exists, true);
+  assert.equal(fs.existsSync(profiles.pathFor("feishu", "ou_zhang", "张三")), false,
+    "单聊不再生成会话工作本");
 
   const wecom = row("wecom", "zhangsan");
   assert.equal(wecom.person.person_id, "zhangsan");
-  assert.equal(wecom.person.exists, false);
-  assert.equal(wecom.person.excerpt, "");
-  assert.equal(wecom.person.updated_at, 0);
-  assert.equal(fs.existsSync(wecom.person.path), false, "读 targets 不建人物档案");
+  assert.equal(wecom.profile_path, profiles.personPathFor("wecom", "zhangsan"));
+  assert.equal(wecom.person.exists, true, "targets 会 ensure 这个会话的记忆文件");
+  assert.equal(fs.existsSync(wecom.profile_path), true);
+  assert.equal(fs.existsSync(profiles.pathFor("wecom", "zhangsan", "企微张三")), false);
 
-  assert.equal(row("feishu", "oc_group").person, undefined, "群不挂 person");
+  const group = row("feishu", "oc_group");
+  assert.equal(group.person, undefined, "群不挂 person");
+  assert.equal(group.profile_path, profiles.pathFor("feishu", "oc_group", "示例项目群"));
+  assert.match(group.profile, /## 群内工作要求/, "群仍是会话工作本");
+});
+
+test("watch on a DM with a known sender creates the person file only", async () => {
+  const { app, state, profiles } = makeApp();
+  const chat = state.ensureChat("feishu", "oc_dm", { name: "张三", kind: "p2p" });
+  state.mergeRecent(chat, [msg("m1", 101, { sender_id: "ou_zhang", sender_name: "张三" })]);
+  const out = await app.handle("/api/watch", "POST", null, {
+    platform: "feishu", chat_id: "oc_dm", name: "张三", kind: "p2p", watching: true,
+  });
+  assert.equal(out.body.ok, true);
+  assert.equal(fs.existsSync(profiles.personPathFor("feishu", "ou_zhang")), true);
+  assert.equal(fs.existsSync(profiles.pathFor("feishu", "oc_dm", "张三")), false,
+    "单聊加入值守不再生成第二份 md");
+});
+
+test("/api/targets adopts a legacy DM workbook on first sight", async () => {
+  const { app, state, profiles } = makeApp();
+  state.ensureChat("feishu", "ou_zhang", { name: "张三", kind: "p2p", target: true });
+  const legacy = profiles.ensure("feishu", "ou_zhang", "张三");
+  profiles.write("feishu", "ou_zhang", "张三",
+    "# 张三\n\n## 历史结论\n\n- 旧结论：只在企微找他\n");
+  const before = fs.readFileSync(legacy.path);
+
+  const out = await app.handle("/api/targets", "GET");
+  const row = out.body.items.find((t) => t.chat_id === "ou_zhang");
+  const person = profiles.personPathFor("feishu", "ou_zhang");
+  assert.equal(row.profile_path, person);
+  assert.deepEqual(fs.readFileSync(person), before, "整文件搬运，内容逐字节不变");
+  assert.equal(fs.existsSync(legacy.path), false, "旧路径消失，私聊只剩一份");
+  assert.match(row.profile, /只在企微找他/);
+  assert.equal(row.person.exists, true);
+
+  // 再拉一次不会重复搬、也不会把人物档案写回工作本。
+  const again = await app.handle("/api/targets", "GET");
+  assert.equal(again.body.items.find((t) => t.chat_id === "ou_zhang").profile_path, person);
+  assert.equal(fs.existsSync(legacy.path), false);
+});
+
+test("POST /api/targets/profile writes the DM person file, never a workbook", async () => {
+  const { app, state, profiles } = makeApp();
+  const chat = state.ensureChat("feishu", "ou_zhang", { name: "张三", kind: "p2p", target: true });
+  state.mergeRecent(chat, [msg("m1", 101, { sender_id: "ou_zhang", sender_name: "张三" })]);
+
+  const out = await app.handle("/api/targets/profile", "POST", null, {
+    platform: "feishu", chat_id: "ou_zhang", name: "张三", text: "# 张三\n\n- 先结论后细节\n",
+  });
+  assert.equal(out.body.ok, true);
+  assert.equal(out.body.profile_path, profiles.personPathFor("feishu", "ou_zhang"));
+  assert.match(fs.readFileSync(out.body.profile_path, "utf8"), /先结论后细节/);
+  assert.equal(fs.existsSync(profiles.pathFor("feishu", "ou_zhang", "张三")), false);
 });
 
 test("forget removes the workbook and chat but keeps person files", async () => {

@@ -109,7 +109,8 @@ export class App {
   }
 
   selfId(platform) {
-    return this.poller?.identity?.[platform]?.self_id || "";
+    return this.poller?.identity?.[platform]?.self_id ||
+      this.im?.identity?.[platform]?.self_id || "";
   }
 
   publicChat(chat) {
@@ -410,13 +411,15 @@ export class App {
       }
     }
     if (!watching) this.turns.cancel(platform, chatId, "unwatch");
-    try { this.profiles.ensure(platform, chatId, chat.name); } catch { /* profile is best effort */ }
     this.state.save();
     // 重复加入（已经盯上、会话也在）不重复开场，免得多跑一轮、甚至多回一条；
     // 但会话缺了（重开过/工作区漂移/会话丢失）就补开，别留空窗。
     const open = watching && (!wasWatching || !chat.dsh_session)
       ? await this.openAfterJoin(chat)
       : null;
+    // 记忆文件放在开场轮之后 ensure：开场前的 pollChat 已把最近消息并进 recent，
+    // 单聊才能按发送者推出对方的人物档案（spec 0035）。
+    try { this.profiles.ensureMemory(platform, chat, this.selfId(platform)); } catch { /* best effort */ }
     return { ok: true, chat: this.publicChat(chat), open };
   }
 
@@ -437,7 +440,8 @@ export class App {
     if (!platform || !chatId) return { ok: false, reason: "bad_request" };
     const chat = this.state.getChat(platform, chatId);
     this.turns.cancel(platform, chatId, "forget");
-    // 只删会话工作本与会话状态：人物档案跨会话保留，删除走 DELETE /api/persons。
+    // 只删旧版会话工作本与会话状态：单聊现在只有对方的人物档案，跨会话保留；
+    // 删人物走 DELETE /api/persons。
     if (chat) this.profiles.delete(platform, chatId, chat.name);
     this.state.deleteChat(platform, chatId);
     return { ok: true };
@@ -505,7 +509,6 @@ export class App {
         this.state.data.config.platforms =
           SUPPORTED_PLATFORMS.filter((p) => p === platform || enabled.includes(p));
       }
-      try { this.profiles.ensure(platform, chatId, chat.name); } catch { /* profile is best effort */ }
     } else {
       this.turns.cancel(platform, chatId, "mode_off");
     }
@@ -513,6 +516,10 @@ export class App {
     // 从「不盯」切回来要立刻起会话；已经在盯但绑定为空（刚重开/会话丢失）也要补上，
     // 否则 @-only 模式下会一直等不到下一轮命中，看着像没生效（spec 0028）。
     const open = on && (!wasOn || !chat.dsh_session) ? await this.openAfterJoin(chat) : null;
+    // 与加入值守同一顺序：先开场（pollChat 补 recent），再按会话 kind 落记忆文件。
+    if (on) {
+      try { this.profiles.ensureMemory(platform, chat, this.selfId(platform)); } catch { /* best effort */ }
+    }
     return { ok: true, chat: this.publicChat(chat), open, poll: this.poller.pollInfo() };
   }
 
@@ -692,7 +699,11 @@ export class App {
   async targets() {
     const rows = [];
     for (const chat of this.state.listChats().filter((c) => c.target)) {
-      const prof = this.profiles.ensure(chat.platform, chat.chat_id, chat.name);
+      // 记忆文件：群＝会话工作本；单聊＝对方的人物档案一份。旧私聊工作本在这里
+      // 第一次被碰到时整文件搬到人物档案路径（profiles.ensureMemory）。
+      const selfId = this.selfId(chat.platform);
+      const memory = this.profiles.memoryFor(chat.platform, chat, selfId);
+      const prof = this.profiles.ensureMemory(chat.platform, chat, selfId);
       const row = {
         platform: chat.platform,
         name: chat.name,
@@ -706,19 +717,24 @@ export class App {
         in_env: false,
         chat: this.publicChat(chat),
       };
-      // profile* 是会话工作本；私聊能推出人物 ID 时再挂人物档案元信息。
       // 群不挂 person：人物评价属于人，不属于群（群详情用人物列表反查 chips）。
+      // 单聊的 profile* 已经是对方人物档案，person 块给同一份，字段形状保持不变。
       if (row.kind === "p2p") {
-        const personId = chatPersonId(chat.platform, chat, this.selfId(chat.platform));
+        const personId = memory.person_id || chatPersonId(chat.platform, chat, selfId);
         if (personId) {
-          const person = this.profiles.readPerson(chat.platform, personId);
-          row.person = {
-            person_id: personId,
-            path: person.path,
-            excerpt: excerpt(person.text),
-            updated_at: person.mtime,
-            exists: !!person.exists,
-          };
+          const person = memory.single
+            ? { path: prof.path, text: prof.text, mtime: prof.mtime, exists: true }
+            : this.profiles.readPerson(chat.platform, personId);
+          // 人物 ID 全被 sanitize 掉时 path 为空：不给一个点不开的人物指针。
+          if (person.path) {
+            row.person = {
+              person_id: personId,
+              path: person.path,
+              excerpt: excerpt(person.text),
+              updated_at: person.mtime,
+              exists: memory.single ? !!person.text : !!person.exists,
+            };
+          }
         }
       }
       rows.push(row);
@@ -734,8 +750,8 @@ export class App {
   }
 
   /**
-   * 写会话工作本。优先按 chat_id 定位会话：同名不同会话不会串；
-   * 旧面板只给 platform+name 时再按显示名找 target 兜底。
+   * 写会话的记忆文件：群写会话工作本，单聊写对方的人物档案（同一份，不另存）。
+   * 优先按 chat_id 定位会话：同名不同会话不会串；旧面板只给 platform+name 时再按显示名找 target 兜底。
    */
   async targetProfile(q, body = {}) {
     const platform = String(pick(q, body, "platform") || "");
@@ -753,9 +769,11 @@ export class App {
       ) || null;
     }
     if (!chat) return { ok: false, reason: "not_found" };
-    const r = this.profiles.write(
-      platform, chat.chat_id, chat.name, pick(q, body, "text", undefined),
-    );
+    const text = pick(q, body, "text", undefined);
+    const memory = this.profiles.memoryFor(platform, chat, this.selfId(platform));
+    const r = memory.single
+      ? this.profiles.writePerson(platform, memory.person_id, chat.name, text)
+      : this.profiles.write(platform, chat.chat_id, chat.name, text);
     if (!r.ok) return { ok: false, reason: r.reason };
     return {
       ok: true, profile: r.text, profile_path: r.path,

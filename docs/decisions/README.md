@@ -47,4 +47,5 @@
 | 0005 | Node 单进程：file state + 宿主 live turn | implemented |
 | 0006 | 富媒体由插件取回，图片随唤醒载荷交付 | implemented |
 | 0007 | 值守快车道：候选 60 秒，发现仍 10 分钟 | implemented |
-| 0008 | 画像拆两层：人物档案按人一份，会话工作本按会话一份 | implemented |
+| 0008 | 画像拆两层：人物档案按人一份，会话工作本按会话一份（单聊由 0009 收窄为一份） | implemented |
+| 0009 | 单聊只维护一份人物档案，群保留两层 | implemented |

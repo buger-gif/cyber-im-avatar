@@ -377,8 +377,11 @@ def test_find_command():
 
     d = tempfile.mkdtemp(prefix="standin_find_")
     old_dir, old_path, old_run = bs.ENV_DIR, bs.ENV_PATH, bs.run
+    old_profiles, old_people = bs.PROFILES_DIR, bs.PEOPLE_DIR
     bs.ENV_DIR = d
     bs.ENV_PATH = os.path.join(d, "env.json")
+    bs.PROFILES_DIR = os.path.join(d, "profiles")
+    bs.PEOPLE_DIR = os.path.join(bs.PROFILES_DIR, "people")
     bs.run = lambda *_args, **_kw: (0, {"data": {"users": [{
         "localized_name": "测试同事", "open_id": "ou_test", "p2p_chat_id": "oc_test",
     }]}}, "")
@@ -388,6 +391,7 @@ def test_find_command():
             bs.resolve({"platforms": {"feishu": {}}, "targets": {}}, "feishu", "测试")
     finally:
         bs.ENV_DIR, bs.ENV_PATH, bs.run = old_dir, old_path, old_run
+        bs.PROFILES_DIR, bs.PEOPLE_DIR = old_profiles, old_people
         shutil.rmtree(d, ignore_errors=True)
     text = out.getvalue()
     check("私聊监听建议使用 --chat-id", "--chat-id oc_test" in text, text)
@@ -611,7 +615,7 @@ def test_workbook_layers():
           n1.returncode == 0 and tail.strip().splitlines()[0].strip() == "- 本会话要 @ 全体",
           f"rc={n1.returncode} err={n1.stderr[:200]} tail={tail[:120]!r}")
     check("--note 不另起「历史结论」节", "## 历史结论" not in text, text[-200:])
-    check("--note stdout 用「会话工作本」措辞", "会话工作本" in n1.stdout, n1.stdout[:120])
+    check("--note stdout 用「记忆」措辞", "记忆" in n1.stdout, n1.stdout[:120])
 
     # 旧四段文件：--note 仍落「历史结论」，且不被自动改写成新模板
     subprocess.run([PY, script, "--alias", "feishu", "旧对象", "oc_old"],
@@ -655,7 +659,7 @@ def test_workbook_layers():
     check("新版工作本旧条目归档 .history.md",
           os.path.exists(hist) and "待办事实" in open(hist, encoding="utf-8").read())
     check("新版工作本整理不改写节标题", "## 本会话结论与待办" in after, after[:300])
-    check("--compact stdout 用「会话工作本」措辞", "会话工作本" in c2.stdout, c2.stdout[:120])
+    check("--compact stdout 用「记忆文件」措辞", "记忆文件" in c2.stdout, c2.stdout[:120])
 
     # --compact：旧版节（历史结论）仍能整理
     old_bullets = "\n".join(f"- 11-{i:02d} 旧事实 {i}" for i in range(25))
@@ -683,6 +687,112 @@ def test_workbook_layers():
           n3.returncode == 0 and "- 优先写新节" in new_tail
           and "- 优先写新节" not in text.partition("## 历史结论")[2],
           f"rc={n3.returncode} err={n3.stderr[:200]}")
+    shutil.rmtree(d, ignore_errors=True)
+
+
+def test_dm_single_profile():
+    """单聊只用人物档案（spec 0035）：绑定 / 旧工作本整文件搬迁 / --note 落点 / 群不变。"""
+    import stat
+    print("\n[单聊单层] 绑定人物档案 / 旧工作本搬迁 / --note 落点 / 群仍用工作本")
+    d = tempfile.mkdtemp(prefix="standin_dm_")
+    env = dict(os.environ, IM_STANDIN_DIR=d)
+    script = os.path.join(SCRIPTS, "bootstrap.py")
+    old_rel = os.path.join("profiles", "feishu", "oc_dm.md")
+    old_path = os.path.join(d, old_rel)
+    os.makedirs(os.path.dirname(old_path), exist_ok=True)
+    content = "# 张三\n\n> 飞书 · oc_dm\n\n## 历史结论\n\n- 只在企微找他\n"
+    with open(old_path, "w", encoding="utf-8") as f:
+        f.write(content)
+
+    snippet = r"""
+import json, sys
+sys.path.insert(0, sys.argv[1])
+import bootstrap as bs
+node = {"chat_id": "oc_dm", "open_id": "ou_zhangsan", "kind": "user",
+        "profile_file": sys.argv[2]}
+path = bs.ensure_profile("feishu", "张三", node)
+print(json.dumps({"path": path, "profile_file": node.get("profile_file")}))
+"""
+    r = subprocess.run([PY, "-c", snippet, SCRIPTS, old_rel],
+                       capture_output=True, text=True, env=env, timeout=30)
+    out = {}
+    if r.returncode == 0 and r.stdout.strip():
+        out = json.loads(r.stdout.strip().splitlines()[-1])
+    want = os.path.join(d, "profiles", "people", "feishu", "ou_zhangsan.md")
+    want_rel = os.path.join("profiles", "people", "feishu", "ou_zhangsan.md")
+    check("kind=user 的目标绑人物档案", out.get("path") == want,
+          f"rc={r.returncode} out={r.stdout[:200]} err={r.stderr[:200]}")
+    check("旧工作本整文件搬进人物档案（逐字节）",
+          os.path.exists(want) and open(want, encoding="utf-8").read() == content)
+    check("搬迁后旧路径消失、只剩一份 md", not os.path.exists(old_path))
+    check("env 里的 profile_file 指向人物档案", out.get("profile_file") == want_rel,
+          str(out.get("profile_file")))
+    check("人物档案权限 600",
+          os.path.exists(want) and stat.S_IMODE(os.stat(want).st_mode) == 0o600)
+
+    node = {"chat_id": "oc_dm", "open_id": "ou_zhangsan", "kind": "user",
+            "person_id": "ou_zhangsan", "profile_file": want_rel}
+    with open(os.path.join(d, "env.json"), "w", encoding="utf-8") as f:
+        json.dump({"version": 1, "targets": {"feishu": {"张三": node}}}, f, ensure_ascii=False)
+    n = subprocess.run([PY, script, "--note", "feishu", "张三", "周三下午不回消息"],
+                       capture_output=True, text=True, env=env, timeout=30)
+    text = open(want, encoding="utf-8").read()
+    check("--note 写进人物档案的「历史结论」",
+          n.returncode == 0 and "- 周三下午不回消息" in text.partition("## 历史结论")[2],
+          f"rc={n.returncode} err={n.stderr[:200]}")
+    check("--note 不另建会话工作本", not os.path.exists(old_path))
+
+    g = subprocess.run([PY, script, "--alias", "feishu", "示例群", "oc_group"],
+                       capture_output=True, text=True, env=env, timeout=30)
+    gpath = os.path.join(d, "profiles", "feishu", "oc_group.md")
+    check("没有人物 ID 的目标仍是会话工作本",
+          g.returncode == 0 and os.path.exists(gpath)
+          and "## 群内工作要求" in open(gpath, encoding="utf-8").read(),
+          f"rc={g.returncode} err={g.stderr[:200]}")
+    check("群目标不建人物档案",
+          not os.path.exists(os.path.join(d, "profiles", "people", "feishu", "oc_group.md")))
+
+    # 钉钉 kind=user 的目标不拿 userId 猜档案键（senderId ≠ userId），仍用工作本。
+    snippet2 = r"""
+import json, sys
+sys.path.insert(0, sys.argv[1])
+import bootstrap as bs
+node = {"chat_id": "cid_ding", "open_id": "user_ding", "kind": "user"}
+print(bs.ensure_profile("dingtalk", "王五", node))
+print(node.get("profile_file", ""))
+"""
+    r2 = subprocess.run([PY, "-c", snippet2, SCRIPTS],
+                        capture_output=True, text=True, env=env, timeout=30)
+    lines = r2.stdout.strip().splitlines()
+    # 没写过内容的旧模板：不搬成人物档案，直接按人物模板重建（单聊只剩一份）。
+    snippet3 = r"""
+import json, os, sys
+sys.path.insert(0, sys.argv[1])
+import bootstrap as bs
+old = os.path.join(bs.ENV_DIR, "profiles", "feishu", "oc_li.md")
+os.makedirs(os.path.dirname(old), exist_ok=True)
+with open(old, "w", encoding="utf-8") as f:
+    f.write(bs._profile_template("李四", "feishu", "oc_li"))
+node = {"chat_id": "oc_li", "open_id": "ou_li", "kind": "user",
+        "profile_file": os.path.join("profiles", "feishu", "oc_li.md")}
+path = bs.ensure_profile("feishu", "李四", node)
+print(json.dumps({"path": path, "old_exists": os.path.exists(old),
+                  "text": open(path, encoding="utf-8").read()}))
+"""
+    r3 = subprocess.run([PY, "-c", snippet3, SCRIPTS],
+                        capture_output=True, text=True, env=env, timeout=30)
+    out3 = {}
+    if r3.returncode == 0 and r3.stdout.strip():
+        out3 = json.loads(r3.stdout.strip().splitlines()[-1])
+    check("空的工作本模板不搬成人物档案（按人物模板重建）",
+          out3.get("old_exists") is False
+          and "## 身份与角色" in (out3.get("text") or "")
+          and "## 群内工作要求" not in (out3.get("text") or ""),
+          f"rc={r3.returncode} out={r3.stdout[:200]} err={r3.stderr[:200]}")
+
+    check("钉钉 user 目标仍走会话工作本（不猜 senderId）",
+          r2.returncode == 0 and lines[-1] == os.path.join("profiles", "dingtalk", "cid_ding.md"),
+          f"rc={r2.returncode} out={r2.stdout[:200]} err={r2.stderr[:200]}")
     shutil.rmtree(d, ignore_errors=True)
 
 
@@ -999,6 +1109,7 @@ if __name__ == "__main__":
     test_idle_exit()
     test_profile_compact()
     test_workbook_layers()
+    test_dm_single_profile()
     test_person_profile()
     test_privacy_and_redaction()
     test_schema_error_redaction()

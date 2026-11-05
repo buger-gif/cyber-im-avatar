@@ -31,7 +31,7 @@
 | 命中内容涉及资金/承诺/外部群 | 合规硬停 | **停手上报，不自动回** | [H](#h-内容与合规硬停不绕过) |
 | 人物档案找不到 / 名字对不上人 | 人物 ID 取错（用了显示名） | `ls ~/.im-standin/profiles/people/<platform>/`；键是消息发送者 ID | [I](#i-配置-状态损坏) |
 | 画像超过 12KB / 面板保存被拒 | 该层文件太大（人物档案累积最快） | 整理「历史结论」并归档 `.history.md` | [I](#i-配置-状态损坏) |
-| 面板刚改完人物档案，agent 又覆盖了 | 两层都有人写、没有共享锁 | 重载面板后再改；agent 写前重读 | [I](#i-配置-状态损坏) |
+| 面板刚改完人物档案，agent 又覆盖了 | 面板与 agent 两个写者、没有共享锁 | 重载面板后再改；agent 写前重读 | [I](#i-配置-状态损坏) |
 
 ## 1. 先体检，别猜
 
@@ -448,11 +448,12 @@ python3 scripts/doctor.py --repair-state       # 隔离损坏的水位/状态文
 | `env.json` 非法 JSON | `mv ~/.im-standin/env.json ~/.im-standin/env.json.corrupt && python3 scripts/bootstrap.py`（会重建，别名/档案需重录） |
 | `--note` 报「别名未注册」 | 先 `--find` 或 `--alias` 登记 |
 | 人物档案找不到 / 名字对不上人 | 键是消息发送者 ID（飞书 `open_id` / 企微 `userid` / 钉钉 `senderId`），不是显示名：`ls ~/.im-standin/profiles/people/<platform>/`；取法见对应 `references/<平台>.md` |
-| 会话工作本路径不对 | `~/.im-standin/profiles/<platform>/<chat_id>.md`；独立形态优先用 `env.json` 的 `profile_file`；没有 chat_id 时文件名是「对象名-6位哈希」 |
-| 画像超过 12KB / 写不进 | 两层各自 8KB 软 / 12KB 硬，超限拒写不截断：人物档案先整理「历史结论」（>20 条或日期流水 >8 条就该整理），缩小时归档 `<文件>.history.md`；面板写入同样会拒 |
+| 单聊/群的文件路径不对 | 单聊只有 `profiles/people/<platform>/<person_id>.md`；群才有工作本 `profiles/<platform>/<chat_id>.md`（没有 chat_id 时文件名是「对象名-6位哈希」）。独立形态看 `env.json` 的 `profile_file` |
+| 单聊还留着旧工作本 | 新版第一次被面板/值守碰到时会整文件搬到人物档案；没收走说明那次写入失败：按载荷的「旧私聊工作本（待并入）」合并后改名 `.history.md` |
+| 画像超过 12KB / 写不进 | 每份 8KB 软 / 12KB 硬，超限拒写不截断：人物档案（单聊就它一份）先整理「历史结论」（>20 条或日期流水 >8 条就该整理），缩小时归档 `<文件>.history.md`；面板写入同样会拒 |
 | 画像写不进去 / `FS_SANDBOX_DENIED` | 设置页开启「完整文件访问」（`dsh.full_access=true`）；默认 `workspace-write` 只允许写会话工作区 |
-| 面板刚改过人物档案，agent 又覆盖了 | 面板写入带 `base_mtime`，冲突会提示「已更新，请重新加载」；两层没有共享锁：重载面板再改、agent 写前重读，以磁盘最新为准（工作本无 CAS） |
-| 删除会话后人物档案还在 / forget 后人物还在 | 符合预期：`DELETE /api/forget` 只删会话工作本与会话状态；删人物走面板「服务对象 → 人物」或 `DELETE /api/persons` |
+| 面板刚改过人物档案，agent 又覆盖了 | 面板写入带 `base_mtime`，冲突会提示「已更新，请重新加载」；面板与 agent 没有共享锁：重载面板再改、agent 写前重读，以磁盘最新为准（工作本无 CAS） |
+| 删除会话后人物档案还在 / forget 后人物还在 | 符合预期：`DELETE /api/forget` 只删旧工作本与会话状态；人物档案跨会话保留，删它走面板「服务对象 → 人物」或 `DELETE /api/persons` |
 | 画像路径/权限不对 | `ls -l ~/.im-standin/profiles/<platform>/ ~/.im-standin/profiles/people/<platform>/`；目录 700、文件 600 |
 | 状态文件权限错 | `chmod -R u+rw ~/.im-standin`；确认不是 root 建的 |
 | 想多账号/测试隔离 | `IM_STANDIN_DIR=/tmp/imtest python3 scripts/doctor.py` |

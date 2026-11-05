@@ -192,9 +192,10 @@ const searchChats = [
 
 const personBytes = (text) => new TextEncoder().encode(String(text || "")).length;
 
-// 人物档案（两层记忆的第一层）：按平台人物 ID 一份，私聊与群共用同一份。
+// 人物档案：按平台人物 ID 一份；单聊只有这一份，群与单聊共用。
 const personProfiles = {
   lin: "# 林一帆\n\n> 飞书 · 人物档案 · ou_demo_lin\n> 人物级评价，跨会话复用：只写下次值守还会用到的信息，不保存聊天原文。\n\n## 身份与角色\n\n- 产品部，云雀项目交付负责人；排期与验收口径由他定。\n\n## 沟通偏好\n\n- 先要结论，再要细节；大段铺垫会被跳过。\n- 消息里带时间点，他会更快回。\n\n## 在意与忌讳\n\n- 不接受「我催一下」这种没有时间点的回复。\n- 会上不表态的事，会后私聊才是他的真意见。\n\n## 历史结论\n\n- 说「马上」≈ 两天；催第三次才会真的动。\n- 报价先给区间和口径，别先解释成本。\n",
+  zhou: "# 周敏\n\n> 企业微信 · 人物档案 · wm_demo_zhou\n> 人物级评价，跨会话复用：只写下次值守还会用到的信息，不保存聊天原文。\n\n## 身份与角色\n\n- 财务部，合同与付款口径由她把关。\n\n## 沟通偏好\n\n- 私聊：金额、合同、对外承诺一律先问她本人，再回对方。\n- 只在企业微信找她，别发邮件。\n\n## 在意与忌讳\n\n- 不接受先答应、后补流程。\n- 金额必须写清含税 / 账期。\n\n## 历史结论\n\n- 周五下午不处理付款审批。\n",
   wang: "# 王珂\n\n> 飞书 · 人物档案 · ou_demo_wang\n> 人物级评价，跨会话复用：只写下次值守还会用到的信息，不保存聊天原文。\n\n## 身份与角色\n\n- 平台组工程师，负责 CI、发布与线上值班。\n\n## 沟通偏好\n\n- 偏好直接给复现步骤和日志链接，不要只发「挂了」。\n- 群里回复简短；要细节会私聊或拉会。\n\n## 在意与忌讳\n\n- 值班交接必须写清当前状态和下一步，不接受口头交接。\n- 不要在群里直接点名线上事故责任人。\n\n## 历史结论\n\n- 说「我看下」通常会在 30 分钟内回贴结论。\n- 周五下午发版要提前到周四确认窗口。\n",
 };
 
@@ -212,6 +213,17 @@ const persons = [
     ],
   },
   {
+    platform: "wecom", person_id: "wm_demo_zhou", name: "周敏",
+    profile: personProfiles.zhou,
+    profile_excerpt: "财务部，合同与付款口径由她把关。",
+    profile_path: "profiles/people/wecom/wm_demo_zhou.md",
+    profile_updated_at: now - 7200,
+    bytes: personBytes(personProfiles.zhou),
+    chat_ids: [
+      { platform: "wecom", chat_id: "wm_demo_zhou", name: "周敏" },
+    ],
+  },
+  {
     platform: "feishu", person_id: "ou_demo_wang", name: "王珂",
     profile: personProfiles.wang,
     profile_excerpt: "平台组工程师，负责 CI、发布与线上值班。",
@@ -224,15 +236,15 @@ const persons = [
   },
 ];
 
-// 会话工作本（两层记忆的第二层）：字段仍是 profile*，只写本会话成立的要求。
+// 服务对象：群＝会话工作本；单聊＝对方的人物档案（profile* 与 person 指同一份文件）。
 const targets = [
   {
     platform: "feishu", name: "林一帆", chat_id: "oc_demo_lin", open_id: "ou_demo_lin",
     kind: "p2p", in_env: true,
-    profile: "# 林一帆\n\n> 飞书 · oc_demo_lin\n> 会话工作本：只写本会话成立的要求与上下文（群规、回复口径、成员角色）；个人评价写人物档案。\n\n## 这个会话是什么\n\n- 私聊：项目排期、接口文档与联调时间点都在这里对。\n\n## 群内工作要求\n\n- 一对一：先回结论，再补细节；没时间点的事先不给承诺。\n\n## 成员与角色\n\n- 林一帆 · 产品负责人 · people/feishu/ou_demo_lin.md\n\n## 本会话结论与待办\n\n- 接口文档鉴权一节补示例；周五前给联调时间点。\n",
-    profile_excerpt: "私聊：项目排期、接口文档与联调时间点都在这里对。",
-    profile_path: "profiles/feishu/oc_demo_lin.md",
-    profile_updated_at: now - 3600,
+    profile: personProfiles.lin,
+    profile_excerpt: "产品部，云雀项目交付负责人；排期与验收口径由他定。",
+    profile_path: "profiles/people/feishu/ou_demo_lin.md",
+    profile_updated_at: now - 5400,
     person: { person_id: "ou_demo_lin", path: "profiles/people/feishu/ou_demo_lin.md",
               excerpt: "产品部，云雀项目交付负责人；排期与验收口径由他定。",
               updated_at: now - 5400, exists: true },
@@ -246,13 +258,13 @@ const targets = [
   {
     platform: "wecom", name: "周敏", chat_id: "wm_demo_zhou", open_id: "ou_demo_zhou",
     kind: "p2p", in_env: true,
-    profile: "# 周敏\n\n> 企业微信 · wm_demo_zhou\n> 会话工作本：只写本会话成立的要求与上下文（群规、回复口径、成员角色）；个人评价写人物档案。\n\n## 这个会话是什么\n\n- 私聊：合同、付款与对外承诺都在这里对。\n\n## 群内工作要求\n\n- 金额、合同、对外承诺先问本人再回。\n\n## 成员与角色\n\n- 周敏 · 财务部 · people/wecom/wm_demo_zhou.md\n\n## 本会话结论与待办\n",
-    profile_excerpt: "私聊：合同、付款与对外承诺都在这里对。",
-    profile_path: "profiles/wecom/wm_demo_zhou.md",
+    profile: personProfiles.zhou,
+    profile_excerpt: "财务部，合同与付款口径由她把关。",
+    profile_path: "profiles/people/wecom/wm_demo_zhou.md",
     profile_updated_at: now - 7200,
-    // 私聊能推出人物 ID（企微单聊 chat_id 就是对方 userid），但档案还没建：面板显示空态。
     person: { person_id: "wm_demo_zhou", path: "profiles/people/wecom/wm_demo_zhou.md",
-              excerpt: "", updated_at: 0, exists: false },
+              excerpt: "财务部，合同与付款口径由她把关。",
+              updated_at: now - 7200, exists: true },
     notes: [
       { index: 0, note: "只在企业微信找她，别发邮件", at: "2026-10-29" },
       { index: 1, note: "金额、合同、对外承诺一律先问她本人", at: "2026-10-30" },

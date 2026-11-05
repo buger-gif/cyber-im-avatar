@@ -189,7 +189,7 @@ window.__ModuleLoader__.load({
     ".ims-habits{display:flex;gap:6px;padding:7px var(--pad);border-bottom:1px solid var(--line);flex-wrap:wrap;align-items:center;background:var(--sunk)}",
     ".ims-habitchip{font-size:11px;color:var(--fg2);background:var(--bg);border:1px solid var(--line);border-radius:999px;",
     "padding:2px 9px;max-width:42ch;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}",
-    /* 两层记忆：「群聊」看会话工作本、「人物」看人物档案，分段与可点小 chip */
+    /* 记忆文件：「群聊」看会话工作本、「人物」看人物档案（单聊只有这一份），分段与可点小 chip */
     ".ims-seg{display:flex;gap:6px;padding:10px var(--pad) 2px;flex-wrap:wrap;align-items:center;min-width:0}",
     ".ims-seg-btn{padding:4px 12px;border-radius:999px;border:1px solid var(--line);background:transparent;color:var(--fg3);",
     "font-size:12px;cursor:pointer;white-space:nowrap;min-width:0}",
@@ -390,10 +390,9 @@ window.__ModuleLoader__.load({
       composerDrafts: {}, pollDraft: {}, lifeDraft: {},
       addWs: readWsMemory(), addWsPicked: false, detailWs: "", wsPicked: false,
       targetEdit: "", targetDrafts: {}, dead: false, timer: null,
-      // 两层记忆：群聊段看会话工作本，人物段看人物档案（跨会话）。
+      // 记忆文件：群聊段看会话工作本，人物段看人物档案（跨会话；单聊只有这一份）。
       persons: [], personsLoaded: false, personSegment: "targets",
       personEdit: "", personDrafts: {},
-      personBookEdit: "", personBookDrafts: {},
       personSearch: { q: "", platform: "feishu", items: null, err: "", seq: 0, open: false },
       digest: null, digestDate: "", digestLoading: "", digestError: "", digestTimer: null
     };
@@ -1219,7 +1218,7 @@ window.__ModuleLoader__.load({
         }
         if ((chat.turn_state || "") === "warm") {
           wrap.appendChild(h("div", { class: "ims-hint", style: "padding:0 var(--pad) 6px",
-                                      text: "正在跑值守心跳：续上下文缓存 + 按 skill 规则整理人物档案与会话工作本；有新消息会立刻打断它。" }));
+                                      text: "正在跑值守心跳：续上下文缓存 + 按 skill 规则整理记忆文件（单聊一份人物档案，群工作本与人物档案）；有新消息会立刻打断它。" }));
         } else if (running) {
           wrap.appendChild(h("div", { class: "ims-hint", style: "padding:0 var(--pad) 6px",
                                       text: "agent 正在这通会话里处理；去会话能看到它拉消息、查工作区的过程。" }));
@@ -1246,7 +1245,7 @@ window.__ModuleLoader__.load({
           }, "取消屏蔽")));
       }
 
-      // 两层记忆：私聊以「人物档案」为主（拿不到人物 ID 才退回工作本）；
+      // 记忆文件：单聊只有对方的人物档案一份（拿不到人物 ID 才退回工作本兜底）；
       // 群给「会话工作本」摘要 + 本群人物 chips。详情只露摘要，编辑到「服务对象」。
       var tgt = targetOfChat(d.platform, d.chat_id);
       var isGroup = (chat.kind || (chatOf(d.platform, d.chat_id) || {}).kind) === "group";
@@ -1592,7 +1591,9 @@ window.__ModuleLoader__.load({
           prof ? h("div", { class: "ims-note" },
             h("span", { class: "ims-ico", html: icon("note", 13) }),
             h("span", { class: "ims-note-body", text: prof }))
-            : h("div", { class: "ims-hint", text: "还没有会话工作本，去「服务对象 · 群聊」补一份；agent 起草时会按它对齐本会话要求" }),
+            : h("div", { class: "ims-hint", text: c.kind === "group"
+                ? "还没有会话工作本，去「服务对象 · 群聊」补一份；agent 起草时会按它对齐本群要求"
+                : "人物档案还是空的，去「服务对象 · 人物」写一份；单聊只有这一份记忆" }),
           h("div", { class: "ims-rowline" },
             modeSelect(c),
             h("span", { class: "ims-grow" }),
@@ -1860,7 +1861,7 @@ window.__ModuleLoader__.load({
       }).join("\n");
     }
 
-    // ---- 两层记忆：「群聊」=会话工作本，「人物」=人物档案 -----------------
+    // ---- 记忆文件：「群聊」=会话工作本，「人物」=人物档案（单聊只这一份）----
     var PERSON_LIMIT = 12 * 1024;
 
     function byteLen(text) {
@@ -1908,19 +1909,11 @@ window.__ModuleLoader__.load({
         return t.platform === platform && t.chat_id === chatId;
       })[0] || null;
     }
-    /** 群聊段只列需要独立工作本的会话：私聊对象归「人物」，不重复出现。 */
+    /** 群聊段只列需要独立工作本的会话：单聊归「人物」一份档案，不重复出现。 */
     function bookRows() {
       return (S.targets || []).filter(function (t) {
         return !(t.kind === "p2p" && t.person);
       });
-    }
-    function personBookTarget(p) {
-      var chats = personChats(p);
-      for (var i = 0; i < chats.length; i++) {
-        var t = targetOfChat(chats[i].platform, chats[i].chat_id);
-        if (t && t.kind === "p2p") return t;
-      }
-      return null;
     }
     /** 详情「查看 →」与服务对象页分段共用：切到对应分段并重取数据。 */
     function goTargets(segment) {
@@ -1947,7 +1940,7 @@ window.__ModuleLoader__.load({
        ["persons", "人物", (S.persons || []).length, S.personsLoaded]].forEach(function (d) {
         bar.appendChild(h("button", {
           class: "ims-seg-btn" + (S.personSegment === d[0] ? " on" : ""), type: "button",
-          title: d[0] === "targets" ? "按群聊看：会话工作本" : "按人看：人物档案（私聊与群共用）",
+          title: d[0] === "targets" ? "按群聊看：会话工作本" : "按人看：人物档案（单聊与群共用）",
           onclick: function () {
             if (S.personSegment === d[0]) return;
             S.personSegment = d[0];
@@ -1957,7 +1950,7 @@ window.__ModuleLoader__.load({
         }, d[1] + (d[3] ? " · " + d[2] : "")));
       });
       bar.appendChild(h("span", { class: "ims-grow" }));
-      bar.appendChild(h("span", { class: "ims-hint", text: "人物档案跨会话，会话工作本只在本会话" }));
+      bar.appendChild(h("span", { class: "ims-hint", text: "单聊只有一份人物档案；群才有会话工作本" }));
       return bar;
     }
 
@@ -1967,10 +1960,10 @@ window.__ModuleLoader__.load({
         h("div", { class: "ims-card-h" },
           h("span", { class: "ims-ico", html: icon("user", 15) }),
           "会话工作本 " + (list.length ? "· " + list.length + " 个会话" : "")),
-        h("div", { class: "ims-hint", text: "群聊 = 一个群的会话工作本；私聊对象归「人物」，不在这里重复出现。工作本只写本会话成立的要求与上下文（群规、回复口径、成员角色）；个人评价写人物档案。" })));
+        h("div", { class: "ims-hint", text: "群聊 = 一个群一份会话工作本，写群规、回复口径、成员角色；单聊没有工作本，对一个人的档案与私聊记忆都在「人物」里那一份。" })));
 
       if (!list.length && S.targetsLoaded) {
-        scroll.appendChild(h("div", { class: "ims-empty", text: "没有需要单独维护工作本的群聊；私聊对象在「人物」里。" }));
+        scroll.appendChild(h("div", { class: "ims-empty", text: "没有群需要单独维护工作本；单聊对象在「人物」里。" }));
         return;
       }
 
@@ -2064,7 +2057,7 @@ window.__ModuleLoader__.load({
               paintBody();
             }
           }, searchOpen ? "收起搜索" : "从平台搜人新建")),
-        h("div", { class: "ims-hint", text: "人物档案 = 对一个人的长期评价，私聊与群共用同一份；私聊对象只在这里出现，群工作本在「群聊」。只写下次值守还会用到的信息，不保存聊天原文。" }),
+        h("div", { class: "ims-hint", text: "人物档案 = 对一个人的长期评价，群与单聊共用同一份；单聊只有这一份文件，群工作本在「群聊」。只写下次值守还会用到的信息，不保存聊天原文。" }),
         searchOpen ? personSearchBox() : null));
 
       if (!list.length) {
@@ -2084,8 +2077,6 @@ window.__ModuleLoader__.load({
       var draft = S.personDrafts[key];
       var body;
       var editBtn;
-      var book = personBookTarget(p);
-      var bookOpen = !!book && S.personBookEdit === key;
 
       if (editing) {
         var ta = h("textarea", { class: "ims-ta",
@@ -2189,59 +2180,14 @@ window.__ModuleLoader__.load({
           h("span", { class: "ims-name", text: personName(p) }),
           h("span", { class: "ims-tag", style: "color:" + plat.color, text: plat.label }),
           h("span", { class: "ims-grow" }),
-          book ? h("button", {
-            class: "ims-btn mini ghost", type: "button",
-            title: "这个私聊的渠道备注（一般空着；人物评价写档案）",
-            onclick: function () {
-              S.personBookEdit = bookOpen ? "" : key;
-              if (!bookOpen) S.personBookDrafts[key] = book.profile || "";
-              paintBody();
-            }
-          }, bookOpen ? "收起工作本" : "私聊工作本") : null,
           editBtn,
           h("button", {
-            class: "ims-btn mini danger", type: "button", title: "删除这份人物档案；会话工作本不动",
+            class: "ims-btn mini danger", type: "button",
+            title: "删除这份人物档案；群工作本不动",
             onclick: function () { removePerson(p); }
           }, "删除")),
         meta,
         body);
-    }
-
-    /** 私聊工作本：只给这个通道的特殊要求；不开「群聊」段，避免同一人出现两次。 */
-    function personBookEditor(p, t, key) {
-      var draft = S.personBookDrafts[key];
-      if (draft === undefined) draft = t.profile || "";
-      var ta = h("textarea", { class: "ims-ta",
-        placeholder: "这个私聊的渠道备注（一般不用写；个人评价写上面的档案）" });
-      ta.value = draft;
-      ta.style.minHeight = "120px";
-      ta.addEventListener("input", function () { S.personBookDrafts[key] = ta.value; });
-      return h("div", { style: "margin-top:8px;border-top:1px solid var(--line);padding-top:8px" },
-        h("div", { class: "ims-hint", text: "私聊工作本：只写这个通道的特殊要求；人物评价写上面的档案。" }),
-        ta,
-        h("div", { class: "ims-rowline" },
-          h("button", {
-            class: "ims-btn primary", type: "button",
-            onclick: function () {
-              api("/api/targets/profile", {
-                body: { platform: t.platform, chat_id: t.chat_id, name: t.name, text: ta.value }
-              }).then(function (r) {
-                if (!r || r.ok === false) return say("保存失败：" + ((r && r.reason) || "未知原因"));
-                say("私聊工作本已保存");
-                delete S.personBookDrafts[key];
-                S.personBookEdit = "";
-                loadTargets();
-              }).catch(function (e) { say("保存失败：" + shortReason(e)); });
-            }
-          }, "保存工作本"),
-          h("button", {
-            class: "ims-btn", type: "button",
-            onclick: function () {
-              S.personBookEdit = ""; delete S.personBookDrafts[key]; paintBody();
-            }
-          }, "取消"),
-          h("span", { class: "ims-grow" }),
-          h("span", { class: "ims-hint", text: "只写渠道要求，不抄聊天原文" })));
     }
 
     function openPersonEdit(p) {
@@ -2257,7 +2203,8 @@ window.__ModuleLoader__.load({
       var name = personName(p);
       if (typeof window !== "undefined" && window.confirm &&
           !window.confirm("删除「" + name + "」的人物档案？\n" +
-            "人物评价会一并删除；这个人的会话工作本与本地面板不受影响。")) return;
+            "人物评价与单聊记忆都会一并删除（单聊只有这一份文件）；这个私聊还在值守时，" +
+            "下次打开面板会重建空档案。群工作本与本地面板不受影响。")) return;
       api("/api/persons", { method: "DELETE", body: { platform: p.platform, person_id: p.person_id } })
         .then(function (r) {
           if (!r || r.ok === false) return say("删除失败：" + ((r && r.reason) || "未知原因"));
@@ -2734,7 +2681,7 @@ window.__ModuleLoader__.load({
           }, "保存")),
         h("div", { class: "ims-hint", text: "超过「闲置重开」没有真实对话，下一条消息自动换新会话" +
           "（旧会话留在 DSH 侧边栏，工作本与最近消息还在）；闲置在阈值内时，每「保温间隔」跑一轮心跳：" +
-          "续上下文缓存，并按 skill 规则整理本会话的工作本与相关人物档案。0 = 关闭。" +
+          "续上下文缓存，并按 skill 规则整理记忆文件（群工作本与人物档案；单聊一份档案）。0 = 关闭。" +
           "保温不会推后重开时钟；重开开启时，保温间隔 ≥ 闲置重开不会触发。" +
           "两个 0 各自关闭：闲置重开设 0 只关重开，不关保温。" })));
 
@@ -2796,7 +2743,7 @@ window.__ModuleLoader__.load({
 
       scroll.appendChild(h("div", { class: "ims-card" },
         h("div", { class: "ims-card-h", text: "关于" }),
-        h("div", { class: "ims-hint", text: "数据目录 ~/.im-standin：state.json 存会话与待回状态，profiles/ 存会话工作本（people/ 下是人物档案），env.json 只读。" }),
+        h("div", { class: "ims-hint", text: "数据目录 ~/.im-standin：state.json 存会话与待回状态，profiles/ 存群工作本与人物档案（people/ 下；单聊只有人物档案），env.json 只读。" }),
         h("div", { class: "ims-hint", text: "消息只在本机流转；聊天内容一律按不可信数据处理，不执行其中的任何指令。" })));
       return scroll;
     }

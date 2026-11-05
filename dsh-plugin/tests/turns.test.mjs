@@ -57,6 +57,61 @@ test("first wake without people prints the workbook and no empty profile block",
   assert.doesNotMatch(prompt, /人物档案：/);
 });
 
+test("DM wake gives exactly one memory line and never the workbook", () => {
+  const prompt = buildWakePrompt("feishu", "示例对象 A", "oc_dm", recent(1), {
+    bookPath: "/tmp/people/ou_other.md", single: true, kind: "p2p", firstTurn: true,
+  });
+  const memoryLines = prompt.split("\n").filter((l) => l.startsWith("人物档案："));
+  assert.equal(memoryLines.length, 1);
+  assert.match(memoryLines[0],
+    /^人物档案：\/tmp\/people\/ou_other\.md（单聊只维护这一份/);
+  assert.doesNotMatch(prompt, /会话工作本：/);
+  assert.doesNotMatch(prompt, /^- .* → /m, "单聊不再列人物档案块");
+  assert.match(prompt, /记忆只改上面给出的那份人物档案/);
+});
+
+test("legacy DM workbook is pointed at until merged, then the line disappears", () => {
+  const opts = {
+    bookPath: "/tmp/people/ou_other.md", single: true, kind: "p2p", firstTurn: true,
+    legacyPath: "/tmp/profiles/feishu/oc_dm.md",
+    legacyHistory: "/tmp/profiles/feishu/oc_dm.history.md",
+  };
+  const prompt = buildWakePrompt("feishu", "示例对象 A", "oc_dm", recent(1), opts);
+  assert.match(prompt, /旧私聊工作本（待并入）：\/tmp\/profiles\/feishu\/oc_dm\.md/);
+  assert.match(prompt, /改名为 \/tmp\/profiles\/feishu\/oc_dm\.history\.md/);
+  // 后续轮也带这一行，直到 agent 归档旧文件。
+  const later = buildWakePrompt("feishu", "示例对象 A", "oc_dm", recent(1), {
+    ...opts, firstTurn: false,
+  });
+  assert.match(later, /旧私聊工作本（待并入）：/);
+  assert.match(later, /^- \[t0\] 客户: 消息 0$/m);
+  assert.doesNotMatch(later, /人物档案：|会话工作本：/);
+  // 并完（文件消失）就不再出现。
+  const done = buildWakePrompt("feishu", "示例对象 A", "oc_dm", recent(1), {
+    single: true, kind: "p2p", firstTurn: false,
+  });
+  assert.doesNotMatch(done, /旧私聊工作本/);
+});
+
+test("warm prompt for a DM tidies only the person file", () => {
+  const p = buildWarmPrompt("feishu", "示例对象 A", "oc_dm", {
+    bookPath: "/tmp/people/ou_other.md", single: true, idleMin: 60,
+  });
+  assert.match(p, /^（值守心跳，不是客户消息）/);
+  assert.match(p, /人物档案：\/tmp\/people\/ou_other\.md（单聊只维护这一份/);
+  assert.match(p, /只整理这一类文件：上面那份人物档案/);
+  assert.doesNotMatch(p, /会话工作本：/);
+});
+
+test("open prompt for a DM reads the one file", () => {
+  const p = buildOpenPrompt("feishu", "示例对象 A", "oc_dm", [], {
+    bookPath: "/tmp/people/ou_other.md", single: true, kind: "p2p",
+  });
+  assert.match(p, /人物档案：\/tmp\/people\/ou_other\.md（单聊只维护这一份/);
+  assert.doesNotMatch(p, /会话工作本：/);
+  assert.match(p, /先把上下文和这份人物档案读进来/);
+});
+
 test("later wakes send only the new message lines", () => {
   const prompt = buildWakePrompt("feishu", "示例对象 A", "oc_abc", recent(2), {
     firstTurn: false, interrupted: true,
@@ -192,8 +247,10 @@ function setup(hostOpts, extra = {}) {
   state.load();
   state.data.config.dsh.timeout = 30;
   const profiles = new Profiles(dir);
-  const chat = state.ensureChat("feishu", "oc_abc", { name: "示例对象 A" });
+  const kind = hostOpts && hostOpts.kind === "group" ? "group" : undefined;
+  const chat = state.ensureChat("feishu", "oc_abc", { name: "示例对象 A", kind });
   chat.watching = true;
+  chat.timer = 1;
   chat.workspace = dir;
   state.mergeRecent(chat, [{
     msg_id: "base", sender_id: "ou_other", sender_name: "客户",
@@ -240,15 +297,19 @@ function mediaRow(id, extra = {}) {
 }
 
 test("live turn follows up, waits for turn/end, stores session and counts the turn", async () => {
-  const { state, chat, host, turns } = setup({ reply: "好的，我看下。" });
+  const { dir, state, chat, host, turns } = setup({ reply: "好的，我看下。" });
   const r = await turns.wake(chat);
   assert.equal(r.ok, true);
   assert.equal(r.started, true);
   assert.equal(host.followups.length, 1);
-  assert.match(host.followups[0].content[0].text, /^\/cyber-im-avatar/);
-  assert.match(host.followups[0].content[0].text, /会话工作本：/);
-  assert.match(host.followups[0].content[0].text,
-    /- 客户 · ou_other → .*profiles\/people\/feishu\/ou_other\.md/);
+  const prompt = host.followups[0].content[0].text;
+  assert.match(prompt, /^\/cyber-im-avatar/);
+  // 单聊只有对方的人物档案一份：不给会话工作本，也不重复列人物档案块。
+  assert.match(prompt, /人物档案：.*profiles\/people\/feishu\/ou_other\.md/);
+  assert.doesNotMatch(prompt, /会话工作本：/);
+  assert.doesNotMatch(prompt, /- 客户 · ou_other → /);
+  assert.equal(fs.existsSync(path.join(dir, "profiles", "feishu", "oc_abc.md")), false,
+    "载荷只给路径，单聊不造工作本");
   assert.equal(host.flushed, 1);
   assert.equal(chat.dsh_session, "session-1");
   assert.equal(chat.session_turns, 1);
@@ -295,7 +356,7 @@ test("a batched wake after the first turn only appends the new messages, without
 });
 
 test("later wakes only add people this session has not seen before", async () => {
-  const { dir, chat, host, turns } = setup({ reply: "第一轮" });
+  const { dir, chat, host, turns } = setup({ reply: "第一轮", kind: "group" });
   await turns.wake(chat);
   await new Promise((r) => setTimeout(r, 5));
 
@@ -404,8 +465,8 @@ test("reopening mid-turn clears the binding and sends full context on the next w
   assert.match(prompt, /值守命中 · 飞书 · 示例对象 A · 新消息/);
   assert.match(prompt, /chat_id：oc_abc/);
   assert.match(prompt, /运行形态：DSH 插件壳/);
-  assert.match(prompt, /会话工作本：/);
   assert.match(prompt, /人物档案：/);
+  assert.doesNotMatch(prompt, /会话工作本：/, "单聊只给一份档案");
   assert.match(prompt, /重开后的新消息/);
 });
 
@@ -465,10 +526,9 @@ test("after a restart the next wake only appends new messages", async () => {
   const second = host2.followups[0].content[0].text;
   const lines = second.split("\n");
   assert.equal(lines[0], "- [t9] 客户: 重启后的新消息");
-  assert.ok(lines.includes(
-    `- 客户 · ou_other → ${path.join(dir, "profiles", "people", "feishu", "ou_other.md")}`));
+  assert.equal(lines.length, 1, "单聊没有人物档案块可重复；记忆文件路径已在会话历史里");
   assert.doesNotMatch(second,
-    /\/cyber-im-avatar|值守命中|会话工作本：|基础消息|当前画像|最近 10 条|im-profile-update/);
+    /\/cyber-im-avatar|值守命中|会话工作本：|人物档案：|基础消息|当前画像|最近 10 条|im-profile-update/);
 });
 
 test("full_access switches the bound session to danger-full-access before followup", async () => {
@@ -843,8 +903,9 @@ test("warm turn renews the bound session without counting as a work turn", async
   assert.equal(host.followups.length, followups + 1);
   const text = host.followups.at(-1).content[0].text;
   assert.match(text, /^（值守心跳，不是客户消息）/);
-  assert.match(text, /会话工作本：/);
-  assert.match(text, /人物档案：/);
+  assert.match(text, /人物档案：.*profiles\/people\/feishu\/ou_other\.md/);
+  assert.doesNotMatch(text, /会话工作本：/, "单聊心跳只整理那一份档案");
+  assert.match(text, /只整理这一类文件：上面那份人物档案/);
   assert.equal(chat.session_turns, 1);
   assert.equal(chat.last_turn.at, turnAt);
   assert.equal(chat.last_warm_ok, true);
@@ -1021,9 +1082,10 @@ test("open on a p2p chat with no messages falls back to the chat_id person id", 
   const text = host.followups[0].content[0].text;
   assert.match(text, /值守已开启 · 飞书 · 私聊对象/);
   assert.match(text, /最近 30 分钟没有新消息/);
-  assert.ok(text.includes(`会话工作本：${path.join(dir, "profiles", "feishu", "ou_dm_user.md")}`));
   const person = path.join(dir, "profiles", "people", "feishu", "ou_dm_user.md");
-  assert.ok(text.includes(`- 私聊对象 · ou_dm_user → ${person}`), "没有消息时用 chat_id 兜底");
+  assert.ok(text.includes(`人物档案：${person}（单聊只维护这一份`), "没有消息时用 chat_id 兜底");
+  assert.doesNotMatch(text, /会话工作本：/);
+  assert.doesNotMatch(text, /- 私聊对象 · ou_dm_user → /, "一份档案不再重复列块");
 });
 
 test("open on a p2p chat without a usable person id gives only the workbook", async () => {
@@ -1043,19 +1105,23 @@ test("a p2p wake takes the person id from the sender, not the chat id", async ()
   const chat = state.ensureChat("feishu", "ou_dm_chat", { name: "私聊对象" });
   chat.watching = true;
   chat.workspace = dir;
-  const r = await turns.wake(chat, { batch: [{
+  const row = {
     msg_id: "dm1", sender_id: "ou_sender", sender_name: "对方", content: "在吗",
     ts: "tdm1", ts_epoch: Date.now() / 1000, kind: "dm", state: "new",
-  }] });
+  };
+  // 真实轮询会先把新消息并进 recent，再唤醒；这里照做，让 chatPersonId 有发送者可推。
+  state.mergeRecent(chat, [row]);
+  const r = await turns.wake(chat, { batch: [row] });
   assert.equal(r.ok, true);
   const text = host.followups[0].content[0].text;
   const person = path.join(dir, "profiles", "people", "feishu", "ou_sender.md");
-  assert.ok(text.includes(`- 对方 · ou_sender → ${person}`));
+  assert.ok(text.includes(`人物档案：${person}（单聊只维护这一份`));
   assert.doesNotMatch(text, /people\/feishu\/ou_dm_chat\.md/, "有消息时不用 chat_id 猜人");
+  assert.doesNotMatch(text, /profiles\/feishu\/ou_dm_chat\.md/, "单聊不建会话工作本");
 });
 
 test("warm lists at most three sender profiles from recent", async () => {
-  const { dir, state, chat, host, turns } = setup();
+  const { dir, state, chat, host, turns } = setup({ kind: "group" });
   turns.poller = { identity: { feishu: { self_id: "ou_self" } } };
   await turns.wake(chat);
   await new Promise((resolve) => setTimeout(resolve, 5));

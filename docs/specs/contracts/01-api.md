@@ -31,7 +31,7 @@
 | GET | `/api/doctor` | — | 体检：身份、拉取通路、DSH 宿主、skill 路径、拉取节奏 |
 | GET | `/api/config` | — | 读配置；模型/凭据全在 DSH，插件无 api_key 可回传 |
 | GET | `/api/workspaces` | — | 可选工作区列表（值守会话绑定用） |
-| GET | `/api/targets` | — | 服务对象列表：`profile*` = 会话工作本；p2p 能推出人物 ID 时附 `person`（`person_id` / `path` / `excerpt` / `updated_at` / `exists`） |
+| GET | `/api/targets` | — | 服务对象列表：`profile*` = 该会话的记忆文件——群是会话工作本，单聊能推出人物 ID 时就是对方的人物档案（与 `person` 同一路径，并 ensure；旧私聊工作本在此整文件搬到人物档案）；推不出 ID 的 p2p 仍指会话工作本。`person` = `person_id` / `path` / `excerpt` / `updated_at` / `exists`，仅 p2p 有 |
 | GET | `/api/persons` | `platform`（可选） | 人物档案列表：只扫 `profiles/people/`，不建文件；items 带 `platform` / `person_id` / `name` / `profile` / `profile_path` / `profile_updated_at` / `profile_excerpt` / `bytes` / `chat_ids`（`[{platform, chat_id, name}]`） |
 | GET | `/api/chat/workspace` | `platform`、`chat_id`、`workspace`（别名 `path`） | 给值守会话绑 / 解绑工作区；必须显式给键，空串=解绑。工作区变了且旧会话因此解绑、会话又在值守中（未屏蔽）→ 立刻在新工作区开新会话，返回 `open` |
 | GET | `/api/chat/session` | `platform`、`chat_id` | 查当前绑定的 DSH 会话与工作区 |
@@ -59,7 +59,7 @@
 | --- | --- | --- |
 | POST | `/api/config` | 写配置；`poll.interval_min` 夹到 ≥10 |
 | POST | `/api/platforms` | 启用 / 停用平台：入参 `platform`、`enabled`；只接受 `feishu` / `wecom` / `dingtalk`，写回 `config.platforms`（按固定顺序去重） |
-| POST | `/api/targets/profile` | 覆盖写会话工作本；入参 `platform`、`chat_id`（优先）/`name`（兼容旧面板）、`text`（≤12KB，超限拒绝不截断） |
+| POST | `/api/targets/profile` | 覆盖写该会话的记忆文件：p2p 写人物档案（同一份，不另存工作本），群写会话工作本；入参 `platform`、`chat_id`（优先）/`name`（兼容旧面板）、`text`（≤12KB，超限拒绝不截断） |
 | POST | `/api/persons/profile` | 覆盖写人物档案；入参 `platform`、`person_id`、`name`、`text`（≤12KB）、`base_mtime`（可选）；mtime 更新过则回 `{ok:false, reason:"stale"}` 不写 |
 | POST | `/api/chat/session/reset` | 重开会话：可带 `workspace` 先落工作区；打断在飞 turn、清空 `dsh_session`；值守中（未屏蔽）立刻在新会话里跑一轮开场，返回 `open: {ok, reason, skipped}`；未值守 / 屏蔽只解绑 |
 | POST | `/api/chat/wake` | 手动唤醒：可带 `workspace` 先落工作区；把该会话最近待回交给 agent，不等新消息；`running` / `blocked` / 未值守时拒绝 |
@@ -68,7 +68,7 @@
 
 | 方法 | 路径 | 说明 |
 | --- | --- | --- |
-| DELETE | `/api/forget` | 删除该会话的状态与会话工作本；人物档案跨会话保留；不删线上消息，也不删 DSH 会话文件 |
+| DELETE | `/api/forget` | 删除该会话的状态与旧版会话工作本；人物档案跨会话保留（p2p 的记忆就是它，不删）；不删线上消息，也不删 DSH 会话文件 |
 | DELETE | `/api/persons` | 删除一份人物档案（显式操作）；入参 `platform`、`person_id` |
 
 ## 约定

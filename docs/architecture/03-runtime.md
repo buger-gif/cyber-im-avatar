@@ -25,8 +25,8 @@ poller 判定命中
        ├─ 先取消同会话在飞 turn（agent.inbox.remove / agent.cancel）
        ├─ 闲置超阈值先解绑旧会话：这一轮进新会话
        ├─ resolveAgent(dsh_session) 或 create({workspaceId|cwd})
-       ├─ 每次唤醒只追加本次新消息（首轮带入口、会话工作本与人物档案路径，
-       │  之后只发消息行 / 本会话还没给过的人的档案行）
+       ├─ 每次唤醒只追加本次新消息（首轮带入口与记忆文件路径：单聊一份人物档案，
+       │  群工作本 + 人物档案；之后只发消息行 / 群里还没给过的人的档案行）
        ├─ 只对本批待回消息下载媒体：图片 → attachments image block，
        │  文件/音视频 → 本地路径；未适配/失败只留标记
        ├─ agent.followup(createUserMessage(prompt, imageParts))
@@ -39,15 +39,15 @@ poller 判定命中
   （默认 180 分钟）后的下一条消息，都会换新会话；旧会话留在侧边栏。显式工作区目录存在但未在
   DSH 登记时，仍先尝试恢复旧会话。
 - 闲置达到 `dsh.warm_min`（默认 55 分钟）、又没到重开阈值时，轮询器起一轮「值守心跳」：
-  在已绑定会话里续上下文缓存，并让 agent 按 skill 规则整理载荷列出的文件（会话工作本 +
-  最多 3 份人物档案），不扫目录。它不写 `session_turns` /
+  在已绑定会话里续上下文缓存，并让 agent 按 skill 规则整理载荷列出的记忆文件（单聊一份
+  人物档案；群工作本 + 最多 3 份档案），不扫目录。它不写 `session_turns` /
   `last_turn`，真实消息到达即取消；结果记 `chats.last_warm_at` / `last_warm_ok`。
-- 首轮带 `/cyber-im-avatar`、平台/对象、chat_id、运行形态、`会话工作本`路径与本次发言人的
-  「人物档案」路径（≤5，去重、@我优先）；之后同一 `dsh_session` 只发本次新消息行，
-  不再重复这些说明。`chats.prompt_session == dsh_session`
+- 首轮带 `/cyber-im-avatar`、平台/对象、chat_id、运行形态与记忆文件路径：单聊只给
+  `人物档案：<路径>`；群给 `会话工作本` 与本次发言人的「人物档案」行（≤5，去重、@我优先）。
+  之后同一 `dsh_session` 只发本次新消息行，不再重复这些说明。`chats.prompt_session == dsh_session`
   时判定为后续轮；换会话/重置会清空，下一次重新带完整上下文。
-- 画像只给路径：会话工作本 `~/.im-standin/profiles/<platform>/<chat_id>.md`、人物档案
-  `~/.im-standin/profiles/people/<platform>/<person_id>.md` 都由 agent 自己读、自己改；
+- 画像只给路径：单聊 `~/.im-standin/profiles/people/<platform>/<person_id>.md` 一份；
+  群另有 `~/.im-standin/profiles/<platform>/<chat_id>.md`。都由 agent 自己读、自己改；
   插件不解析回复、不代写。`dsh.full_access=true` 时插件在 followup 前把会话切到
   `danger-full-access`，否则 `workspace-write` 会拒绝写画像目录。
 - 因为就是宿主里的 live agent，DSH UI 打开同一会话不再是锁问题；只有**另一个
@@ -64,7 +64,7 @@ poller 判定命中
 
 - `poll.interval_min` 有硬下限 10 分钟，填 1 会被夹回 10——不是在防备谁，是不想把 IM 接口当靶子打。
 - `poll.dm_scope` 是 legacy no-op：老配置还能加载，实际候选只看 `watching` 私聊，群只有 `timer=1`。
-- `dsh.full_access` 默认 `false`；为 `true` 时插件把值守会话切到 `danger-full-access`，agent 才能写工作区外的画像。这是唯一放开沙箱的开关。
+- `dsh.full_access` 默认 `false`；为 `true` 时插件把值守会话切到 `danger-full-access`，agent 才能写工作区外的画像（单聊人物档案 / 群工作本）。这是唯一放开沙箱的开关。
 - `dsh.idle_reset_min` / `dsh.warm_min` 控制会话寿命与保温（默认 180 / 55 分钟，0 = 关闭）；重开开启时保温只在重开窗口内跑，且不推进闲置时钟；两个 0 各自关闭。
 - 平台白名单只有 `feishu` / `wecom`；`platforms` 里其他值被忽略，存量钉钉会话保留不拉取。
 - 风险拦截在 skill 铁律里（钱、承诺、对外群由 agent 停下等本人），插件不再有 `reply_guard` 开关。

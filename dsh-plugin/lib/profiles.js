@@ -1,5 +1,5 @@
 /**
- * profiles.js — 两层 Markdown：人物档案 + 会话工作本。
+ * profiles.js — 画像文件：群两层（人物档案 + 会话工作本），单聊只有对方的人物档案一份。
  *
  * 文件是唯一事实源：面板、agent、插件都读写它；env.json 不存画像索引。
  * 目录 700、文件 600，写入走临时文件 + rename；每份上限 12KB，拒绝而不是静默截断。
@@ -150,11 +150,28 @@ export function chatPersonId(platform, chat, selfId = "") {
   const self = String(selfId || "");
   for (const m of Array.isArray(chat.recent) ? chat.recent : []) {
     const sid = String(m?.sender_id || "");
-    if (sid && sid !== self && m?.kind !== "out") return sid;
+    // out = 本人发的；cmd = 本人在私聊里 @ 自己（spec 0029），都不是「对面那个人」。
+    // 后者尤其重要：selfId 暂时取不到时，cmd 的 sender 就是本人，不能拿来建人物档案。
+    if (sid && sid !== self && m?.kind !== "out" && m?.kind !== "cmd") return sid;
   }
   const cid = String(chat.chat_id || "");
   const ok = P2P_CHAT_IS_PERSON[platform];
   return ok && ok(cid) ? cid : "";
+}
+
+/**
+ * 会话的记忆文件：私聊只有对方的人物档案一份；群才是会话工作本 + 人物档案。
+ * 私聊推不出对方 ID（钉钉 senderId 未验证；飞书 oc_ 且还没有消息）时退回会话工作本，
+ * 保持旧行为——宁可多一份兜底，也不静默把内容写到错的人身上。
+ */
+export function memoryRel(platform, chat, selfId = "") {
+  if (chat?.kind === "p2p") {
+    const personId = chatPersonId(platform, chat, selfId);
+    // 人物 ID 全是非法字符（sanitize 后为空）时不能给空路径，退回工作本兜底。
+    const rel = personId ? personRel(platform, personId) : "";
+    if (rel) return { rel, personId, single: true };
+  }
+  return { rel: profileRel(platform, chat?.chat_id, chat?.name), personId: "", single: false };
 }
 
 export class Profiles {
@@ -212,6 +229,67 @@ export class Profiles {
       created = true;
     }
     return { path: file, text: this.readPath(file), mtime: this.mtime(file), created };
+  }
+
+  /** 会话的记忆文件：单聊＝对方人物档案一份；群＝会话工作本（路径规则见 memoryRel）。 */
+  memoryFor(platform, chat, selfId = "") {
+    const m = memoryRel(platform, chat, selfId);
+    return { path: this.abs(m.rel), person_id: m.personId, single: m.single, rel: m.rel };
+  }
+
+  /** 旧版私聊工作本：只作为待并入的存量给路径；群、或记忆已经是这份文件时返回空。 */
+  legacyBookFor(platform, chat, selfId = "") {
+    if (!chat || chat.kind !== "p2p") return "";
+    const file = this.pathFor(platform, chat.chat_id, chat.name);
+    if (!file) return "";
+    const m = this.memoryFor(platform, chat, selfId);
+    if (!m.single || file === m.path) return "";
+    return String(this.readPath(file)).trim() ? file : "";
+  }
+
+  historyPathFor(file) {
+    const f = String(file || "");
+    if (!f) return "";
+    return /\.md$/i.test(f) ? `${f.slice(0, -3)}.history.md` : `${f}.history.md`;
+  }
+
+  /**
+   * 确保会话记忆文件存在。单聊第一次被面板/值守碰到时，若人物档案还不存在、旧会话工作本
+   * 有内容，就把它整文件搬过来（不改写、不拆段，内容一字不丢）；已经有档案就不动旧文件，
+   * 留给 agent 按载荷的「待并入」行合并。
+   */
+  ensureMemory(platform, chat, selfId = "") {
+    const memory = this.memoryFor(platform, chat, selfId);
+    if (!memory.path) return { path: "", text: "", mtime: 0, created: false };
+    if (memory.single) {
+      if (!fs.existsSync(memory.path)) {
+        const legacy = this.legacyBookFor(platform, chat, selfId);
+        if (legacy) {
+          try {
+            // 旧文件还是没写过内容的模板：直接删掉，按人物档案模板重建，不留第二份。
+            // 有内容的才整文件搬，原文字一个不改，归并交给 agent。
+            const template = profileTemplate(chat?.name || "", platform, chat?.chat_id || "");
+            if (this.readPath(legacy) === template) {
+              fs.unlinkSync(legacy);
+            } else {
+              this.ensureDir(path.dirname(memory.path));
+              // 复制而不是 rename：另一路（agent / 另一个面板请求）可能刚好建好了人物档案，
+              // COPYFILE_EXCL 保证不覆盖它；搬完再删旧文件，删不掉就回滚复制，避免两份并存。
+              fs.copyFileSync(legacy, memory.path, fs.constants.COPYFILE_EXCL);
+              try { fs.chmodSync(memory.path, 0o600); } catch { /* best effort */ }
+              try {
+                fs.unlinkSync(legacy);
+              } catch (e) {
+                try { fs.unlinkSync(memory.path); } catch { /* best effort */ }
+                throw e;
+              }
+            }
+          } catch { /* 搬不动就保留旧文件，由载荷的「待并入」行兜底 */ }
+        }
+      }
+      return this.ensurePerson(platform, memory.person_id, chat?.name || "");
+    }
+    return this.ensure(platform, chat?.chat_id, chat?.name || "");
   }
 
   read(platform, chatId, name = "") {

@@ -95,9 +95,28 @@ function formatMsgLine(m, mediaInfo = null, platform = "", dupNames = null) {
 }
 
 /**
+ * 记忆文件行：群两层（会话工作本 + 人物档案），单聊只有对方的人物档案一份（spec 0035）。
+ * 插件只给路径与归属，不读正文、不判断内容。
+ */
+function memoryLine(bookPath, single = false) {
+  if (!bookPath) return "";
+  return single
+    ? `人物档案：${bookPath}（单聊只维护这一份：这个人是谁、怎么说话、在意什么、历史结论；` +
+      "只在这条私聊成立的备注也写这里，用「私聊：」开头）"
+    : `会话工作本：${bookPath}（本会话的群规与工作要求；个人评价不写这里）`;
+}
+
+/** 旧私聊工作本：本版本起单聊只有人物档案；文件消失（并完归档）后这行自然消失。 */
+function legacyLine(legacyPath, legacyHistory = "") {
+  if (!legacyPath) return "";
+  return `旧私聊工作本（待并入）：${legacyPath}（本版本起单聊只维护对方的人物档案；` +
+    `把仍然成立的内容并进去，再把旧文件改名为 ${legacyHistory || legacyPath}，内容不丢）`;
+}
+
+/**
  * 人物档案指针块：`人物档案：` + 每人一行 `- <name> · <id> → <abs>`。
  * 插件只给路径与 ID，不读正文、不建文件、不解析画像；空 ID / 空路径跳过，
- * 全员都没有时返回空数组（people 为空不输出块）。
+ * 全员都没有时返回空数组（people 为空不输出块）。单聊只给一份档案，不走这个块。
  */
 function personLines(people) {
   const rows = [];
@@ -186,14 +205,16 @@ function payloadNote(count) {
 
 /**
  * 一次唤醒 = 只追加本次新到的消息。新会话首轮带 `/cyber-im-avatar` 入口、
- * 平台/对象、chat_id、运行形态、两层文件路径（会话工作本 + 人物档案）与媒体说明；
- * 已有会话后续唤醒只发本次消息行与这批发言人的档案行，不重复这些上下文——
- * 它们已经在同一 session 的历史里。两层文件正文由 agent 自己按路径读，
+ * 平台/对象、chat_id、运行形态、记忆文件路径（群：会话工作本 + 人物档案；
+ * 单聊：对方的人物档案一份）与媒体说明；已有会话后续唤醒只发本次消息行、
+ * 这批发言人的档案行与还没并完的旧私聊工作本，不重复这些上下文——
+ * 它们已经在同一 session 的历史里。文件正文由 agent 自己按路径读，
  * 插件不注入、不解析、不回写。
  */
 export function buildWakePrompt(platform, chatName, chatId, messages, {
   bookPath = "", people = [], interrupted = false, firstTurn = false, mediaMap = null,
-  wakeMode = "mention", resetMin = 0, kind = "group",
+  wakeMode = "mention", resetMin = 0, kind = "group", single = false,
+  legacyPath = "", legacyHistory = "",
 } = {}) {
   const label = PLAT_LABEL[platform] || platform;
   const safeName = sanitizeUntrusted(chatName || chatId);
@@ -203,6 +224,7 @@ export function buildWakePrompt(platform, chatName, chatId, messages, {
     .sort((a, b) => (a.ts_epoch - b.ts_epoch))
     .map((m) => formatMsgLine(m, mediaFor(mediaMap, m.msg_id), platform, dupNames));
   const peopleBlock = personLines(people);
+  const legacy = legacyLine(legacyPath, legacyHistory);
 
   // 本人指令：私聊里本人 @ 自己留给替身的话，不是客户消息，也不是已回复对面。
   const cmdNote = messages.some((m) => m.kind === "cmd")
@@ -220,9 +242,9 @@ export function buildWakePrompt(platform, chatName, chatId, messages, {
           "其它消息没有转给你，需要上下文时按 skill 在线拉。）"
         : "");
   // 已有会话：只列本次新消息 + 这批发言人的档案路径。chat_id / 运行形态 /
-  // 会话工作本行都已在本会话里，不再每一轮重复；人物档案行是给归因用的指针。
+  // 记忆文件行都已在本会话里，不再每一轮重复；旧私聊工作本待并入行除外（文件消失即停）。
   if (!firstTurn) {
-    return [lines.join("\n"), ...peopleBlock, cmdNote, modeNote].filter(Boolean).join("\n");
+    return [lines.join("\n"), legacy, ...peopleBlock, cmdNote, modeNote].filter(Boolean).join("\n");
   }
 
   const parts = ["/cyber-im-avatar"];
@@ -236,28 +258,32 @@ export function buildWakePrompt(platform, chatName, chatId, messages, {
     parts.push(`会话：上一次会话闲置超过 ${resetMin} 分钟，已自动重开；更早上下文不在本会话，` +
       "需要时按 skill 在线拉，别把新消息当成新客户。");
   }
-  // 两层记忆：会话工作本 = 本会话成立的规矩；人物档案 = 人的评价（跨会话同一份）。
-  if (bookPath) {
-    parts.push(`会话工作本：${bookPath}（本会话的群规与工作要求；个人评价不写这里）`);
-  }
+  // 记忆文件：群两层（工作本 + 人物档案）；单聊一份（对方的人物档案）。
+  const memory = memoryLine(bookPath, single);
+  if (memory) parts.push(memory);
   if (peopleBlock.length) parts.push(...peopleBlock);
+  if (legacy) parts.push(legacy);
   parts.push(...lines);
   if (cmdNote) parts.push(cmdNote);
   if (modeNote) parts.push(modeNote);
   if (mediaSize(mediaMap)) parts.push(MEDIA_HINT);
   parts.push(payloadNote(messages.length));
-  parts.push("按 skill 处理这通会话；记忆只改上面给出的会话工作本与人物档案，" +
-    "不要写 state.json / env.json / media。");
+  parts.push(single
+    ? "按 skill 处理这通私聊；记忆只改上面给出的那份人物档案，" +
+      "不要写 state.json / env.json / media。"
+    : "按 skill 处理这通会话；记忆只改上面给出的会话工作本与人物档案，" +
+      "不要写 state.json / env.json / media。");
   return parts.join("\n");
 }
 
 /**
  * 人工开启值守时的开场载荷：不是命中唤醒，没有新消息也要把会话建起来。
  * 消息只当上下文，回不回由 agent 按 skill 判断；插件不在这里发任何东西。
- * 与首轮唤醒同一套两层路径：会话工作本 + 最近上下文里的发言人档案。
+ * 记忆文件与首轮唤醒同一套：群两层，单聊只有对方的人物档案一份。
  */
 export function buildOpenPrompt(platform, chatName, chatId, messages, {
   bookPath = "", people = [], wakeMode = "mention", resetMin = 0, kind = "group",
+  single = false, legacyPath = "", legacyHistory = "",
 } = {}) {
   const label = PLAT_LABEL[platform] || platform;
   const safeName = sanitizeUntrusted(chatName || chatId);
@@ -274,11 +300,12 @@ export function buildOpenPrompt(platform, chatName, chatId, messages, {
     parts.push(`会话：上一次会话闲置超过 ${resetMin} 分钟，已自动重开；更早上下文不在本会话，` +
       "需要时按 skill 在线拉。");
   }
-  if (bookPath) {
-    parts.push(`会话工作本：${bookPath}（本会话的群规与工作要求；个人评价不写这里）`);
-  }
+  const memory = memoryLine(bookPath, single);
+  if (memory) parts.push(memory);
   const peopleBlock = personLines(people);
   if (peopleBlock.length) parts.push(...peopleBlock);
+  const legacy = legacyLine(legacyPath, legacyHistory);
+  if (legacy) parts.push(legacy);
   if (lines.length) {
     parts.push(`最近上下文（最近 30 分钟，共 ${lines.length} 条）：`);
     parts.push(...lines);
@@ -296,19 +323,23 @@ export function buildOpenPrompt(platform, chatName, chatId, messages, {
     : (wakeMode === "all"
         ? "关注程度：全部消息（每条新消息都会唤醒）。"
         : "关注程度：只认 @（对方 @ 你（或正文写 @你的名字）才唤醒；其它消息不会转给你）。"));
-  parts.push("这一轮是用户点「加入值守」触发的：先把上下文和两层文件读进来；" +
-    "有该回的就按 skill 处理，**没有需要回的就不要往会话里发任何消息**。");
+  parts.push(single
+    ? "这一轮是用户点「加入值守」触发的：先把上下文和这份人物档案读进来；" +
+      "有该回的就按 skill 处理，**没有需要回的就不要往会话里发任何消息**。"
+    : "这一轮是用户点「加入值守」触发的：先把上下文和两层文件读进来；" +
+      "有该回的就按 skill 处理，**没有需要回的就不要往会话里发任何消息**。");
   if (lines.length) parts.push("上下文来自本地最近消息；更早的按 skill 在线拉，不要重发已经处理过的。");
   return parts.join("\n");
 }
 
 /**
- * 值守心跳：续上下文缓存 + 按 skill 规则归并两层记忆。不是客户消息，不能触发发送。
+ * 值守心跳：续上下文缓存 + 按 skill 规则归并记忆文件。不是客户消息，不能触发发送。
  * 只在已经消费过首轮载荷的会话里跑，所以不带 `/cyber-im-avatar` 与平台说明；
- * 只整理载荷列出的文件（会话工作本 + ≤3 份人物档案），不扫目录。
+ * 只整理载荷列出的文件（群：工作本 + ≤3 份人物档案；单聊：那一份人物档案），不扫目录。
  */
 export function buildWarmPrompt(platform, chatName, chatId, {
-  bookPath = "", people = [], idleMin = 0,
+  bookPath = "", people = [], idleMin = 0, single = false,
+  legacyPath = "", legacyHistory = "",
 } = {}) {
   const label = PLAT_LABEL[platform] || platform;
   const safeName = sanitizeUntrusted(chatName || chatId);
@@ -316,16 +347,19 @@ export function buildWarmPrompt(platform, chatName, chatId, {
   parts.push(`保温轮 · ${label} · ${safeName}` +
     (idleMin > 0 ? ` · 已闲置约 ${idleMin} 分钟` : ""));
   parts.push(`chat_id：${chatId}`);
-  if (bookPath) {
-    parts.push(`会话工作本：${bookPath}（本会话的群规与工作要求；个人评价不写这里）`);
-  }
+  const memory = memoryLine(bookPath, single);
+  if (memory) parts.push(memory);
   const peopleBlock = personLines(people);
   if (peopleBlock.length) parts.push(...peopleBlock);
+  const legacy = legacyLine(legacyPath, legacyHistory);
+  if (legacy) parts.push(legacy);
   parts.push("这一轮只做两件事：");
   parts.push("1. 续上下文缓存——不需要输出正文，也不需要汇报缓存状态。");
-  const scope = peopleBlock.length
-    ? "这两类文件：会话工作本 + 上面列出的人物档案"
-    : "这一类文件：会话工作本";
+  const scope = single
+    ? "这一类文件：上面那份人物档案"
+    : (peopleBlock.length
+        ? "这两类文件：会话工作本 + 上面列出的人物档案"
+        : "这一类文件：会话工作本");
   parts.push(`2. 按 skill 的画像整理规则，只整理${scope}；该归并就归并` +
     "（合并重复、删一次性/已失效、把日期流水改写成结论）；没列出的文件不要动，不要扫目录；" +
     "不需要改就一个字都别改。");
@@ -634,22 +668,29 @@ export class Turns {
       this.state.setSession(current, sid);
       this.state.save();
 
-      // 配置开启时才把会话放进 danger-full-access；agent 需要它直接写两层文件。
+      // 配置开启时才把会话放进 danger-full-access；agent 需要它直接写记忆文件。
       this.applySessionPermission(agent);
-      const bookPath = this.profiles.pathFor(current.platform, current.chat_id, current.name);
+      // 群：工作本 + 人物档案；单聊：对方的人物档案一份（spec 0035）。
+      const selfId = this.selfIdFor(current.platform);
+      const memory = this.profiles.memoryFor(current.platform, current, selfId);
+      const legacyPath = memory.single
+        ? this.profiles.legacyBookFor(current.platform, current, selfId) : "";
+      const legacyHistory = legacyPath ? this.profiles.historyPathFor(legacyPath) : "";
       const firstTurn = current.prompt_session !== sid;
       const seen = this.peopleSeenFor(current.platform, current.chat_id, sid);
       const media = await this.resolveMedia(current, messages, agent);
-      const people = this.peopleFor(current.platform, current, messages, {
+      const people = memory.single ? [] : this.peopleFor(current.platform, current, messages, {
         cap: 5, seen: firstTurn ? null : seen,
       });
       for (const p of people) seen.add(p.id);
       const prompt = opening
         ? buildOpenPrompt(current.platform, current.name, current.chat_id, messages, {
-            bookPath, people, wakeMode: current.wake_mode || "mention", resetMin, kind: current.kind,
+            bookPath: memory.path, single: memory.single, legacyPath, legacyHistory, people,
+            wakeMode: current.wake_mode || "mention", resetMin, kind: current.kind,
           })
         : buildWakePrompt(current.platform, current.name, current.chat_id, messages, {
-            bookPath, people, interrupted, firstTurn, mediaMap: media.map,
+            bookPath: memory.path, single: memory.single, legacyPath, legacyHistory, people,
+            interrupted, firstTurn, mediaMap: media.map,
             wakeMode: current.wake_mode || "mention", resetMin, kind: current.kind,
           });
       const message = await makeUserMessage(prompt, media.parts);
@@ -1032,9 +1073,15 @@ export class Turns {
         if (!existing) return { ok: false, reason: "no_session" };
         const { agent, sessionId: sid, cwd } = existing;
         this.applySessionPermission(agent);
-        const bookPath = this.profiles.pathFor(current.platform, current.chat_id, current.name);
-        // 心跳只整理「最近 10 条里不同发言人」的人物档案（≤3），没发言人就不给档案块。
-        const people = this.peopleFor(current.platform, current, current.recent, {
+        // 心跳的记忆文件与真实轮一致：群两层，单聊只有对方的人物档案。
+        const selfId = this.selfIdFor(current.platform);
+        const memory = this.profiles.memoryFor(current.platform, current, selfId);
+        const legacyPath = memory.single
+          ? this.profiles.legacyBookFor(current.platform, current, selfId) : "";
+        const legacyHistory = legacyPath ? this.profiles.historyPathFor(legacyPath) : "";
+        // 心跳只整理「最近 10 条里不同发言人」的人物档案（≤3），没发言人就不给档案块；
+        // 单聊只有一份档案，不走这个块。
+        const people = memory.single ? [] : this.peopleFor(current.platform, current, current.recent, {
           cap: 3, p2pFallback: false,
         });
         const seenWarm = this.peopleSeenFor(current.platform, current.chat_id, sid);
@@ -1043,7 +1090,7 @@ export class Turns {
           Number(current.session_bound_at) || 0);
         const idleMin = lastReal ? Math.round((nowSec() - lastReal) / 60) : 0;
         const prompt = buildWarmPrompt(current.platform, current.name, current.chat_id, {
-          bookPath, people, idleMin,
+          bookPath: memory.path, single: memory.single, legacyPath, legacyHistory, people, idleMin,
         });
         const message = await makeUserMessage(prompt);
         // 构造载荷期间可能已有真实消息进来：再确认一次，别把心跳插到真实回复后面。
