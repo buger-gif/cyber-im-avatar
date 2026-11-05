@@ -156,7 +156,7 @@ test("/api/state only affects cached messages and reports not_cached otherwise",
   assert.equal(out.body.reason, "not_cached");
 });
 
-test("targets page reads profile files and saves by unique display name", async () => {
+test("targets page reads workbooks and saves by chat_id before legacy display name", async () => {
   const { app, state, profiles } = makeApp();
   state.ensureChat("feishu", "oc_a", { name: "同名", kind: "p2p", target: true });
   state.ensureChat("feishu", "oc_b", { name: "同名", kind: "p2p", target: true });
@@ -167,11 +167,231 @@ test("targets page reads profile files and saves by unique display name", async 
   assert.equal(target.chat_id, "oc_b");
   assert.match(target.profile, /^# 同名/m);
 
+  // 旧面板只给 platform+name：兼容，写到「同名 (2)」那个会话。
   out = await app.handle("/api/targets/profile", "POST", null, {
     platform: "feishu", name: "同名 (2)", text: "# 同名\n\n- 第二个对象\n",
   });
   assert.equal(out.body.ok, true);
   assert.match(fs.readFileSync(profiles.pathFor("feishu", "oc_b", "同名"), "utf8"), /第二个对象/);
+
+  // 新面板给 chat_id：即使带了会歧义的 name，也只写 chat_id 指向的会话，同名不串。
+  out = await app.handle("/api/targets/profile", "POST", null, {
+    platform: "feishu", chat_id: "oc_a", name: "同名 (2)", text: "# 同名\n\n- 按 chat_id 写\n",
+  });
+  assert.equal(out.body.ok, true);
+  assert.match(fs.readFileSync(profiles.pathFor("feishu", "oc_a", "同名"), "utf8"), /按 chat_id 写/);
+  assert.doesNotMatch(
+    fs.readFileSync(profiles.pathFor("feishu", "oc_b", "同名"), "utf8"),
+    /按 chat_id 写/,
+  );
+
+  // chat_id 不存在、name 也不匹配：not_found，不新造文件。
+  out = await app.handle("/api/targets/profile", "POST", null, {
+    platform: "feishu", chat_id: "oc_missing", text: "x",
+  });
+  assert.equal(out.body.ok, false);
+  assert.equal(out.body.reason, "not_found");
+});
+
+test("GET /api/persons lists person files without creating anything", async () => {
+  const { app, profiles } = makeApp();
+  let out = await app.handle("/api/persons", "GET");
+  assert.equal(out.status, 200);
+  assert.deepEqual(out.body.items, []);
+  assert.equal(fs.existsSync(profiles.peopleRoot), false, "列表只读：不建 people/ 目录");
+
+  profiles.writePerson("feishu", "ou_zhang", "张三", "# 张三\n\n- 采购负责人，先结论后细节\n");
+  profiles.writePerson("wecom", "user_li", "李四", "# 李四\n\n- 财务\n");
+  out = await app.handle("/api/persons", "GET");
+  assert.equal(out.body.ok, true);
+  assert.deepEqual(
+    out.body.items.map((p) => `${p.platform}:${p.person_id}`).sort(),
+    ["feishu:ou_zhang", "wecom:user_li"],
+  );
+  const zhang = out.body.items.find((p) => p.person_id === "ou_zhang");
+  assert.equal(zhang.name, "张三");
+  assert.match(zhang.profile, /先结论后细节/);
+  assert.match(zhang.profile_excerpt, /采购负责人/);
+  assert.equal(zhang.profile_path, profiles.personPathFor("feishu", "ou_zhang"));
+  assert.ok(zhang.profile_updated_at > 0);
+  assert.equal(zhang.bytes, Buffer.byteLength(zhang.profile, "utf8"));
+  assert.deepEqual(zhang.chat_ids, []);
+
+  out = await app.handle("/api/persons", "GET", new URLSearchParams("platform=wecom"));
+  assert.deepEqual(out.body.items.map((p) => p.person_id), ["user_li"]);
+});
+
+test("GET /api/persons derives chat_ids from recent senders and p2p chat ids", async () => {
+  const { app, state, profiles } = makeApp();
+  profiles.writePerson("feishu", "ou_zhang", "张三", "# 张三\n\n- 采购\n");
+  profiles.writePerson("feishu", "ou_li", "李四", "# 李四\n\n- 财务\n");
+  profiles.writePerson("feishu", "ou_wang", "王五", "# 王五\n\n- 客服\n");
+  profiles.writePerson("wecom", "ou_zhang", "张三", "# 张三\n\n- 企微同名\n");
+
+  const group = state.ensureChat("feishu", "oc_group", { name: "示例项目群", kind: "group" });
+  state.mergeRecent(group, [
+    msg("g2", 102, { sender_id: "ou_li", sender_name: "李四" }),
+    msg("g1", 101, { sender_id: "ou_zhang", sender_name: "张三" }),
+  ]);
+  const dm = state.ensureChat("feishu", "oc_dm", { name: "张三", kind: "p2p" });
+  state.mergeRecent(dm, [msg("d1", 103, { sender_id: "ou_zhang", sender_name: "张三" })]);
+  // 没有消息的私聊：飞书 ou_ 形态的 chat_id 就是对方 open_id，按平台形态兜底。
+  state.ensureChat("feishu", "ou_wang", { name: "王五", kind: "p2p" });
+  const wecomGroup = state.ensureChat("wecom", "wr_1", { name: "企微群", kind: "group" });
+  state.mergeRecent(wecomGroup, [msg("w1", 104, { sender_id: "ou_zhang", sender_name: "张三" })]);
+
+  const out = await app.handle("/api/persons", "GET");
+  const forPerson = (platform, id) =>
+    out.body.items.find((p) => p.platform === platform && p.person_id === id);
+
+  const zhang = forPerson("feishu", "ou_zhang");
+  assert.deepEqual(zhang.chat_ids.map((c) => c.chat_id).sort(), ["oc_dm", "oc_group"]);
+  assert.equal(zhang.chat_ids.find((c) => c.chat_id === "oc_group").name, "示例项目群");
+
+  assert.deepEqual(forPerson("feishu", "ou_li").chat_ids.map((c) => c.chat_id), ["oc_group"]);
+  assert.deepEqual(
+    forPerson("feishu", "ou_wang").chat_ids.map((c) => c.chat_id),
+    ["ou_wang"],
+    "无消息私聊按 chat_id 兜底",
+  );
+  // 平台不串：企微同名人物只看企微会话。
+  assert.deepEqual(
+    forPerson("wecom", "ou_zhang").chat_ids.map((c) => `${c.platform}:${c.chat_id}`),
+    ["wecom:wr_1"],
+  );
+});
+
+test("POST /api/persons/profile honours base_mtime and the 12KB hard limit", async () => {
+  const { app, profiles } = makeApp();
+  let out = await app.handle("/api/persons/profile", "POST", null, {
+    platform: "feishu", person_id: "ou_zhang", name: "张三",
+    text: "# 张三\n\n- 先结论后细节\n",
+  });
+  assert.equal(out.body.ok, true);
+  const file = profiles.personPathFor("feishu", "ou_zhang");
+  assert.equal(out.body.profile_path, file);
+  assert.match(out.body.profile, /先结论后细节/);
+  assert.equal(out.body.profile, fs.readFileSync(file, "utf8"));
+  const base = out.body.profile_updated_at;
+  assert.ok(base > 0);
+
+  // 面板拿到的 base_mtime 与磁盘一致：正常覆盖。
+  out = await app.handle("/api/persons/profile", "POST", null, {
+    platform: "feishu", person_id: "ou_zhang", text: "# 张三\n\n- 只看结论\n", base_mtime: base,
+  });
+  assert.equal(out.body.ok, true);
+
+  // 磁盘比 base_mtime 新（agent 刚写过）：回 stale，且不覆盖。
+  out = await app.handle("/api/persons/profile", "POST", null, {
+    platform: "feishu", person_id: "ou_zhang", text: "# 张三\n\n- 面板旧草稿\n", base_mtime: base - 5,
+  });
+  assert.equal(out.body.ok, false);
+  assert.equal(out.body.reason, "stale");
+  assert.match(fs.readFileSync(file, "utf8"), /只看结论/);
+  assert.doesNotMatch(fs.readFileSync(file, "utf8"), /面板旧草稿/);
+
+  // 12KB 硬上限：按 UTF-8 字节拒写，不截断。
+  out = await app.handle("/api/persons/profile", "POST", null, {
+    platform: "feishu", person_id: "ou_zhang", text: "字".repeat(4097),
+  });
+  assert.equal(out.body.ok, false);
+  assert.match(out.body.reason, /12KB/);
+  assert.equal(fs.readFileSync(file, "utf8"), "# 张三\n\n- 只看结论\n");
+
+  // 缺 platform / person_id：bad_request。
+  out = await app.handle("/api/persons/profile", "POST", null, { text: "x" });
+  assert.equal(out.body.ok, false);
+  assert.equal(out.body.reason, "bad_request");
+});
+
+test("two people with the same display name never cross-write", async () => {
+  const { app, profiles } = makeApp();
+  const a = profiles.writePerson("feishu", "ou_a1", "张三", "# 张三\n\n- A 的结论\n");
+  const b = profiles.writePerson("feishu", "ou_b1", "张三", "# 张三\n\n- B 的结论\n");
+  assert.notEqual(a.path, b.path);
+
+  const out = await app.handle("/api/persons/profile", "POST", null, {
+    platform: "feishu", person_id: "ou_a1", name: "张三", text: "# 张三\n\n- A 更新\n",
+  });
+  assert.equal(out.body.ok, true);
+  assert.match(fs.readFileSync(a.path, "utf8"), /A 更新/);
+  assert.match(fs.readFileSync(b.path, "utf8"), /B 的结论/);
+  assert.doesNotMatch(fs.readFileSync(b.path, "utf8"), /A 更新/);
+
+  const list = (await app.handle("/api/persons", "GET")).body.items
+    .filter((p) => p.name === "张三").map((p) => p.person_id).sort();
+  assert.deepEqual(list, ["ou_a1", "ou_b1"], "同名不同 ID 各自一份");
+});
+
+test("DELETE /api/persons deletes one file and reports whether it existed", async () => {
+  const { app, profiles } = makeApp();
+  const a = profiles.writePerson("feishu", "ou_a1", "张三", "# 张三\n");
+  const b = profiles.writePerson("feishu", "ou_b1", "李四", "# 李四\n");
+
+  let out = await app.handle("/api/persons", "DELETE", null,
+    { platform: "feishu", person_id: "ou_a1" });
+  assert.equal(out.body.ok, true);
+  assert.equal(out.body.deleted, true);
+  assert.equal(fs.existsSync(a.path), false);
+  assert.equal(fs.existsSync(b.path), true, "只删指定那份");
+
+  out = await app.handle("/api/persons", "DELETE", null,
+    { platform: "feishu", person_id: "ou_a1" });
+  assert.equal(out.body.ok, true);
+  assert.equal(out.body.deleted, false, "文件本来不存在也回 ok");
+
+  out = await app.handle("/api/persons", "DELETE", null, { platform: "feishu" });
+  assert.equal(out.body.ok, false);
+  assert.equal(out.body.reason, "bad_request");
+  assert.equal((await app.handle("/api/persons/profile", "DELETE")).status, 404);
+});
+
+test("/api/targets attaches person info only to p2p rows, without creating files", async () => {
+  const { app, state, profiles } = makeApp();
+  state.ensureChat("feishu", "ou_zhang", { name: "张三", kind: "p2p", target: true });
+  state.ensureChat("feishu", "oc_group", { name: "示例项目群", kind: "group", target: true });
+  state.ensureChat("wecom", "zhangsan", { name: "企微张三", kind: "p2p", target: true });
+  const known = profiles.writePerson("feishu", "ou_zhang", "张三", "# 张三\n\n- 采购负责人\n");
+
+  const out = await app.handle("/api/targets", "GET");
+  assert.equal(out.status, 200);
+  const row = (platform, chatId) =>
+    out.body.items.find((t) => t.platform === platform && t.chat_id === chatId);
+
+  const zhang = row("feishu", "ou_zhang");
+  assert.match(zhang.profile, /^# 张三/m, "profile* 仍是会话工作本");
+  assert.match(zhang.profile_path, /profiles[\\/]feishu[\\/]ou_zhang\.md$/);
+  assert.equal(zhang.person.person_id, "ou_zhang");
+  assert.equal(zhang.person.path, known.path);
+  assert.match(zhang.person.excerpt, /采购负责人/);
+  assert.ok(zhang.person.updated_at > 0);
+  assert.equal(zhang.person.exists, true);
+
+  const wecom = row("wecom", "zhangsan");
+  assert.equal(wecom.person.person_id, "zhangsan");
+  assert.equal(wecom.person.exists, false);
+  assert.equal(wecom.person.excerpt, "");
+  assert.equal(wecom.person.updated_at, 0);
+  assert.equal(fs.existsSync(wecom.person.path), false, "读 targets 不建人物档案");
+
+  assert.equal(row("feishu", "oc_group").person, undefined, "群不挂 person");
+});
+
+test("forget removes the workbook and chat but keeps person files", async () => {
+  const { app, state, profiles } = makeApp();
+  const chat = state.ensureChat("feishu", "ou_zhang", { name: "张三", kind: "p2p", target: true });
+  chat.watching = true;
+  const book = profiles.ensure("feishu", "ou_zhang", "张三");
+  const person = profiles.writePerson("feishu", "ou_zhang", "张三", "# 张三\n\n- 跨会话保留\n");
+
+  const out = await app.handle("/api/forget", "DELETE", null, {
+    platform: "feishu", chat_id: "ou_zhang",
+  });
+  assert.equal(out.body.ok, true);
+  assert.equal(state.getChat("feishu", "ou_zhang"), null);
+  assert.equal(fs.existsSync(book.path), false, "会话工作本随会话删除");
+  assert.equal(fs.existsSync(person.path), true, "人物档案不随会话删除");
+  assert.match(fs.readFileSync(person.path, "utf8"), /跨会话保留/);
 });
 
 test("chatWake refuses blocked/unwatched and starts a real turn for pending", async () => {

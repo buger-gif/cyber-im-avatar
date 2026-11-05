@@ -26,3 +26,6 @@ dsh-plugin/skill/
 
 # 本机/其他宿主的探索性实验，不属于本项目交付物
 probe/
+
+# screenshot 脚本的中间产物（提交用图在 docs/images/）
+dsh-plugin/screenshots/

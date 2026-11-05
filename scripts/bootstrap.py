@@ -12,8 +12,12 @@
   python3 bootstrap.py                        # 全量探测
   python3 bootstrap.py --smoke feishu oc_xxx  # 对某会话冒烟测试
   python3 bootstrap.py --alias feishu "张三私聊" oc_xxx  # 注册会话别名
-  python3 bootstrap.py --note feishu "张三私聊" "对价格敏感，周五不回消息"  # 给服务对象记档案
-  python3 bootstrap.py --compact feishu "张三私聊" [--dry-run]  # 画像去重/归档旧结论
+  python3 bootstrap.py --note feishu "张三私聊" "周五前给结论"  # 给会话工作本补记一条
+  python3 bootstrap.py --compact feishu "张三私聊" [--dry-run]  # 工作本去重/归档旧结论
+  python3 bootstrap.py --person-path feishu ou_xxx [--name 张三]  # 人物档案路径（按需建模板）
+  python3 bootstrap.py --person-note feishu ou_xxx "先结论后细节"  # 追加人物结论
+  python3 bootstrap.py --compact-person feishu ou_xxx [--dry-run]  # 整理人物档案
+  python3 bootstrap.py --persons [feishu]                   # 列出人物档案（path<TAB>name）
   python3 bootstrap.py --learn-style feishu --chats oc_xxx [--limit 100]  # 脱敏语料
   python3 bootstrap.py --delete-data --yes                 # 删除个人数据
 """
@@ -33,10 +37,15 @@ from data_guard import (atomic_write_json, atomic_write_text, ensure_private_dir
 ENV_DIR = os.environ.get("IM_STANDIN_DIR") or os.path.expanduser("~/.im-standin")
 ENV_PATH = os.path.join(ENV_DIR, "env.json")
 PROFILES_DIR = os.path.join(ENV_DIR, "profiles")
+PEOPLE_DIR = os.path.join(PROFILES_DIR, "people")
 PROFILE_MAX_BYTES = 12 * 1024
 PROFILE_SOFT_BYTES = 8 * 1024
 PROFILE_MAX_HISTORY = 20
 PROFILE_MAX_DATED = 8
+# 结论段标题：人物档案固定「历史结论」；会话工作本新版四段用「本会话结论与待办」，
+# 旧版四段画像仍是「历史结论」（懒迁移期间两种文件都要能读能写）。
+PROFILE_TAIL = "## 历史结论"
+WORKBOOK_TAIL = "## 本会话结论与待办"
 _SAFE_RE = re.compile(r"[^0-9A-Za-z._\-\u4e00-\u9fff]+")
 
 
@@ -51,14 +60,51 @@ def _profile_rel(platform, node, alias):
     return os.path.join("profiles", plat, fid + ".md")
 
 
+def _safe_part(value):
+    """与 dsh-plugin/lib/profiles.js 的 safePart 逐字节一致。
+
+    trim → 非法连续段替 _ → 去首尾 ._- → 前 80 字符；None 视为空。
+    """
+    if value is None:
+        return ""
+    text = value if isinstance(value, str) else str(value)
+    return _SAFE_RE.sub("_", text.strip()).strip("._-")[:80]
+
+
+def _person_rel(platform, person_id):
+    """人物档案相对路径：profiles/people/<platform>/<safe(person_id)>.md。
+
+    与 Node personRel 逐字节一致；空 person_id 返回 ""（不建档案，不用显示名兜底）。
+    """
+    pid = _safe_part(person_id)
+    if not pid:
+        return ""
+    plat = _safe_part(platform) or "unknown"
+    return os.path.join("profiles", "people", plat, pid + ".md")
+
+
 def _profile_template(alias, platform, chat_id):
+    """会话工作本模板：四段只写本会话成立的要求与上下文；与 Node profileTemplate 同节。"""
     return (
         "# %s\n\n> %s · %s\n"
-        "> 画像由值守 agent 与面板共同维护：只写下次值守还会用到的信息，不保存聊天原文。\n\n"
-        "## 对方是谁\n\n## 沟通偏好\n\n## 在意与忌讳\n\n## 历史结论\n"
+        "> 会话工作本：只写本会话成立的要求与上下文（群规、回复口径、成员角色）；"
+        "个人评价写人物档案。\n\n"
+        "## 这个会话是什么\n\n## 群内工作要求\n\n## 成员与角色\n\n## 本会话结论与待办\n"
         % (alias or chat_id or "服务对象",
            {"feishu": "飞书", "wecom": "企业微信", "dingtalk": "钉钉"}.get(platform, platform),
            chat_id or "未绑定会话"))
+
+
+def _person_template(name, platform, person_id):
+    """人物档案模板：四段固定，跨会话复用；与 Node personTemplate 同字面。"""
+    return (
+        "# %s\n\n> %s · 人物档案%s\n"
+        "> 人物级评价，跨会话复用：只写下次值守还会用到的信息，不保存聊天原文。\n\n"
+        "## 身份与角色\n\n## 沟通偏好\n\n## 在意与忌讳\n\n## 历史结论\n"
+        % (name or person_id or "人物",
+           {"feishu": "飞书", "wecom": "企业微信", "dingtalk": "钉钉"}.get(platform, platform),
+           " · " + person_id if person_id else "")
+    )
 
 
 def ensure_profile(platform, alias, node):
@@ -68,6 +114,20 @@ def ensure_profile(platform, alias, node):
         atomic_write_text(path, _profile_template(alias, platform, node.get("chat_id") or ""))
     node["profile_file"] = rel
     node.pop("profile", None)
+    return path
+
+
+def ensure_person(platform, person_id, name=""):
+    """确保人物档案存在并按需建模板；目录链 700、文件 600。空 ID 返回 ""（不建档）。"""
+    rel = _person_rel(platform, person_id)
+    if not rel:
+        return ""
+    path = os.path.join(ENV_DIR, rel)
+    # 人物命令不经过 save_env，自己把目录链收紧，避免中间目录留成 755。
+    for directory in (ENV_DIR, PROFILES_DIR, PEOPLE_DIR, os.path.dirname(path)):
+        ensure_private_dir(directory)
+    if not os.path.isfile(path):
+        atomic_write_text(path, _person_template(name, platform, person_id))
     return path
 
 
@@ -96,14 +156,25 @@ def _dated_bullet(line):
     return bool(re.match(r"^-\s*(\d{1,2}-\d{1,2}|\d{4}-\d{2}-\d{2})\b", line.strip()))
 
 
-def _compact_profile_text(text):
-    """去重 + 把「历史结论」最旧的 bullet 移到 history。
+def _workbook_section(text):
+    """会话工作本的结论段标题：新版四段优先；旧画像只有「历史结论」就沿用；都没有按新版。"""
+    if WORKBOOK_TAIL in text:
+        return WORKBOOK_TAIL
+    if PROFILE_TAIL in text:
+        return PROFILE_TAIL
+    return WORKBOOK_TAIL
 
-    新条目由 append_profile_note 插在最前，所以列表末尾最旧。
+
+def _compact_profile_text(text, section=None):
+    """去重 + 把结论段最旧的 bullet 移到 history。
+
+    section 为空时按会话工作本识别（新版「本会话结论与待办」/ 旧版「历史结论」）；
+    人物档案显式传「历史结论」。新条目由 append*_note 插在最前，所以列表末尾最旧。
     返回 (新正文, 被归档的 bullet, 去重条数, 是否仍超硬上限)。
     """
     text, dedup = _dedupe_profile_bullets(text)
-    head, sep, tail = text.partition("## 历史结论")
+    section = section or _workbook_section(text)
+    head, sep, tail = text.partition(section)
     removed = []
     if sep:
         body = tail.splitlines()
@@ -141,28 +212,30 @@ def _archive_profile_bullets(path, bullets):
 
 
 def append_profile_note(platform, alias, node, note):
+    """给会话工作本补记一条结论：新版写「本会话结论与待办」，旧画像沿用「历史结论」。"""
     path = ensure_profile(platform, alias, node)
     try:
         with open(path) as f:
             text = f.read()
     except OSError:
         text = _profile_template(alias, platform, node.get("chat_id") or "")
-    if "## 历史结论" not in text:
-        text = text.rstrip() + "\n\n## 历史结论\n"
-    head, tail = text.split("## 历史结论", 1)
+    section = _workbook_section(text)
+    if section not in text:
+        text = text.rstrip() + "\n\n" + section + "\n"
+    head, tail = text.split(section, 1)
     rest = tail.lstrip("\n")
     bullet = "- " + note
     if bullet not in text:
-        text = head + "## 历史结论\n\n" + bullet
+        text = head + section + "\n\n" + bullet
         if rest.strip():
             text += "\n\n" + rest.rstrip() + "\n"
         else:
             text += "\n"
-        text, removed, _dedup, too_big = _compact_profile_text(text)
+        text, removed, _dedup, too_big = _compact_profile_text(text, section)
         atomic_write_text(path, text)
         _archive_profile_bullets(path, removed)
         if too_big:
-            print("WARN: 画像仍超过 12KB，请运行 --compact 或手动压缩", file=sys.stderr)
+            print("WARN: 会话工作本仍超过 12KB，请运行 --compact 或手动压缩", file=sys.stderr)
     return path
 
 
@@ -178,25 +251,138 @@ def compact_profile(platform, alias, dry_run=False):
         with open(path) as f:
             text = f.read()
     except OSError as e:
-        print(f"ERROR: 读不到画像: {e}", file=sys.stderr)
+        print(f"ERROR: 读不到会话工作本: {e}", file=sys.stderr)
         return 2
     before = len(text.encode("utf-8"))
-    new_text, removed, dedup, too_big = _compact_profile_text(text)
+    section = _workbook_section(text)
+    new_text, removed, dedup, too_big = _compact_profile_text(text, section)
     after = len(new_text.encode("utf-8"))
     summary = (f"{before / 1024:.1f}KB -> {after / 1024:.1f}KB，"
                f"去重 {dedup} 条，归档 {len(removed)} 条")
     if dry_run:
-        print(f"[dry-run] 画像整理预演: {summary}")
+        print(f"[dry-run] 会话工作本整理预演: {summary}")
         return 0
     if new_text != text:
         atomic_write_text(path, new_text)
     dest = _archive_profile_bullets(path, removed)
-    print(f"[ok] 画像已整理: {summary}" + (f" -> {dest}" if dest else ""))
+    print(f"[ok] 会话工作本已整理: {summary}" + (f" -> {dest}" if dest else ""))
     if too_big:
-        print("WARN: 画像仍超过 12KB，请压缩「对方是谁 / 沟通偏好 / 在意与忌讳」段",
+        print("WARN: 会话工作本仍超过 12KB，请压缩「群内工作要求 / 成员与角色」等段落",
               file=sys.stderr)
         return 2
     return 0
+
+
+def append_person_note(platform, person_id, note, name=""):
+    """人物档案追加一条历史结论：置顶、去重、≤20 条；超 12KB 时整理并归档。
+
+    返回档案路径；person_id 为空或整理后仍超 12KB 硬上限时拒绝写入并抛 ValueError。
+    """
+    path = ensure_person(platform, person_id, name)
+    if not path:
+        raise ValueError("人物 ID 为空，不建人物档案")
+    try:
+        with open(path, encoding="utf-8") as f:
+            text = f.read()
+    except OSError:
+        text = _person_template(name, platform, person_id)
+    if PROFILE_TAIL not in text:
+        text = text.rstrip() + "\n\n" + PROFILE_TAIL + "\n"
+    head, tail = text.split(PROFILE_TAIL, 1)
+    rest = tail.lstrip("\n")
+    bullet = "- " + note
+    if bullet in text:
+        return path
+    text = head + PROFILE_TAIL + "\n\n" + bullet
+    if rest.strip():
+        text += "\n\n" + rest.rstrip() + "\n"
+    else:
+        text += "\n"
+    text, removed, _dedup, too_big = _compact_profile_text(text, PROFILE_TAIL)
+    if too_big:
+        raise ValueError(f"人物档案超过 12KB 硬上限，拒绝写入: {path}")
+    atomic_write_text(path, text)
+    _archive_profile_bullets(path, removed)
+    return path
+
+
+def compact_person(platform, person_id, dry_run=False):
+    """整理人物档案：去重 + 把最旧的历史结论归档到 .history.md；超 12KB 拒写。"""
+    path = ensure_person(platform, person_id)
+    if not path:
+        print("ERROR: 人物 ID 为空，无法定位人物档案", file=sys.stderr)
+        return 2
+    try:
+        with open(path, encoding="utf-8") as f:
+            text = f.read()
+    except OSError as e:
+        print(f"ERROR: 读不到人物档案: {e}", file=sys.stderr)
+        return 2
+    before = len(text.encode("utf-8"))
+    new_text, removed, dedup, too_big = _compact_profile_text(text, PROFILE_TAIL)
+    after = len(new_text.encode("utf-8"))
+    summary = (f"{before / 1024:.1f}KB -> {after / 1024:.1f}KB，"
+               f"去重 {dedup} 条，归档 {len(removed)} 条")
+    if dry_run:
+        print(f"[dry-run] 人物档案整理预演: {summary}")
+        if too_big:
+            print("WARN: 整理后仍超过 12KB 硬上限，正式执行会拒写", file=sys.stderr)
+        return 0
+    if too_big:
+        print("ERROR: 人物档案整理后仍超过 12KB 硬上限，拒绝写入；"
+              "请手动精简「身份与角色 / 沟通偏好 / 在意与忌讳」段", file=sys.stderr)
+        return 2
+    if new_text != text:
+        atomic_write_text(path, new_text)
+    dest = _archive_profile_bullets(path, removed)
+    print(f"[ok] 人物档案已整理: {summary}" + (f" -> {dest}" if dest else ""))
+    return 0
+
+
+def _person_name(path, fallback):
+    """名字取文件首个一级标题（与 Node titleOf 一致，最长 80）；没有标题回退文件名。"""
+    try:
+        with open(path, encoding="utf-8") as f:
+            for line in f:
+                m = re.match(r"^#\s+(.+)$", line.strip())
+                if m:
+                    return m.group(1).strip()[:80]
+    except OSError:
+        pass
+    return fallback
+
+
+def list_persons(platform=""):
+    """列出人物档案：每行 `<绝对路径>\\t<名字>`；只读，不 ensure、不建文件。"""
+    if platform:
+        plat = _safe_part(platform)
+        if not plat:
+            print(f"ERROR: 平台名无法作为目录名: {platform!r}", file=sys.stderr)
+            return 2
+        plats = [plat]
+    else:
+        try:
+            plats = sorted(name for name in os.listdir(PEOPLE_DIR)
+                           if os.path.isdir(os.path.join(PEOPLE_DIR, name)))
+        except OSError:
+            return 0
+    rows = []
+    for plat in plats:
+        directory = os.path.join(PEOPLE_DIR, plat)
+        try:
+            files = os.listdir(directory)
+        except OSError:
+            continue
+        for fname in files:
+            if not fname.endswith(".md") or fname.endswith(".history.md"):
+                continue
+            path = os.path.join(directory, fname)
+            if os.path.isfile(path):
+                rows.append((plat, fname[:-3], path))
+    for plat, person_id, path in sorted(rows):
+        print(f"{os.path.abspath(path)}\t{_person_name(path, person_id)}")
+    return 0
+
 
 PLATFORMS = {
     "feishu": {
@@ -781,7 +967,7 @@ def resolve(env, platform, query, register=True):
 
 def delete_data(confirm=False):
     if not confirm:
-        print("ERROR: --delete-data 会删除 env.json、画像、语料、persona 和水位；"
+        print("ERROR: --delete-data 会删除 env.json、画像（含人物档案）、语料、persona 和水位；"
               "确认请追加 --yes", file=sys.stderr)
         return 2
     removed = []
@@ -816,11 +1002,20 @@ def main():
     ap.add_argument("--alias", nargs=3, metavar=("PLATFORM", "ALIAS", "CHAT_ID"),
                     help="注册会话别名，之后可用别名指代会话")
     ap.add_argument("--note", nargs=3, metavar=("PLATFORM", "ALIAS", "TEXT"),
-                    help="给服务对象追加一条档案（喜好/忌讳/关系/历史结论）")
+                    help="给会话工作本补记一条（新版落在「本会话结论与待办」）")
     ap.add_argument("--compact", nargs=2, metavar=("PLATFORM", "ALIAS"),
-                    help="整理画像：去重 + 把最旧的历史结论归档到 .history.md")
+                    help="整理会话工作本：去重 + 把最旧结论归档到 .history.md")
     ap.add_argument("--dry-run", action="store_true",
-                    help="配合 --compact 只打印整理结果，不写盘")
+                    help="配合 --compact / --compact-person 只打印整理结果，不写盘")
+    ap.add_argument("--person-path", nargs=2, metavar=("PLATFORM", "PERSON_ID"),
+                    help="确保人物档案存在并打印绝对路径（不写 env.json 索引）")
+    ap.add_argument("--person-note", nargs=3, metavar=("PLATFORM", "PERSON_ID", "TEXT"),
+                    help="给人物档案追加一条历史结论（置顶、去重；超 12KB 整理/拒写）")
+    ap.add_argument("--compact-person", nargs=2, metavar=("PLATFORM", "PERSON_ID"),
+                    help="整理人物档案：去重 + 把最旧的历史结论归档到 .history.md")
+    ap.add_argument("--persons", nargs="?", const="", default=None, metavar="PLATFORM",
+                    help="列出人物档案（每行 path<TAB>name），可按平台过滤；只读")
+    ap.add_argument("--name", default="", help="配合 --person-path / --person-note 指定显示名")
     ap.add_argument("--learn-style", metavar="PLATFORM",
                     help="从 --chats 显式选择的会话抓本人语料并脱敏")
     ap.add_argument("--chats", default="",
@@ -828,7 +1023,7 @@ def main():
     ap.add_argument("--retention-days", type=int, default=30,
                     help="语料保留天数，默认 30；0=不限")
     ap.add_argument("--delete-data", action="store_true",
-                    help="删除 env.json、语料、persona 和水位（必须加 --yes）")
+                    help="删除 env.json、画像（含人物档案）、语料、persona 和水位（必须加 --yes）")
     ap.add_argument("--yes", action="store_true", help="确认 --delete-data")
     ap.add_argument("--page-limit", type=int, default=3,
                     help="全量列表兜底的最大页数（默认 3 页≈60 会话）")
@@ -837,6 +1032,33 @@ def main():
 
     if args.delete_data:
         sys.exit(delete_data(args.yes))
+
+    # 人物档案：纯路径推导，不读不写 env.json（与 DSH 形态的 profiles.js 一致）。
+    if args.person_path:
+        platform, person_id = args.person_path
+        path = ensure_person(platform, person_id, args.name)
+        if not path:
+            print("ERROR: 人物 ID 为空，不建人物档案", file=sys.stderr)
+            sys.exit(2)
+        print(os.path.abspath(path))
+        return
+
+    if args.person_note:
+        platform, person_id, text = args.person_note
+        try:
+            path = append_person_note(platform, person_id, text, args.name)
+        except ValueError as e:
+            print(f"ERROR: {e}", file=sys.stderr)
+            sys.exit(2)
+        print(f"[ok] 人物档案已追加: {path}")
+        return
+
+    if args.compact_person:
+        platform, person_id = args.compact_person
+        sys.exit(compact_person(platform, person_id, args.dry_run))
+
+    if args.persons is not None:
+        sys.exit(list_persons(args.persons))
 
     env = load_env()
     if args.probe:
@@ -872,7 +1094,7 @@ def main():
             sys.exit(2)
         path = append_profile_note(platform, alias, t, text)
         save_env(env)
-        print(f"[ok] 画像已追加: {path}")
+        print(f"[ok] 会话工作本已补记: {path}")
         return
 
     if args.compact:

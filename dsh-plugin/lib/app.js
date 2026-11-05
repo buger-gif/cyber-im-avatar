@@ -8,7 +8,7 @@ import { publicConfig, normalizeConfig, SUPPORTED_PLATFORMS } from "./state.js";
 import { isMention } from "./im.js";
 import * as workspaces from "./workspaces.js";
 import * as sessions from "./sessions.js";
-import { excerpt } from "./profiles.js";
+import { chatPersonId, excerpt } from "./profiles.js";
 import fs from "node:fs";
 import path from "node:path";
 
@@ -34,6 +34,7 @@ export const ROUTES = {
   "/api/config": "getConfig",
   "/api/workspaces": "workspaces",
   "/api/targets": "targets",
+  "/api/persons": "persons",
   "/api/chat/workspace": "chatWorkspace",
   "/api/chat/session": "chatSession",
   "/api/logs": "logs",
@@ -44,12 +45,14 @@ export const POST_ROUTES = {
   "/api/config": "setConfig",
   "/api/platforms": "setPlatform",
   "/api/targets/profile": "targetProfile",
+  "/api/persons/profile": "personProfile",
   "/api/chat/session/reset": "chatSessionReset",
   "/api/chat/wake": "chatWake",
 };
 
 export const DELETE_ROUTES = {
   "/api/forget": "forget",
+  "/api/persons": "personDelete",
 };
 
 function q1(q, key, fallback = "") {
@@ -434,6 +437,7 @@ export class App {
     if (!platform || !chatId) return { ok: false, reason: "bad_request" };
     const chat = this.state.getChat(platform, chatId);
     this.turns.cancel(platform, chatId, "forget");
+    // 只删会话工作本与会话状态：人物档案跨会话保留，删除走 DELETE /api/persons。
     if (chat) this.profiles.delete(platform, chatId, chat.name);
     this.state.deleteChat(platform, chatId);
     return { ok: true };
@@ -624,11 +628,72 @@ export class App {
     return { items: workspaces.listWorkspaces(), default: workspaces.defaultPath() };
   }
 
+  /**
+   * 一份人物档案出现在哪些会话里：p2p 用 chatPersonId 推（无消息时可按平台形态
+   * 用 chat_id 兜底），群聊只看 recent 的 sender_id。纯读聚合，不写 state。
+   */
+  chatHasPerson(chat, personId) {
+    const id = String(personId || "");
+    if (!chat || !id) return false;
+    if (chatPersonId(chat.platform, chat, this.selfId(chat.platform)) === id) return true;
+    return (chat?.recent || []).some((m) => String(m?.sender_id || "") === id);
+  }
+
+  /**
+   * 人物档案列表：扫 profiles/people/ 目录，只读、不 ensure、不建空档案。
+   * chat_ids 是出处会话（{platform, chat_id, name}），只做反查、不落盘。
+   */
+  async persons(q) {
+    const platform = String(q1(q, "platform") || "");
+    const chats = this.state.listChats();
+    const items = this.profiles.listPeople(platform).map((p) => ({
+      platform: p.platform,
+      person_id: p.person_id,
+      name: p.name,
+      profile: p.text,
+      profile_excerpt: p.excerpt,
+      profile_path: p.path,
+      profile_updated_at: p.mtime,
+      bytes: p.bytes,
+      chat_ids: chats
+        .filter((c) => c.platform === p.platform && this.chatHasPerson(c, p.person_id))
+        .map((c) => ({ platform: c.platform, chat_id: c.chat_id, name: c.name })),
+    }));
+    return { ok: true, items };
+  }
+
+  /**
+   * 面板覆盖写人物档案。base_mtime 是面板加载时的 mtime：磁盘比它新就回 stale，
+   * 不静默覆盖 agent 刚写的内容；12KB 硬上限沿用 profiles.writePerson。
+   */
+  async personProfile(q, body = {}) {
+    const platform = String(pick(q, body, "platform") || "");
+    const personId = String(pick(q, body, "person_id") || "").trim();
+    const name = String(pick(q, body, "name") || "");
+    const text = pick(q, body, "text", undefined);
+    if (!platform || !personId) return { ok: false, reason: "bad_request" };
+    const baseMtime = Number(pick(q, body, "base_mtime", 0)) || 0;
+    const r = this.profiles.writePerson(platform, personId, name, text, { baseMtime });
+    if (!r.ok) return { ok: false, reason: r.reason };
+    return {
+      ok: true, profile: r.text, profile_path: r.path,
+      profile_updated_at: r.mtime,
+    };
+  }
+
+  /** 删除一份人物档案（显式操作）。删会话走 /api/forget，不会连带删人物。 */
+  async personDelete(q, body = {}) {
+    const platform = String(pick(q, body, "platform") || "");
+    const personId = String(pick(q, body, "person_id") || "").trim();
+    if (!platform || !personId) return { ok: false, reason: "bad_request" };
+    return { ok: true, deleted: this.profiles.deletePerson(platform, personId) };
+  }
+
   async targets() {
     const rows = [];
     for (const chat of this.state.listChats().filter((c) => c.target)) {
       const prof = this.profiles.ensure(chat.platform, chat.chat_id, chat.name);
-      rows.push({
+      const row = {
         platform: chat.platform,
         name: chat.name,
         chat_id: chat.chat_id,
@@ -640,7 +705,23 @@ export class App {
         profile_updated_at: prof.mtime,
         in_env: false,
         chat: this.publicChat(chat),
-      });
+      };
+      // profile* 是会话工作本；私聊能推出人物 ID 时再挂人物档案元信息。
+      // 群不挂 person：人物评价属于人，不属于群（群详情用人物列表反查 chips）。
+      if (row.kind === "p2p") {
+        const personId = chatPersonId(chat.platform, chat, this.selfId(chat.platform));
+        if (personId) {
+          const person = this.profiles.readPerson(chat.platform, personId);
+          row.person = {
+            person_id: personId,
+            path: person.path,
+            excerpt: excerpt(person.text),
+            updated_at: person.mtime,
+            exists: !!person.exists,
+          };
+        }
+      }
+      rows.push(row);
     }
     rows.sort((a, b) => {
       const aw = (a.chat?.watching ? 0 : 1) - (b.chat?.watching ? 0 : 1);
@@ -652,13 +733,29 @@ export class App {
     return { items: rows };
   }
 
-  async targetProfile(q, body) {
-    const platform = body.platform;
-    const name = body.name;
-    if (!platform || !name) return { ok: false, reason: "bad_request" };
-    const chat = this.state.listChats().find((c) => c.platform === platform && c.target && c.name === name);
+  /**
+   * 写会话工作本。优先按 chat_id 定位会话：同名不同会话不会串；
+   * 旧面板只给 platform+name 时再按显示名找 target 兜底。
+   */
+  async targetProfile(q, body = {}) {
+    const platform = String(pick(q, body, "platform") || "");
+    const chatId = String(pick(q, body, "chat_id") || "");
+    const name = String(pick(q, body, "name") || "");
+    if (!platform) return { ok: false, reason: "bad_request" };
+    let chat = null;
+    if (chatId) {
+      const found = this.state.getChat(platform, chatId);
+      if (found && found.target) chat = found;
+    }
+    if (!chat && name) {
+      chat = this.state.listChats().find(
+        (c) => c.platform === platform && c.target && c.name === name,
+      ) || null;
+    }
     if (!chat) return { ok: false, reason: "not_found" };
-    const r = this.profiles.write(platform, chat.chat_id, chat.name, body.text);
+    const r = this.profiles.write(
+      platform, chat.chat_id, chat.name, pick(q, body, "text", undefined),
+    );
     if (!r.ok) return { ok: false, reason: r.reason };
     return {
       ok: true, profile: r.text, profile_path: r.path,

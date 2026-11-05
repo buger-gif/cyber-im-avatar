@@ -68,6 +68,18 @@
 单条消息的正文在 `text`（字符串），发送者是 `senderId`（可能是 `Dd…` 开头的
 openDingTalkId，不等于 `userId`），时间 `createTime` 形如 `2026-11-03 08:56:34`。
 
+## 人物 ID（人物档案的键）与已知限制
+
+- 消息里的 `senderId` 就是**人物 ID**，原样用作
+  `~/.im-standin/profiles/people/dingtalk/<senderId>.md` 的文件名，不 lower、不用 `senderName`。
+- **已知限制：`senderId` 可能不等于 `userId`**。`senderId` 常见 `Dd…` 开头的
+  openDingTalkId（消息里的稳定键），`userId` 是通讯录与单聊读消息（`--user`）用的那个，
+  两者目前没有可靠的自动映射。**本期只记录双 ID、不自动合并**：档案头记 `senderId`，
+  首次能对上时在「身份与角色」补一行 `userId`；真机验证后再定合并规则。
+- 私聊拿不到最近消息时**不拿 chat_id 猜人物档案**（钉钉 chat_id 与 userId 的关系未验证），
+  只给会话工作本——宁可少一份档案，也不静默写错人。
+- 需要精确对应时用 `dws contact user search --query` 拿 `userId`，与消息 `senderId` 人工对照。
+
 ## 校准流程
 
 ```bash

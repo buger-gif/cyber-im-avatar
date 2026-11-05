@@ -23,14 +23,6 @@ window.__ModuleLoader__.load({
     wecom: { label: "企业微信", short: "企", color: "#22c55e" },
     dingtalk: { label: "钉钉", short: "钉", color: "#1890FF" }
   };
-  var KIND = {
-    dm: { label: "私聊", color: "var(--dsw-alias-state-business-primary,#4176e6)" },
-    mention: { label: "@我", color: "var(--dsw-alias-state-warn-primary,#f59e0b)" },
-    service: { label: "客服", color: "var(--dsw-alias-state-success-primary,#22c55e)" },
-    fyi: { label: "知会", color: "var(--dsw-alias-label-tertiary,#81858c)" },
-    out: { label: "已发", color: "var(--dsw-alias-label-tertiary,#81858c)" },
-    cmd: { label: "指令", color: "var(--accent,var(--dsw-alias-label-secondary,#6b7280))" }
-  };
   var MEDIA_LABEL = {
     image: "[图片]", file: "[文件]", audio: "[语音]", voice: "[语音]",
     media: "[视频]", video: "[视频]", sticker: "[表情]", post: "[富文本]",
@@ -39,7 +31,6 @@ window.__ModuleLoader__.load({
   };
 
   var SVG = {
-    inbox: "M3 7.5 12 3l9 4.5v9L12 21 3 16.5v-9Zm0 0 9 4.5 9-4.5M12 12v9",
     headset: "M4 14v-2a8 8 0 0 1 16 0v2M4 14h3v6H5a1 1 0 0 1-1-1v-5Zm16 0h-3v6h2a1 1 0 0 0 1-1v-5Z",
     user: "M12 12a4 4 0 1 0 0-8 4 4 0 0 0 0 8Zm-8 8a8 8 0 0 1 16 0",
     pulse: "M3 12h4l2-6 3 12 2.5-6H21",
@@ -50,10 +41,8 @@ window.__ModuleLoader__.load({
     pause: "M9 5v14M15 5v14",
     play: "M8 5l11 7-11 7V5Z",
     back: "M15 5l-7 7 7 7",
-    chev: "M6 9.5l6 6 6-6",
     send: "M4 12l16-8-6 16-3-6-7-2Z",
     spark: "M12 3v4m0 10v4M5 12H1m22 0h-4M6.3 6.3 3.5 3.5m17 17-2.8-2.8m0-11.4 2.8-2.8m-17 17 2.8-2.8M12 15a3 3 0 1 0 0-6 3 3 0 0 0 0 6Z",
-    folder: "M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V7Z",
     plus: "M12 5v14M5 12h14",
     trash: "M4 7h16M9 7V4h6v3m-8 0 1 13h8l1-13",
     note: "M6 3h9l4 4v14H6V3Zm9 0v4h4M9 12h7M9 16h5",
@@ -73,17 +62,17 @@ window.__ModuleLoader__.load({
   }
 
   var CSS = [
-    /* ---- 底座：颜色全部取 DSH 自己的语义 token（--dsw-alias-*）----
-       宿主没注入 token（独立预览页、老版本 DSH）时，回退到 DSH 浅色调色板。
-       深色不另配一套色，仍指向同一批 token，只换 fallback。 */
-    ".ims-root{--bg:var(--dsw-alias-bg-base,#fff);--panel:var(--dsw-alias-bg-layer-1,#fff);",
-    "--fg:var(--dsw-alias-label-primary,#0f1115);--fg2:var(--dsw-alias-label-secondary,#61666b);--fg3:var(--dsw-alias-label-tertiary,#81858c);",
-    "--line:var(--dsw-alias-border-l2,rgba(0,0,0,.1));--line2:var(--dsw-alias-border-l3,rgba(0,0,0,.12));",
-    "--hover:var(--dsw-alias-interactive-bg-hover,rgba(38,49,72,.06));--sunk:var(--dsw-specific-sidebar-nav-item-hover,#f1f3f5);",
-    "--accent:var(--dsw-alias-brand-primary,#0f1115);--on-accent:var(--dsw-alias-label-primary-foreground,#fff);",
-    "--accent-hover:var(--dsw-alias-button-primary-hover,#43454a);",
-    "--blue:var(--dsw-alias-state-business-primary,#4176e6);",
-    "--danger:var(--dsw-alias-state-error-primary,#ec1313);--warn:var(--dsw-alias-state-warn-primary,#f59e0b);--ok:var(--dsw-alias-state-success-primary,#22c55e);",
+    /* ---- 底座：颜色只读 DSH 注入的语义 token（--dsw-*），面板不维护调色板 ----
+       DSH 的 ui-layout 把 token 作为行内变量写在 body 上，随浅/深切主题实时替换；
+       字体与圆角不是颜色，仍带兜底：独立预览页、用户自定义字体缺失时也有可读字形。 */
+    ".ims-root{--bg:var(--dsw-alias-bg-base);--panel:var(--dsw-alias-bg-layer-1);",
+    "--fg:var(--dsw-alias-label-primary);--fg2:var(--dsw-alias-label-secondary);--fg3:var(--dsw-alias-label-tertiary);",
+    "--line:var(--dsw-alias-border-l2);--line2:var(--dsw-alias-border-l3);",
+    "--hover:var(--dsw-alias-interactive-bg-hover);--sunk:var(--dsw-specific-sidebar-nav-item-hover);",
+    "--accent:var(--dsw-alias-brand-primary);--on-accent:var(--dsw-alias-label-primary-foreground);",
+    "--accent-hover:var(--dsw-alias-button-primary-hover);",
+    "--blue:var(--dsw-alias-state-business-primary);",
+    "--danger:var(--dsw-alias-state-error-primary);--warn:var(--dsw-alias-state-warn-primary);--ok:var(--dsw-alias-state-success-primary);",
     "--r:var(--dsw-radius-md,12px);--r-sm:var(--dsw-radius-sm,8px);",
     "--mono:var(--dsh-font-family-code-default,ui-monospace,SFMono-Regular,Menlo,monospace);",
     "--font:var(--dsw-font-family,-apple-system,BlinkMacSystemFont,'Segoe UI','PingFang SC',system-ui,sans-serif);",
@@ -100,8 +89,6 @@ window.__ModuleLoader__.load({
     ".ims-seat-dot.off{background:var(--fg3);box-shadow:none}",
     ".ims-seat-dot.warn{background:var(--warn);box-shadow:0 0 0 3px color-mix(in srgb,var(--warn) 20%,transparent)}",
     ".ims-seat-label{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}",
-    ".ims-seat-badge{flex:none;min-width:18px;height:18px;padding:0 5px;border-radius:9px;background:var(--danger);",
-    "color:#fff;font-size:11px;line-height:18px;text-align:center;font-variant-numeric:tabular-nums}",
 
     /* 面板：CSS Grid 摆位，页签在上 */
     /* 面板：只以右侧栏停靠形态存在，铺满标签页宿主 */
@@ -130,7 +117,6 @@ window.__ModuleLoader__.load({
     "color:var(--fg3);cursor:pointer;border:0;background:transparent;white-space:nowrap}",
     ".ims-tab:hover{color:var(--fg);background:var(--hover)}",
     ".ims-tab.on{background:var(--sunk);color:var(--fg);font-weight:620}",
-    ".ims-tab .ims-num{margin-left:auto;font-size:11px;color:var(--on-accent);background:var(--danger);border-radius:8px;padding:0 5px}",
     ".ims-tab.on .ims-ico{color:var(--accent)}",
     ".ims-inp{flex:1;min-width:0;height:30px;border:1px solid var(--line2);border-radius:var(--r-sm);padding:0 9px;",
     "font:inherit;font-size:12.5px;color:var(--fg);background:var(--bg);outline:none}",
@@ -145,45 +131,9 @@ window.__ModuleLoader__.load({
     ".ims-ta{width:100%;min-height:70px;max-height:180px;resize:vertical;border:1px solid var(--line2);border-radius:var(--r);",
     "padding:9px 11px;font:inherit;font-size:12.5px;line-height:1.6;color:var(--fg);background:var(--bg);outline:none}",
     ".ims-ta:focus{border-color:var(--blue);box-shadow:0 0 0 3px color-mix(in srgb,var(--blue) 18%,transparent)}",
-    ".ims-switch{display:inline-flex;align-items:center;gap:6px;font-size:11.5px;color:var(--fg2);cursor:pointer;user-select:none;white-space:nowrap}",
-    ".ims-switch input{accent-color:var(--accent);margin:0}",
-    ".ims-switch.hot input{accent-color:var(--warn)}",
-    ".ims-switch.hot:has(input:checked){color:var(--warn);font-weight:600}",
 
-    /* 收件箱 */
-    ".ims-filters{display:flex;gap:6px;padding:10px var(--pad) 6px;flex:none;flex-wrap:wrap;align-items:center}",
-    ".ims-chip{padding:3.5px 10px;border-radius:999px;border:1px solid var(--line);background:transparent;",
-    "color:var(--fg3);font-size:11.5px;cursor:pointer;white-space:nowrap}",
-    ".ims-chip:hover{color:var(--fg);border-color:var(--line2)}",
-    ".ims-chip.on{border-color:var(--accent);color:var(--accent);background:color-mix(in srgb,var(--accent) 9%,transparent);font-weight:600}",
-    ".ims-list{flex:1;overflow-y:auto;overflow-x:hidden;min-width:0;padding:2px 8px 12px}",
-    ".ims-row{display:flex;gap:10px;padding:var(--rowgap) 10px;border-radius:var(--r-sm);cursor:pointer;align-items:flex-start;min-width:0}",
-    ".ims-row:hover{background:var(--hover)}",
-    ".ims-row:focus-visible{outline:2px solid var(--blue);outline-offset:-2px}",
-    ".ims-pdot{width:26px;height:26px;border-radius:var(--r-sm);flex:none;font-size:11.5px;display:flex;align-items:center;",
-    "justify-content:center;font-weight:650;letter-spacing:.02em;background:color-mix(in srgb,var(--pc,var(--fg3)) 16%,transparent);color:var(--pc,var(--fg2))}",
-    ".ims-row-main{flex:1;min-width:0}",
-    ".ims-row-top{display:flex;align-items:center;gap:6px;min-width:0}",
     ".ims-name{font-size:12.8px;font-weight:620;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:26ch;flex:0 0 auto}",
-    ".ims-row-sub{display:flex;align-items:center;gap:6px;min-width:0;margin-top:2px}",
-    ".ims-snippet{font-size:12px;color:var(--fg3);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex:1;min-width:0;margin-top:0}",
-    ".ims-row-side{flex:none;text-align:right;display:flex;flex-direction:column;align-items:flex-end;gap:4px}",
-    ".ims-time{font-size:11px;color:var(--fg3);font-variant-numeric:tabular-nums}",
-    ".ims-gcount{font-size:10.5px;font-weight:650;line-height:15px;padding:1px 6px;border-radius:9px;flex:none;letter-spacing:.02em;",
-    "color:var(--accent);background:color-mix(in srgb,var(--accent) 14%,transparent)}",
-    ".ims-caret{width:18px;height:18px;border-radius:5px;border:1px solid var(--line);background:transparent;color:var(--fg2);",
-    "display:flex;align-items:center;justify-content:center;cursor:pointer;flex:none;padding:0;line-height:1;font-size:9px}",
-    ".ims-caret:hover{color:var(--fg);border-color:var(--line2)}",
-    /* 屏蔽按钮：默认低调，悬停才红——避免手滑，也别抢了行点击 */
-    ".ims-mute{width:20px;height:20px;border-radius:5px;border:1px solid transparent;background:transparent;color:var(--fg3);",
-    "display:flex;align-items:center;justify-content:center;cursor:pointer;padding:0;flex:none;opacity:.55}",
-    ".ims-row:hover .ims-mute,.ims-mute:focus-visible{opacity:1}",
-    ".ims-mute:hover{color:var(--danger);border-color:var(--line2);background:var(--bg)}",
-    ".ims-pv{margin:5px 0 2px;padding:4px 0 1px 11px;border-left:2px solid var(--line);display:flex;flex-direction:column;gap:5px}",
-    ".ims-pv-item{font-size:11.6px;color:var(--fg2);line-height:1.55}",
-    ".ims-pv-meta{color:var(--fg3);font-size:10.5px;margin-right:5px;font-variant-numeric:tabular-nums}",
     ".ims-tag{font-size:10px;padding:1px 6px;border-radius:5px;border:1px solid currentColor;line-height:15px;flex:none}",
-    ".ims-unread{width:6px;height:6px;border-radius:50%;background:var(--danger);flex:none}",
     ".ims-empty{padding:38px 22px;text-align:center;color:var(--fg3);font-size:12px;line-height:1.9}",
     ".ims-empty .ims-ico{opacity:.5;margin-bottom:6px}",
 
@@ -193,7 +143,7 @@ window.__ModuleLoader__.load({
     ".ims-thread{flex:1;overflow-y:auto;padding:14px var(--pad);display:flex;flex-direction:column;gap:9px;background:var(--bg)}",
     ".ims-msg{max-width:76%;padding:8px 11px;border-radius:var(--r);background:var(--panel);border:1px solid var(--line);",
     "white-space:pre-wrap;word-break:break-word;font-size:12.6px;line-height:1.62}",
-    ".ims-msg.me{align-self:flex-end;background:var(--dsw-specific-bubble,#edf3fe);border-color:var(--dsw-specific-bubble-highlight,#d3e2ff)}",
+    ".ims-msg.me{align-self:flex-end;background:var(--dsw-specific-bubble);border-color:var(--dsw-specific-bubble-highlight)}",
     ".ims-msg-meta{font-size:10.5px;color:var(--fg3);margin-bottom:3px}",
     ".ims-link{color:var(--blue);text-decoration:none;margin-left:6px}",
     ".ims-link:hover{text-decoration:underline}",
@@ -202,9 +152,6 @@ window.__ModuleLoader__.load({
     ".ims-found{padding:6px 0;border-top:1px solid var(--line)}",
     ".ims-found:first-child{border-top:0;padding-top:2px}",
     ".ims-hint{font-size:11px;color:var(--fg3)}",
-    ".ims-warnchip{font-size:11px;color:var(--warn);border:1px solid currentColor;border-radius:5px;padding:1px 6px}",
-    ".ims-draftchip{font-size:10.5px;color:var(--blue);background:color-mix(in oklab,var(--blue) 12%,transparent);border-radius:4px;",
-    "padding:1px 5px;flex:none;letter-spacing:.02em}",
     ".ims-banner{display:flex;align-items:center;gap:8px;padding:7px var(--pad);font-size:11.5px;color:var(--fg2);",
     "background:var(--sunk);border-bottom:1px solid var(--line);min-width:0;flex-wrap:wrap}",
     ".ims-banner.warn{color:var(--warn);background:color-mix(in srgb,var(--warn) 10%,transparent)}",
@@ -216,17 +163,14 @@ window.__ModuleLoader__.load({
     ".ims-kv b{color:var(--fg2);font-weight:560}",
     ".ims-dot{width:7px;height:7px;border-radius:50%;flex:none}",
     ".ims-scroll{flex:1;overflow-y:auto;min-width:0;padding-bottom:14px}",
-    ".ims-code{font-family:var(--mono);font-size:11px;color:var(--fg2);background:var(--sunk);border-radius:var(--r-sm);",
-    "padding:9px;max-height:160px;overflow:auto;white-space:pre-wrap;word-break:break-word}",
     ".ims-err{color:var(--danger)}",
-    ".ims-toast{position:fixed;left:50%;transform:translateX(-50%);bottom:78px;background:var(--dsw-alias-toast-bg,#353638);",
-    "color:var(--dsw-alias-toast-label,#fff);font-size:12px;padding:7px 14px;border-radius:999px;opacity:0;transition:opacity .18s;pointer-events:none;z-index:10000}",
+    ".ims-toast{position:fixed;left:50%;transform:translateX(-50%);bottom:78px;background:var(--dsw-alias-toast-bg);",
+    "color:var(--dsw-alias-toast-label);font-size:12px;padding:7px 14px;border-radius:999px;opacity:0;transition:opacity .18s;pointer-events:none;z-index:10000}",
     ".ims-toast.show{opacity:1}",
 
     /* 服务对象 / 习惯 */
     ".ims-avatar{width:34px;height:34px;border-radius:var(--r-sm);flex:none;display:flex;align-items:center;",
     "justify-content:center;font-weight:650;font-size:13px;background:color-mix(in srgb,var(--pc,var(--fg3)) 16%,transparent);color:var(--pc,var(--fg2))}",
-    ".ims-notes{display:flex;flex-direction:column;gap:6px;margin-top:2px}",
     ".ims-profile{border:1px solid var(--line);border-radius:var(--r-sm);background:var(--sunk);padding:9px 11px;",
     "font-size:12px;line-height:1.68;color:var(--fg2);max-height:320px;overflow:auto;word-break:break-word}",
     ".ims-profile h3,.ims-profile h4,.ims-profile h5,.ims-profile h6{margin:9px 0 3px;color:var(--fg);font-size:12.5px;line-height:1.4}",
@@ -237,35 +181,24 @@ window.__ModuleLoader__.load({
     ".ims-profile code{font-family:var(--mono);font-size:11px;background:var(--bg);border-radius:4px;padding:0 3px}",
     ".ims-note{display:flex;gap:8px;align-items:flex-start;font-size:12px;color:var(--fg2);line-height:1.6;",
     "padding:7px 9px;border-radius:var(--r-sm);background:var(--sunk)}",
-    ".ims-note-at{font-size:10.5px;color:var(--fg3);font-variant-numeric:tabular-nums;flex:none;padding-top:2px;min-width:52px}",
     ".ims-note-body{flex:1;min-width:0}",
-    ".ims-note-del{opacity:0;border:0;background:transparent;color:var(--fg3);cursor:pointer;padding:0 2px;line-height:0}",
-    ".ims-note:hover .ims-note-del{opacity:1}",
-    ".ims-note-del:hover{color:var(--danger)}",
     ".ims-wschip{display:inline-flex;align-items:center;gap:5px;font-size:11px;color:var(--fg2);background:var(--sunk);",
     "border-radius:6px;padding:2px 7px;max-width:230px;min-width:0;overflow:hidden;white-space:nowrap;flex:0 1 auto}",
     ".ims-wschip-txt{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0}",
     ".ims-wschip.unset{color:var(--fg3);font-style:italic}",
-    ".ims-section{font-size:10.5px;letter-spacing:.08em;text-transform:uppercase;color:var(--fg3);padding:14px var(--pad) 2px;font-weight:600}",
     ".ims-habits{display:flex;gap:6px;padding:7px var(--pad);border-bottom:1px solid var(--line);flex-wrap:wrap;align-items:center;background:var(--sunk)}",
     ".ims-habitchip{font-size:11px;color:var(--fg2);background:var(--bg);border:1px solid var(--line);border-radius:999px;",
     "padding:2px 9px;max-width:42ch;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}",
-    /* 深色：直接跟随 DSH 自己的主题解析结果。
-       body[data-ds-dark-theme] 由 DSH ThemePresenter 在解析结果为深色时写入（含
-       「跟随系统」解析成深色）；html[data-ds-theme-source=dark] 是固定深色主题的
-       镜像，老版本缺 body 标记时兜底。CSS 祖先选择器随 DSH 切换主题即时生效，
-       不需要刷新，也不需要 JS 监听。 */
-    "body[data-ds-dark-theme] .ims-root,html[data-ds-theme-source=dark] .ims-root{",
-    "--bg:var(--dsw-alias-bg-base,#151517);--panel:var(--dsw-alias-bg-layer-1,#232324);",
-    "--fg:var(--dsw-alias-label-primary,#f9fafb);--fg2:var(--dsw-alias-label-secondary,#cfd3d6);--fg3:var(--dsw-alias-label-tertiary,#adb2b8);",
-    "--line:var(--dsw-alias-border-l2,rgba(255,255,255,.12));--line2:var(--dsw-alias-border-l3,rgba(255,255,255,.16));",
-    "--hover:var(--dsw-alias-interactive-bg-hover,rgba(255,255,255,.08));--sunk:var(--dsw-specific-sidebar-nav-item-hover,#2c2c2e);",
-    "--accent:var(--dsw-alias-brand-primary,#f9fafb);--on-accent:var(--dsw-alias-label-primary-foreground,#0f1115);",
-    "--accent-hover:var(--dsw-alias-button-primary-hover,#ebeef2);",
-    "--blue:var(--dsw-alias-state-business-primary,#5686fe);",
-    "--danger:var(--dsw-alias-state-error-primary,#f25a5a);--warn:var(--dsw-alias-state-warn-primary,#f59e0b);--ok:var(--dsw-alias-state-success-primary,#22c55e);color-scheme:dark}",
-
-    /* 席位独立挂载：只渲染角标与未读数，面板本体在右侧栏 */
+    /* 两层记忆：「群聊」看会话工作本、「人物」看人物档案，分段与可点小 chip */
+    ".ims-seg{display:flex;gap:6px;padding:10px var(--pad) 2px;flex-wrap:wrap;align-items:center;min-width:0}",
+    ".ims-seg-btn{padding:4px 12px;border-radius:999px;border:1px solid var(--line);background:transparent;color:var(--fg3);",
+    "font-size:12px;cursor:pointer;white-space:nowrap;min-width:0}",
+    ".ims-seg-btn:hover{color:var(--fg);border-color:var(--line2)}",
+    ".ims-seg-btn.on{border-color:var(--accent);color:var(--accent);background:color-mix(in srgb,var(--accent) 9%,transparent);font-weight:600}",
+    ".ims-pchip{padding:2px 9px;border-radius:999px;border:1px solid var(--line);background:var(--bg);color:var(--fg2);",
+    "font-size:11px;cursor:pointer;white-space:nowrap;max-width:22ch;overflow:hidden;text-overflow:ellipsis}",
+    ".ims-pchip:hover{color:var(--fg);border-color:var(--line2)}",
+    /* 席位独立挂载：只渲染值守状态点与文字，面板本体在右侧栏 */
     ".ims-root[data-mode=seat]{display:block;width:100%}",
 
     /* 右侧栏停靠：不浮、不遮、占满宿主 */
@@ -376,6 +309,57 @@ window.__ModuleLoader__.load({
     return parts[parts.length - 1] || p;
   }
 
+  /* 日报是「点开就要有」的东西：缓存放模块级，席位在页面加载时就预热当天，
+     右侧栏面板晚一步挂载也能直接同步渲染——和 DSH 原生文件页签的体感对齐。
+     缓存只存成功回包；失败重取不把空态当事实写进缓存。 */
+  var DIGEST_KEEP = 8;
+  var DIGEST_REFRESH_MS = 3000;
+  var DIGEST_CACHE = { byDate: {}, order: [] };
+  var DIGEST_INFLIGHT = {};
+
+  function digestCached(date) {
+    return DIGEST_CACHE.byDate[date] || null;
+  }
+  function digestRemember(date, payload) {
+    if (!payload || payload.error) return;
+    if (!DIGEST_CACHE.byDate[date]) DIGEST_CACHE.order.push(date);
+    DIGEST_CACHE.byDate[date] = payload;
+    while (DIGEST_CACHE.order.length > DIGEST_KEEP) {
+      delete DIGEST_CACHE.byDate[DIGEST_CACHE.order.shift()];
+    }
+  }
+  /** 接口回包归一：`bad_date` 保留原因，其余失败一律按「连不上」处理。 */
+  function digestPayload(r) {
+    if (!r) return { exists: false, error: "unreachable" };
+    if (r.auth) return { exists: false, error: "unreachable", auth: true };
+    if (r.ok === false && r.reason === "bad_date") return { exists: false, error: "bad_date" };
+    if (r.ok === false || r.error) return { exists: false, error: "unreachable" };
+    return r;
+  }
+  /** 模块级去重：席位预热与面板重取共用同一个在飞请求。 */
+  function digestFetch(date) {
+    var d = String(date || "");
+    if (DIGEST_INFLIGHT[d]) return DIGEST_INFLIGHT[d];
+    var p = api("/api/digest?date=" + encodeURIComponent(d)).then(function (r) {
+      delete DIGEST_INFLIGHT[d];
+      var payload = digestPayload(r);
+      digestRemember(d, payload);
+      return payload;
+    }).catch(function (e) {
+      delete DIGEST_INFLIGHT[d];
+      throw e;
+    });
+    DIGEST_INFLIGHT[d] = p;
+    return p;
+  }
+  /** 席位（页面加载）预热当天日报：只填缓存，不画任何东西。 */
+  function digestPrefetch(date) {
+    var d = date || todayStr();
+    var hit = digestCached(d);
+    if (hit) return Promise.resolve(hit);
+    return digestFetch(d).catch(function () { return null; });
+  }
+
   // 「上次选的工作区」只存在浏览器本地：换 DSH 进程/升级插件都不影响，
   // 也不会把路径写进面板配置。拿不到 localStorage（无痕模式）就退化为自动推断。
   var WS_MEM_KEY = "ims_add_workspace";
@@ -396,9 +380,8 @@ window.__ModuleLoader__.load({
   function mountPanel(host) {
     injectCss();
     var S = {
-      tab: "inbox", filter: "todo", items: [], counts: {}, status: null,
-      inboxChats: 0, inboxTotal: 0, grouped: true, expanded: {},
-      inboxLoaded: false, chatsLoaded: false, targetsLoaded: false,
+      tab: "service", counts: {}, status: null,
+      chatsLoaded: false, targetsLoaded: false,
       connError: null,
       detail: null, thread: [], threadOffline: false, threadError: "", sending: false,
       chats: [], targets: [], workspaces: [], doctor: null, cfg: null,
@@ -407,7 +390,12 @@ window.__ModuleLoader__.load({
       composerDrafts: {}, pollDraft: {}, lifeDraft: {},
       addWs: readWsMemory(), addWsPicked: false, detailWs: "", wsPicked: false,
       targetEdit: "", targetDrafts: {}, dead: false, timer: null,
-      digest: null, digestDate: ""
+      // 两层记忆：群聊段看会话工作本，人物段看人物档案（跨会话）。
+      persons: [], personsLoaded: false, personSegment: "targets",
+      personEdit: "", personDrafts: {},
+      personBookEdit: "", personBookDrafts: {},
+      personSearch: { q: "", platform: "feishu", items: null, err: "", seq: 0, open: false },
+      digest: null, digestDate: "", digestLoading: "", digestError: "", digestTimer: null
     };
 
     var toastTimer = null;
@@ -420,6 +408,7 @@ window.__ModuleLoader__.load({
     function onKey(e) {
       if (S.dead) return;
       if (e.key === "Escape") {
+        if (S.personEdit) { S.personEdit = ""; paintBody(); return; }
         if (S.targetEdit) { S.targetEdit = ""; paintBody(); return; }
         if (S.detail) { S.detail = null; paint(); }
         return;
@@ -457,7 +446,7 @@ window.__ModuleLoader__.load({
               if (btn) btn.disabled = false;
               say("已拉 " + (lr.chats || 0) + " 个会话 · 新 " + (lr.new || 0) + " 条" +
                 (lr.skipped ? " · 跳过 " + lr.skipped + " 个（刚拉过）" : ""));
-              loadInbox(); loadChats();
+              loadChats(); loadStatus();
               return;
             }
             if (tries > 40) {
@@ -504,27 +493,19 @@ window.__ModuleLoader__.load({
       if (S.connError && S.connError.by === by) S.connError = null;
     }
 
-    function shareCounts() {
-      try {
-        window.dispatchEvent(new CustomEvent("im-standin:counts", { detail: S.counts || {} }));
-      } catch (e) { /* 老浏览器不支持 CustomEvent 构造时忽略 */ }
-    }
     function loadStatus() {
       return api("/api/status").then(function (d) {
         if (S.dead) return;
         if (!d || d.error) {
           setConnError("status", d || "状态为空", loadStatus);
-          shareCounts();
           refreshFoot();
           paintBody();
           return;
         }
         S.status = d; S.counts = d.counts || {}; S.cfg = d.config || S.cfg;
         clearConnError("status");
-        shareCounts();
         refreshFoot();
         if (S.tab === "status" || S.tab === "settings" || S.tab === "service") paintBody();
-        if (S.tab === "inbox" && !S.detail) paintBody();
       }).catch(function (e) {
         if (S.dead) return;
         setConnError("status", e, loadStatus);
@@ -532,45 +513,76 @@ window.__ModuleLoader__.load({
         paintBody();
       });
     }
-    // 日报只由 agent 写；这里只读文件，不解析、不统计。
+    // 日报只由 agent 写；这里只读文件，不解析、不统计。缓存 / 预热 / 去重见模块级 digestFetch。
+    function digestSame(a, b) {
+      a = a || {}; b = b || {};
+      return !!a.exists === !!b.exists && (a.mtime || 0) === (b.mtime || 0) &&
+        (a.error || "") === (b.error || "") && String(a.text || "") === String(b.text || "");
+    }
+    /** 重绘关注页时保住滚动位置：兜底刷新不该把正在读的日报顶回顶部。 */
+    function paintAttention() {
+      if (S.dead || S.tab !== "attention" || S.detail) return;
+      var sc = panel.querySelector(".ims-body .ims-scroll");
+      var top = sc ? sc.scrollTop : 0;
+      paintBody();
+      if (!top) return;
+      var sc2 = panel.querySelector(".ims-body .ims-scroll");
+      if (sc2) sc2.scrollTop = top;
+    }
+    /** 打开页签 / 切日期：缓存优先同步渲染，再后台重取；没缓存才显示「正在读取」。 */
     function loadDigest(date) {
       var d = date || S.digestDate || todayStr();
+      var changed = S.digestDate !== d;
       S.digestDate = d;
-      return api("/api/digest?date=" + encodeURIComponent(d)).then(function (r) {
-        if (S.dead) return;
-        if (!r || (r.ok === false && r.reason !== "bad_date")) {
-          S.digest = { exists: false, error: "unreachable" };
-        } else {
-          S.digest = (r && r.ok === false) ? { exists: false, error: r.reason || "" } : (r || {});
-        }
-        if (S.tab === "attention") paintBody();
-      }).catch(function () {
-        if (S.dead) return;
-        S.digest = { exists: false, error: "unreachable" };
-        if (S.tab === "attention") paintBody();
-      });
+      var hit = digestCached(d);
+      if (changed) {
+        S.digest = hit;
+        S.digestLoading = hit ? "" : d;
+        S.digestError = "";
+        paintAttention();
+      } else if (!S.digest && hit) {
+        S.digest = hit;
+        S.digestLoading = "";
+        paintAttention();
+      }
+      return refreshDigest(d);
     }
-    function loadInbox() {      // 默认拿聚合视图：一个人 / 一个群一行，同一人的连发不会再刷满列表。
-      return api("/api/inbox?filter=" + encodeURIComponent(S.filter) + "&limit=40").then(function (d) {
-        if (S.dead) return;
-        if (!d || d.error) {
-          setConnError("inbox", d || "收件箱为空", loadInbox);
-          if (S.tab === "inbox" && !S.detail) paintBody();
+    /** 静默重取：内容真的变了才重绘（滚动位置不动、DOM 不重建）。 */
+    function refreshDigest(date) {
+      var d = date || S.digestDate || todayStr();
+      return digestFetch(d).then(function (payload) {
+        if (S.dead || S.digestDate !== d) return;
+        S.digestLoading = "";
+        if (payload.error === "bad_date") {
+          S.digestError = "";
+          clearConnError("digest");
+          S.digest = payload;
+          if (S.tab === "attention" && !S.detail) paintAttention();
           return;
         }
-        S.items = d.items || [];
-        S.counts = d.counts || S.counts;
-        S.grouped = d.grouped !== false;
-        S.inboxChats = d.chats || 0;
-        S.inboxTotal = d.total || 0;
-        S.inboxLoaded = true;
-        clearConnError("inbox");
-        shareCounts();
-        if (S.tab === "inbox" && !S.detail) paintBody();
-      }).catch(function (e) {
-        if (S.dead) return;
-        setConnError("inbox", e, loadInbox);
-        if (S.tab === "inbox" && !S.detail) paintBody();
+        if (payload.error) {
+          // 失败不装空：保留上次内容，只在顶部挂错误条 + 重试入口。
+          S.digestError = payload.error;
+          setConnError("digest", payload.auth ? { auth: true } : "拿不到日报",
+            function () { refreshDigest(d); });
+          if (!S.digest) S.digest = payload;
+          if (S.tab === "attention" && !S.detail) paintAttention();
+          return;
+        }
+        // 恢复时即使内容没变也要重绘一次：顶部错误条要跟着消失。
+        var hadError = !!S.digestError || !!(S.connError && S.connError.by === "digest");
+        clearConnError("digest");
+        S.digestError = "";
+        if (S.digest && digestSame(S.digest, payload) && !hadError) return;
+        S.digest = payload;
+        if (S.tab === "attention" && !S.detail) paintAttention();
+      }).catch(function () {
+        if (S.dead || S.digestDate !== d) return;
+        S.digestLoading = "";
+        S.digestError = "unreachable";
+        setConnError("digest", "拿不到日报", function () { refreshDigest(d); });
+        if (!S.digest) S.digest = { exists: false, error: "unreachable" };
+        if (S.tab === "attention" && !S.detail) paintAttention();
       });
     }
     function loadChats() {
@@ -588,12 +600,10 @@ window.__ModuleLoader__.load({
         if (!S.addWs && !S.addWsPicked) S.addWs = lastUsedWs() || "";
         refreshFoot();
         if (S.tab === "service") paintBody();
-        if (S.tab === "inbox" && !S.detail) paintBody();
       }).catch(function (e) {
         if (S.dead) return;
         setConnError("chats", e, loadChats);
         if (S.tab === "service") paintBody();
-        if (S.tab === "inbox" && !S.detail) paintBody();
       });
     }
     function loadTargets() {
@@ -621,6 +631,25 @@ window.__ModuleLoader__.load({
         S.workspaces = d.items || [];
         S.defaultWs = d.default || "";
       }).catch(function () { /* 保留上一份，不把工作区选择器清空 */ });
+    }
+    // 人物档案列表：只读目录（后端不 ensure、不建空档案）。失败不覆盖上一份。
+    function loadPersons() {
+      return api("/api/persons").then(function (d) {
+        if (S.dead) return;
+        if (!d || d.error) {
+          setConnError("persons", d || "人物档案为空", loadPersons);
+          if (S.tab === "targets" || S.detail) paintBody();
+          return;
+        }
+        S.persons = d.items || [];
+        S.personsLoaded = true;
+        clearConnError("persons");
+        if (S.tab === "targets" || S.detail) paintBody();
+      }).catch(function (e) {
+        if (S.dead) return;
+        setConnError("persons", e, loadPersons);
+        if (S.tab === "targets" || S.detail) paintBody();
+      });
     }
     function openThread(platform, chatId, msgId) {
       S.detail = { platform: platform, chat_id: chatId, msg_id: msgId };
@@ -726,7 +755,6 @@ window.__ModuleLoader__.load({
 
     function tabs() {
       var defs = [
-        ["inbox", "收件箱", "inbox"],
         ["attention", "关注", "note"],
         ["service", "分身", "headset"],
         ["targets", "服务对象", "user"],
@@ -735,21 +763,19 @@ window.__ModuleLoader__.load({
       ];
       var bar = h("div", { class: "ims-tabs" });
       defs.forEach(function (d) {
-        var n = d[0] === "inbox" ? ((S.counts && S.counts.todo) || 0) : 0;
         bar.appendChild(h("button", {
           class: "ims-tab" + (S.tab === d[0] && !S.detail ? " on" : ""), type: "button",
           title: d[1],
           onclick: function () {
             S.tab = d[0]; S.detail = null; paint();
             if (d[0] === "service") loadChats();
-            if (d[0] === "targets") loadTargets();
+            if (d[0] === "targets") { loadTargets(); loadPersons(); }
             if (d[0] === "attention") loadDigest();
             if (d[0] === "status") loadStatus().then(paint);
           }
         },
           h("span", { class: "ims-ico", html: icon(d[2], 15) }),
-          h("span", { text: d[1] }),
-          n ? h("span", { class: "ims-num", text: n > 99 ? "99+" : String(n) }) : null));
+          h("span", { text: d[1] })));
       });
       return bar;
     }
@@ -779,8 +805,7 @@ window.__ModuleLoader__.load({
       var wrap = h("div", { class: "ims-body" });
       if (S.connError) wrap.appendChild(connBanner());
       if (S.detail) { wrap.appendChild(detailView()); return wrap; }
-      if (S.tab === "inbox") { wrap.appendChild(filters()); wrap.appendChild(inboxList()); }
-      else if (S.tab === "attention") wrap.appendChild(attentionView());
+      if (S.tab === "attention") wrap.appendChild(attentionView());
       else if (S.tab === "service") wrap.appendChild(serviceView());
       else if (S.tab === "targets") wrap.appendChild(targetsView());
       else if (S.tab === "status") wrap.appendChild(statusView());
@@ -926,27 +951,9 @@ window.__ModuleLoader__.load({
           say(base + "；会话没起来：" + (r.open.reason || "未知原因") + "，下一条消息会重试");
         } else say(base);
         if (after) after(r);
-        else { loadChats(); loadTargets(); }
+        else { loadChats(); loadTargets(); loadPersons(); }
         return r;
       });
-    }
-
-    // ---- 收件箱 ---------------------------------------------------------
-    function filters() {
-      var defs = [["todo", "待回"], ["unread", "未读"], ["mention", "@我"], ["dm", "私聊"], ["all", "全部"]];
-      var bar = h("div", { class: "ims-filters" });
-      defs.forEach(function (d) {
-        bar.appendChild(h("button", {
-          class: "ims-chip" + (S.filter === d[0] ? " on" : ""), type: "button",
-          onclick: function () { S.filter = d[0]; loadInbox().then(paint); }
-        }, d[1]));
-      });
-      bar.appendChild(h("span", { class: "ims-grow" }));
-      bar.appendChild(h("span", {
-        class: "ims-hint",
-        text: S.inboxChats ? (S.inboxChats + " 个会话 · " + S.inboxTotal + " 条") : ""
-      }));
-      return bar;
     }
 
     function chatOf(platform, chatId) {
@@ -966,147 +973,6 @@ window.__ModuleLoader__.load({
       if (kind === "out") return "已发消息 · 点开在线查看";
       if (kind === "cmd") return "本人指令 · 点开在线查看";
       return "";
-    }
-
-    function previewItem(m) {
-      return h("div", { class: "ims-pv-item" },
-        h("span", { class: "ims-pv-meta",
-          text: (m.sender_name ? m.sender_name + " · " : "") + fmtTime(m.ts_epoch) }),
-        msgText(m.content, m.state, m.kind, m.msg_type).slice(0, 160));
-    }
-
-    /* 一个会话一行：人多发几条不再刷屏，条数收进右侧角标，想看细节再展开。 */
-    function inboxRow(g) {
-      var key = g.key || (g.platform + ":" + g.chat_id);
-      var p = PLAT[g.platform] || { label: g.platform, short: "?", color: "var(--fg3)" };
-      var chat = chatOf(g.platform, g.chat_id);
-      // 私聊不再用「私聊」标签占位置：头像与名称已经说明；群、@我、客服等有意义
-      // 的 kind 仍保留。
-      var kinds = (g.kinds || []).filter(function (k) {
-        return k !== "dm";
-      }).map(function (k) { return KIND[k] || KIND.fyi; });
-      var expanded = !!S.expanded[key];
-      var rest = (g.preview || []).slice(1);
-      var running = !!chat && chat.turn_state === "running";
-      var snippet = (g.sender_name && g.sender_name !== g.chat_name ? g.sender_name + "：" : "") +
-        msgText(g.content, (g.preview && g.preview[0] || {}).state,
-                (g.preview && g.preview[0] || {}).kind, g.msg_type);
-      var name = g.chat_name || "未命名会话";
-      // 工作区 chip 放到第二行，给名称留出完整宽度；chip 自己可以截断，但 title 保留全路径。
-      var wsChip = chat && chat.watching ? h("span", {
-        class: "ims-wschip" + (chat.workspace_missing ? " unset" : ""),
-        title: chat.workspace
-          ? chat.workspace + (chat.workspace_missing ? "（不存在）"
-              : (chat.workspace_in_dsh ? "（DSH 工作区）" : "（不在 DSH 工作区列表里）"))
-          : "未显式绑定，跟随 DSH 默认" +
-            (chat.workspace_effective ? "：" + chat.workspace_effective : "")
-      },
-        h("span", { class: "ims-ico", html: icon("folder", 12) }),
-        h("span", { class: "ims-wschip-txt",
-                    text: chat.workspace
-                      ? (chat.workspace_title || baseName(chat.workspace))
-                      : effectiveLabel(chat) })) : null;
-
-      var main = h("div", { class: "ims-row-main" },
-        h("div", { class: "ims-row-top" },
-          h("span", { class: "ims-name", title: g.chat_id ? "会话 ID（排障用）：" + g.chat_id : "",
-                      text: name }),
-          g.chat_kind === "group"
-            ? h("span", { class: "ims-tag", style: "color:var(--fg3)", text: "群" })
-            : null,
-          kinds.map(function (k) {
-            return h("span", { class: "ims-tag", style: "color:" + k.color, text: k.label });
-          }),
-          g.unread > 0 ? h("span", { class: "ims-unread" }) : null,
-          running ? h("span", { class: "ims-draftchip", title: "agent 正在处理这通会话",
-                               text: "处理中" }) : null,
-          h("span", { class: "ims-grow" }),
-          // 一眼烦的群 / 人，从收件箱这行直接屏蔽，不用点进去再找开关
-          h("button", {
-            class: "ims-mute", type: "button",
-            title: "屏蔽：不再同步这个" + (g.chat_kind === "group" ? "群" : "人") + "的消息",
-            onclick: function (e) {
-              e.stopPropagation();
-              confirmBlock(g.chat_name || "这个会话").then(function (ok) {
-                if (!ok) return;
-                setChatBlocked(g.platform, g.chat_id, true,
-                               { name: g.chat_name, kind: g.chat_kind }).then(paintBody);
-              });
-            }
-          }, h("span", { class: "ims-ico", html: icon("mute", 13) }))),
-        h("div", { class: "ims-row-sub" },
-          h("div", { class: "ims-snippet", text: snippet }),
-          wsChip),
-        expanded && rest.length
-          ? h("div", { class: "ims-pv" },
-              rest.map(previewItem),
-              g.count - rest.length > 1
-                ? h("div", { class: "ims-hint", text: "另有 " + (g.count - rest.length - 1) + " 条，点开看全部" })
-                : null)
-          : null);
-
-      function open() { openThread(g.platform, g.chat_id, g.msg_id); }
-      return h("div", {
-        class: "ims-row", role: "button", tabindex: "0",
-        "aria-label": name + "：" + snippet,
-        title: snippet,
-        onclick: open,
-        onkeydown: function (e) {
-          if (e.target !== this) return;
-          if (e.key === "Enter" || e.key === " " || e.key === "Spacebar") {
-            e.preventDefault();
-            open();
-          }
-        }
-      },
-        h("div", { class: "ims-pdot", style: "--pc:" + p.color, text: p.short }),
-        main,
-        h("div", { class: "ims-row-side" },
-          h("span", { class: "ims-time", text: fmtTime(g.last_epoch) }),
-          g.count > 1 ? h("span", { class: "ims-gcount", text: g.count + " 条" }) : null,
-          rest.length
-            ? h("button", {
-                class: "ims-caret", type: "button", tabindex: "-1",
-                title: (expanded ? "收起" : "展开这个会话里其余 " + rest.length + " 条"),
-                onclick: function (e) {
-                  e.stopPropagation();
-                  S.expanded[key] = !expanded;
-                  paintBody();
-                }
-              }, h("span", {
-                class: "ims-ico", html: icon("chev", 13),
-                style: "display:flex;transition:transform .12s;" + (expanded ? "transform:rotate(180deg)" : "")
-              }))
-            : null));
-    }
-
-    function inboxEmptyText(filter) {
-      var map = {
-        todo: ["没有待回的消息", "值守在跑：私聊、@你 的消息会自动进这里"],
-        unread: ["没有未读消息", "新消息进来会在这里亮红点"],
-        mention: ["没有 @你 的消息", "群里只有精确 @你 才会进这里"],
-        dm: ["没有私聊消息", "只显示值守范围里的私聊"],
-        all: ["收件箱是空的", "值守在跑时，新消息会自动进这里"]
-      };
-      return map[filter] || map.all;
-    }
-
-    function inboxList() {
-      var list = h("div", { class: "ims-list" });
-      if (!S.items.length) {
-        // 请求还没成功过就失败：只靠页签顶部的错误横幅，不伪装成「确实没有」。
-        if (!S.inboxLoaded) return list;
-        var copy = inboxEmptyText(S.filter);
-        list.appendChild(h("div", { class: "ims-empty" },
-          h("div", { class: "ims-ico", html: icon("inbox", 22) }),
-          h("div", { text: copy[0] }),
-          h("div", { text: copy[1] }),
-          (S.filter === "todo" || S.filter === "all")
-            ? h("div", { text: "同一个人的多条会合并成一行，不占地方" }) : null));
-        return list;
-      }
-      S.items.forEach(function (g) { list.appendChild(inboxRow(g)); });
-      return list;
     }
 
     // ---- 会话详情 -------------------------------------------------------
@@ -1142,7 +1008,7 @@ window.__ModuleLoader__.load({
       if (chat.blocked) return h("span", { class: "ims-tag", style: "color:var(--danger)", text: "已屏蔽" });
       if ((chat.turn_state || "") === "warm") {
         return h("span", { class: "ims-tag", style: "color:var(--fg3)",
-                           title: "正在续上下文缓存并按 skill 规则归并画像", text: "画像归并中" });
+                           title: "正在续上下文缓存并按 skill 规则整理记忆", text: "记忆整理中" });
       }
       if ((chat.turn_state || "") === "running") {
         return h("span", { class: "ims-tag", style: "color:var(--ok)",
@@ -1235,7 +1101,7 @@ window.__ModuleLoader__.load({
 
       var dhead = h("div", { class: "ims-dhead" },
         h("button", { class: "ims-btn ghost", type: "button", title: "返回",
-                      onclick: function () { S.detail = null; loadInbox().then(paint); } },
+                      onclick: function () { S.detail = null; paint(); } },
           h("span", { class: "ims-ico", html: icon("back", 15) })),
         h("span", { class: "ims-name", title: d.chat_id ? "会话 ID（排障用）：" + d.chat_id : "",
                     text: chat.name || "未命名会话" }),
@@ -1270,7 +1136,7 @@ window.__ModuleLoader__.load({
             }, "取消屏蔽")
           : h("button", {
               class: "ims-btn mini", type: "button",
-              title: "屏蔽：值守不再同步这个会话（群或单聊都一样），也不进收件箱",
+              title: "屏蔽：值守不再同步这个会话（群或单聊都一样），也不计数",
               onclick: function () {
                 confirmBlock(chat.name || "这个会话").then(function (ok) {
                   if (!ok) return;
@@ -1353,7 +1219,7 @@ window.__ModuleLoader__.load({
         }
         if ((chat.turn_state || "") === "warm") {
           wrap.appendChild(h("div", { class: "ims-hint", style: "padding:0 var(--pad) 6px",
-                                      text: "正在跑值守心跳：续上下文缓存 + 按 skill 规则归并画像；有新消息会立刻打断它。" }));
+                                      text: "正在跑值守心跳：续上下文缓存 + 按 skill 规则整理人物档案与会话工作本；有新消息会立刻打断它。" }));
         } else if (running) {
           wrap.appendChild(h("div", { class: "ims-hint", style: "padding:0 var(--pad) 6px",
                                       text: "agent 正在这通会话里处理；去会话能看到它拉消息、查工作区的过程。" }));
@@ -1369,7 +1235,7 @@ window.__ModuleLoader__.load({
       if (chat.blocked) {
         wrap.appendChild(h("div", { class: "ims-banner warn" },
           h("span", { class: "ims-ico", html: icon("mute", 13) }),
-          h("span", { text: "已屏蔽：值守不再同步这个会话的新消息，它也不会出现在收件箱。下面只有屏蔽前的历史。" }),
+          h("span", { text: "已屏蔽：值守不再同步这个会话的新消息，它也不会出现在任何列表与计数里。下面只有屏蔽前的历史。" }),
           h("span", { class: "ims-grow" }),
           h("button", {
             class: "ims-btn mini", type: "button",
@@ -1380,21 +1246,74 @@ window.__ModuleLoader__.load({
           }, "取消屏蔽")));
       }
 
-      // 这个人的画像：只看当前会话那一份，详情里只露摘要，编辑到「服务对象」。
-      var tgt = (S.targets || []).filter(function (t) {
-        return t.platform === d.platform && t.chat_id === d.chat_id;
-      })[0];
-      var prof = (tgt && tgt.profile_excerpt) || "";
-      if (prof) {
-        var strip = h("div", { class: "ims-habits" },
-          h("span", { class: "ims-hint", style: "flex:none", text: "画像" }),
-          h("span", { class: "ims-habitchip", title: tgt.profile_path || "", text: prof }),
-          h("span", { class: "ims-grow" }),
-          h("button", {
-            class: "ims-btn mini ghost", type: "button",
-            onclick: function () { S.tab = "targets"; S.detail = null; paint(); loadTargets(); }
-          }, "查看 →"));
-        wrap.appendChild(strip);
+      // 两层记忆：私聊以「人物档案」为主（拿不到人物 ID 才退回工作本）；
+      // 群给「会话工作本」摘要 + 本群人物 chips。详情只露摘要，编辑到「服务对象」。
+      var tgt = targetOfChat(d.platform, d.chat_id);
+      var isGroup = (chat.kind || (chatOf(d.platform, d.chat_id) || {}).kind) === "group";
+      if (!isGroup) {
+        if (tgt) {
+          var person = tgt.person;
+          var strip = h("div", { class: "ims-habits" });
+          if (person) {
+            strip.appendChild(h("span", { class: "ims-hint", style: "flex:none", text: "人物档案" }));
+            strip.appendChild(h("span", {
+              class: "ims-habitchip", title: person.path || "",
+              text: person.excerpt || "还没有写内容"
+            }));
+            strip.appendChild(h("span", { class: "ims-grow" }));
+            strip.appendChild(h("button", {
+              class: "ims-btn mini ghost", type: "button", title: "去「服务对象 · 人物」编辑这份档案",
+              onclick: function () { goTargets("persons"); }
+            }, "查看 →"));
+          } else {
+            strip.appendChild(h("span", { class: "ims-hint", style: "flex:none", text: "会话工作本" }));
+            strip.appendChild(h("span", {
+              class: "ims-habitchip", title: tgt.profile_path || "",
+              text: tgt.profile_excerpt || "还没有写内容"
+            }));
+            strip.appendChild(h("span", { class: "ims-grow" }));
+            strip.appendChild(h("button", {
+              class: "ims-btn mini ghost", type: "button", title: "去「服务对象 · 群聊」编辑工作本",
+              onclick: function () { goTargets("targets"); }
+            }, "查看 →"));
+          }
+          wrap.appendChild(strip);
+        }
+      } else {
+        if (tgt) {
+          wrap.appendChild(h("div", { class: "ims-habits" },
+            h("span", { class: "ims-hint", style: "flex:none", text: "会话工作本" }),
+            h("span", { class: "ims-habitchip", title: tgt.profile_path || "",
+                        text: tgt.profile_excerpt || "还没有写内容" }),
+            h("span", { class: "ims-grow" }),
+            h("button", {
+              class: "ims-btn mini ghost", type: "button", title: "去「服务对象 · 群聊」编辑工作本",
+              onclick: function () { goTargets("targets"); }
+            }, "查看 →")));
+        }
+        // 本群人物：/api/persons 里 chat_ids 含当前会话的前 3 个，点一下去人物段。
+        var mates = (S.persons || []).filter(function (p) {
+          return personChats(p).some(function (c) {
+            return c.platform === d.platform && c.chat_id === d.chat_id;
+          });
+        }).slice(0, 3);
+        if (mates.length) {
+          var chips = h("div", { class: "ims-habits" },
+            h("span", { class: "ims-hint", style: "flex:none", text: "本群人物" }));
+          mates.forEach(function (p) {
+            chips.appendChild(h("button", {
+              class: "ims-pchip", type: "button",
+              title: "查看「" + personName(p) + "」的人物档案",
+              onclick: function () { goTargets("persons"); }
+            }, personName(p)));
+          });
+          chips.appendChild(h("span", { class: "ims-grow" }));
+          chips.appendChild(h("button", {
+            class: "ims-btn mini ghost", type: "button", title: "去「服务对象 · 人物」",
+            onclick: function () { goTargets("persons"); }
+          }, "全部 →"));
+          wrap.appendChild(chips);
+        }
       }
 
       if (S.threadOffline) {
@@ -1464,7 +1383,7 @@ window.__ModuleLoader__.load({
       ignoreBtn.addEventListener("click", function () {
         if (!canIgnore) return;
         api("/api/state", { body: { platform: d.platform, msg_id: d.msg_id, state: "ignored" } })
-          .then(function () { say("已忽略"); S.detail = null; loadInbox().then(paint); });
+          .then(function () { say("已忽略"); S.detail = null; loadChats(); loadStatus(); paint(); });
       });
 
       wrap.appendChild(h("div", { class: "ims-compose" },
@@ -1562,7 +1481,7 @@ window.__ModuleLoader__.load({
         "会立即忽略它当前的待回，并清空本地保存的消息正文；取消屏蔽不会恢复。"));
     }
 
-    // 屏蔽 / 取消屏蔽一个群或一个单聊：屏蔽后不同步（不拉取、不进收件箱）
+    // 屏蔽 / 取消屏蔽一个群或一个单聊：屏蔽后不同步（不拉取、不计数）
     function setChatBlocked(platform, chatId, blocked, extra) {
       extra = extra || {};
       return api("/api/chat/block", { method: "POST", body: {
@@ -1576,7 +1495,7 @@ window.__ModuleLoader__.load({
         say(blocked
           ? ("已屏蔽，之后不再同步" + (r.ignored ? "；顺手忽略 " + r.ignored + " 条待回" : ""))
           : "已取消屏蔽，点开或下一轮会重新同步");
-        return Promise.all([loadChats(), loadInbox(), loadStatus()]).then(function () { return r; });
+        return Promise.all([loadChats(), loadStatus()]).then(function () { return r; });
       });
     }
 
@@ -1597,14 +1516,12 @@ window.__ModuleLoader__.load({
         h("div", { class: "ims-hint", text: "值守 = 这通会话的新消息会唤醒 agent。一通会话绑一个 DSH 会话，默认永久复用；工作区决定 agent 调研的范围。" })));
 
       if (!watched.length && S.chatsLoaded) {
-        scroll.appendChild(h("div", { class: "ims-empty", text: "还没有值守会话。用上面的搜索加入一个人或一个群，或到「收件箱」点开会话打开值守。" }));
+        scroll.appendChild(h("div", { class: "ims-empty", text: "还没有值守会话。用上面的搜索加入一个人或一个群。" }));
       }
       watched.forEach(function (c) {
         var p = PLAT[c.platform] || { label: c.platform, color: "var(--fg3)" };
         var running = c.turn_state === "running";
-        var tgt = (S.targets || []).filter(function (t) {
-          return t.platform === c.platform && t.chat_id === c.chat_id;
-        })[0];
+        var tgt = targetOfChat(c.platform, c.chat_id);
         var prof = (tgt && tgt.profile_excerpt) || "";
         scroll.appendChild(h("div", { class: "ims-card" },
           h("div", { class: "ims-card-h" },
@@ -1613,7 +1530,7 @@ window.__ModuleLoader__.load({
             h("span", { class: "ims-tag", style: "color:" + p.color, text: p.label }),
             running ? h("span", { class: "ims-tag", style: "color:var(--ok)", text: "处理中" })
                     : (c.turn_state === "warm"
-                        ? h("span", { class: "ims-tag", style: "color:var(--fg3)", text: "画像归并中" })
+                        ? h("span", { class: "ims-tag", style: "color:var(--fg3)", text: "记忆整理中" })
                         : (c.last_ok === false
                             ? h("span", { class: "ims-tag", style: "color:var(--danger)", text: "上轮失败" })
                             : h("span", { class: "ims-tag", style: "color:var(--accent)", text: "值守中" }))),
@@ -1675,7 +1592,7 @@ window.__ModuleLoader__.load({
           prof ? h("div", { class: "ims-note" },
             h("span", { class: "ims-ico", html: icon("note", 13) }),
             h("span", { class: "ims-note-body", text: prof }))
-            : h("div", { class: "ims-hint", text: "还没画像，去「服务对象」补一份；agent 起草时会更像你" }),
+            : h("div", { class: "ims-hint", text: "还没有会话工作本，去「服务对象 · 群聊」补一份；agent 起草时会按它对齐本会话要求" }),
           h("div", { class: "ims-rowline" },
             modeSelect(c),
             h("span", { class: "ims-grow" }),
@@ -1935,7 +1852,7 @@ window.__ModuleLoader__.load({
       return out.join("");
     }
 
-    /* 画像文件头两行是模板元信息（平台 · chat_id），只在文件里给 agent 看；
+    /* 档案文件头行是模板元信息（平台 · chat_id / 人物 ID），只在文件里给 agent 看；
        面板正文不展示内部 ID，需要排障时看 title 里的完整路径。 */
     function profileForDisplay(text) {
       return String(text || "").split(/\r?\n/).filter(function (line) {
@@ -1943,16 +1860,119 @@ window.__ModuleLoader__.load({
       }).join("\n");
     }
 
+    // ---- 两层记忆：「群聊」=会话工作本，「人物」=人物档案 -----------------
+    var PERSON_LIMIT = 12 * 1024;
+
+    function byteLen(text) {
+      try { return new TextEncoder().encode(String(text || "")).length; }
+      catch (e) { return unescape(encodeURIComponent(String(text || ""))).length; }
+    }
+    function kbText(n) { return (Math.round((Number(n) || 0) / 102.4) / 10) + " KB"; }
+    function personKey(p) { return String(p.platform || "") + ":" + String(p.person_id || ""); }
+    function personName(p) { return String((p && p.name) || "").trim() || "未命名人物"; }
+
+    /** chat_ids 的真实形状是 [{platform, chat_id, name}]；字符串数组也容错（旧夹具/手写）。 */
+    function personChats(p) {
+      var out = [];
+      ((p && p.chat_ids) || []).forEach(function (x) {
+        if (!x) return;
+        if (typeof x === "string") {
+          var i = x.indexOf(":");
+          if (i > 0 && PLAT[x.slice(0, i)]) {
+            out.push({ platform: x.slice(0, i), chat_id: x.slice(i + 1), name: "" });
+          } else out.push({ platform: p.platform, chat_id: x, name: "" });
+          return;
+        }
+        var cid = x.chat_id || x.chatId || "";
+        if (cid) out.push({ platform: x.platform || p.platform, chat_id: cid, name: x.name || "" });
+      });
+      return out;
+    }
+
+    /** 会话显示名：只认面板已经拿到名字的会话，绝不把 chat_id 摆到界面上。 */
+    function chatNameOf(platform, chatId) {
+      var hit = (S.chats || []).filter(function (c) {
+        return c.platform === platform && c.chat_id === chatId;
+      })[0] || (S.targets || []).filter(function (t) {
+        return t.platform === platform && t.chat_id === chatId;
+      })[0];
+      return (hit && (hit.name || hit.chat_name)) || "";
+    }
+    function findPerson(platform, personId) {
+      return (S.persons || []).filter(function (p) {
+        return p.platform === platform && p.person_id === personId;
+      })[0] || null;
+    }
+    function targetOfChat(platform, chatId) {
+      return (S.targets || []).filter(function (t) {
+        return t.platform === platform && t.chat_id === chatId;
+      })[0] || null;
+    }
+    /** 群聊段只列需要独立工作本的会话：私聊对象归「人物」，不重复出现。 */
+    function bookRows() {
+      return (S.targets || []).filter(function (t) {
+        return !(t.kind === "p2p" && t.person);
+      });
+    }
+    function personBookTarget(p) {
+      var chats = personChats(p);
+      for (var i = 0; i < chats.length; i++) {
+        var t = targetOfChat(chats[i].platform, chats[i].chat_id);
+        if (t && t.kind === "p2p") return t;
+      }
+      return null;
+    }
+    /** 详情「查看 →」与服务对象页分段共用：切到对应分段并重取数据。 */
+    function goTargets(segment) {
+      S.detail = null;
+      S.tab = "targets";
+      S.personSegment = segment;
+      paint();
+      loadTargets();
+      loadPersons();
+    }
+
     function targetsView() {
       var scroll = h("div", { class: "ims-scroll" });
-      var list = S.targets || [];
+      scroll.appendChild(segmentBar());
+      if (S.personSegment === "persons") personsSection(scroll);
+      else targetsSection(scroll);
+      return scroll;
+    }
+
+    /** 「群聊 / 人物」分段；数量只在成功拿到过列表后显示，空态不闪。 */
+    function segmentBar() {
+      var bar = h("div", { class: "ims-seg" });
+      [["targets", "群聊", bookRows().length, S.targetsLoaded],
+       ["persons", "人物", (S.persons || []).length, S.personsLoaded]].forEach(function (d) {
+        bar.appendChild(h("button", {
+          class: "ims-seg-btn" + (S.personSegment === d[0] ? " on" : ""), type: "button",
+          title: d[0] === "targets" ? "按群聊看：会话工作本" : "按人看：人物档案（私聊与群共用）",
+          onclick: function () {
+            if (S.personSegment === d[0]) return;
+            S.personSegment = d[0];
+            paintBody();
+            if (d[0] === "persons") loadPersons(); else loadTargets();
+          }
+        }, d[1] + (d[3] ? " · " + d[2] : "")));
+      });
+      bar.appendChild(h("span", { class: "ims-grow" }));
+      bar.appendChild(h("span", { class: "ims-hint", text: "人物档案跨会话，会话工作本只在本会话" }));
+      return bar;
+    }
+
+    function targetsSection(scroll) {
+      var list = bookRows();
       scroll.appendChild(h("div", { class: "ims-card" },
         h("div", { class: "ims-card-h" },
           h("span", { class: "ims-ico", html: icon("user", 15) }),
-          "服务对象 " + (list.length ? "· " + list.length + " 个对象" : "")),
-        h("div", { class: "ims-hint", text: "每个对象一份画像文件：只写下次值守会用到的信息，不保存聊天原文。agent 起草前只读这一份。" })));
+          "会话工作本 " + (list.length ? "· " + list.length + " 个会话" : "")),
+        h("div", { class: "ims-hint", text: "群聊 = 一个群的会话工作本；私聊对象归「人物」，不在这里重复出现。工作本只写本会话成立的要求与上下文（群规、回复口径、成员角色）；个人评价写人物档案。" })));
 
-      if (!list.length && S.targetsLoaded) scroll.appendChild(h("div", { class: "ims-empty", text: "还没有服务对象。在「分身」里加入联系人或打开一个会话。" }));
+      if (!list.length && S.targetsLoaded) {
+        scroll.appendChild(h("div", { class: "ims-empty", text: "没有需要单独维护工作本的群聊；私聊对象在「人物」里。" }));
+        return;
+      }
 
       list.forEach(function (t) {
         var p = PLAT[t.platform] || { label: t.platform, color: "var(--fg3)" };
@@ -1965,7 +1985,8 @@ window.__ModuleLoader__.load({
         var editBtn;
 
         if (editing) {
-          var ta = h("textarea", { class: "ims-ta", placeholder: "写下这个人的画像：是谁、怎么说话、在意什么、忌讳什么" });
+          var ta = h("textarea", { class: "ims-ta",
+            placeholder: "写下这个会话的要求：群规、回复口径、成员角色、禁发事项；个人评价写人物档案" });
           ta.value = draft;
           ta.style.minHeight = "240px";
           ta.addEventListener("input", function () { S.targetDrafts[key] = ta.value; });
@@ -1975,16 +1996,17 @@ window.__ModuleLoader__.load({
               h("button", {
                 class: "ims-btn primary", type: "button",
                 onclick: function () {
+                  // chat_id 优先（重名会话不会串），name 兼容旧后端。
                   api("/api/targets/profile", {
-                    body: { platform: t.platform, name: t.name, text: ta.value }
+                    body: { platform: t.platform, chat_id: t.chat_id, name: t.name, text: ta.value }
                   }).then(function (r) {
                     if (!r || r.ok === false) return say("保存失败：" + ((r && r.reason) || "未知原因"));
-                    say("画像已保存");
+                    say("会话工作本已保存");
                     S.targetEdit = ""; delete S.targetDrafts[key];
                     loadTargets();
                   });
                 }
-              }, "保存画像"),
+              }, "保存工作本"),
               h("button", {
                 class: "ims-btn", type: "button",
                 onclick: function () {
@@ -1992,38 +2014,369 @@ window.__ModuleLoader__.load({
                 }
               }, "取消"),
               h("span", { class: "ims-grow" }),
-              h("span", { class: "ims-hint", text: "只写结论，不抄聊天原文" })));
+              h("span", { class: "ims-hint", text: "只写本会话的要求，不抄聊天原文" })));
           editBtn = null;
         } else {
           body = (t.profile || "").trim()
             ? h("div", { class: "ims-profile", html: mdLite(profileForDisplay(t.profile)) })
-            : h("div", { class: "ims-hint", text: "画像还是空的。点「编辑画像」写下对方是谁、怎么说话、在意什么。" });
+            : h("div", { class: "ims-hint", text: "会话工作本还是空的。点「编辑工作本」写下本会话的要求与上下文。" });
           editBtn = h("button", {
             class: "ims-btn mini", type: "button",
             onclick: function () {
               S.targetEdit = key; S.targetDrafts[key] = t.profile || ""; paintBody();
             }
-          }, "编辑画像");
+          }, "编辑工作本");
         }
 
         scroll.appendChild(h("div", { class: "ims-card",
-          title: t.chat_id ? "对象 ID（排障用）：" + t.chat_id : "" },
+          title: t.chat_id ? "群聊 ID（排障用）：" + t.chat_id : "" },
           h("div", { class: "ims-card-h" },
             h("div", { class: "ims-avatar", style: "--pc:" + p.color, text: (t.name || "?")[0] }),
             h("span", { class: "ims-name", text: t.name }),
             h("span", { class: "ims-tag", style: "color:" + p.color, text: p.label }),
+            t.kind === "group" ? h("span", { class: "ims-tag", style: "color:var(--fg3)", text: "群" }) : null,
             chat.watching ? h("span", { class: "ims-tag", style: "color:var(--ok)", text: "值守中" }) : null,
             h("span", { class: "ims-grow" }),
             editBtn),
           h("div", { class: "ims-rowline" },
             h("span", { class: "ims-wschip", title: t.profile_path || "" },
               h("span", { class: "ims-ico", html: icon("note", 12) }),
-              h("span", { class: "ims-wschip-txt", text: t.profile_path ? "画像文件" : "画像未生成" })),
+              h("span", { class: "ims-wschip-txt", text: t.profile_path ? "工作本文件" : "工作本未生成" })),
             h("span", { class: "ims-hint",
               text: t.profile_updated_at ? "更新于 " + fmtTime(t.profile_updated_at) : "" })),
           body));
       });
-      return scroll;
+    }
+
+    function personsSection(scroll) {
+      var list = S.persons || [];
+      var searchOpen = !!S.personSearch.open;
+      scroll.appendChild(h("div", { class: "ims-card" },
+        h("div", { class: "ims-card-h" },
+          h("span", { class: "ims-ico", html: icon("users", 15) }),
+          "人物档案 " + (list.length ? "· " + list.length + " 人" : ""),
+          h("span", { class: "ims-grow" }),
+          h("button", {
+            class: "ims-btn mini", type: "button", title: "从平台通讯录搜一个人，先建四段模板再写",
+            onclick: function () {
+              S.personSearch.open = !S.personSearch.open;
+              if (!S.personSearch.open) { S.personSearch.items = null; S.personSearch.err = ""; }
+              paintBody();
+            }
+          }, searchOpen ? "收起搜索" : "从平台搜人新建")),
+        h("div", { class: "ims-hint", text: "人物档案 = 对一个人的长期评价，私聊与群共用同一份；私聊对象只在这里出现，群工作本在「群聊」。只写下次值守还会用到的信息，不保存聊天原文。" }),
+        searchOpen ? personSearchBox() : null));
+
+      if (!list.length) {
+        if (S.personsLoaded && !searchOpen) {
+          scroll.appendChild(h("div", { class: "ims-empty",
+            text: "还没有人物档案。agent 处理消息时会按需建；也可以点上面的「从平台搜人新建」。" }));
+        }
+        return;
+      }
+      list.forEach(function (p) { scroll.appendChild(personCard(p)); });
+    }
+
+    function personCard(p) {
+      var plat = PLAT[p.platform] || { label: p.platform, color: "var(--fg3)" };
+      var key = personKey(p);
+      var editing = S.personEdit === key;
+      var draft = S.personDrafts[key];
+      var body;
+      var editBtn;
+      var book = personBookTarget(p);
+      var bookOpen = !!book && S.personBookEdit === key;
+
+      if (editing) {
+        var ta = h("textarea", { class: "ims-ta",
+          placeholder: "写下这个人的档案：身份与角色、沟通偏好、在意与忌讳、历史结论" });
+        ta.value = draft ? draft.text : (p.profile || "");
+        ta.style.minHeight = "240px";
+        var counter = h("span", { class: "ims-hint" });
+        var saveBtn = h("button", { class: "ims-btn primary", type: "button" }, "保存档案");
+        function refreshCount() {
+          var n = byteLen(ta.value);
+          counter.textContent = kbText(n) + " / 12 KB";
+          counter.className = "ims-hint" + (n > PERSON_LIMIT ? " ims-err" : "");
+          saveBtn.disabled = n > PERSON_LIMIT;
+          saveBtn.title = n > PERSON_LIMIT ? "超过 12KB（" + n + " 字节），先精简再保存" : "";
+        }
+        ta.addEventListener("input", function () {
+          if (!S.personDrafts[key]) {
+            S.personDrafts[key] = { text: "", mtime: p.profile_updated_at || 0, name: p.name || "" };
+          }
+          S.personDrafts[key].text = ta.value;
+          refreshCount();
+        });
+        saveBtn.addEventListener("click", function () {
+          var n = byteLen(ta.value);
+          if (n > PERSON_LIMIT) return say("已超过 12KB（" + n + " 字节），先精简再保存");
+          saveBtn.disabled = true;
+          api("/api/persons/profile", {
+            body: {
+              platform: p.platform, person_id: p.person_id, name: p.name || "",
+              text: ta.value, base_mtime: draft ? (draft.mtime || 0) : 0
+            }
+          }).then(function (r) {
+            if (!r) { saveBtn.disabled = false; return say("保存失败：本地服务没响应"); }
+            if (r.ok === false) {
+              if (r.reason === "stale") {
+                // agent 刚写过这份档案：不覆盖，退回列表重新加载，让用户看到最新内容。
+                S.personEdit = "";
+                delete S.personDrafts[key];
+                say("人物档案已被 agent 更新，已重新加载，请确认后重试");
+                loadPersons();
+                return;
+              }
+              saveBtn.disabled = false;
+              return say("保存失败：" + (r.reason || "未知原因"));
+            }
+            say("人物档案已保存");
+            S.personEdit = ""; delete S.personDrafts[key];
+            loadPersons();
+          }).catch(function (e) {
+            saveBtn.disabled = false;
+            say("保存失败：" + shortReason(e));
+          });
+        });
+        refreshCount();
+        body = h("div", null,
+          ta,
+          h("div", { class: "ims-rowline" },
+            saveBtn,
+            h("button", {
+              class: "ims-btn", type: "button",
+              onclick: function () { S.personEdit = ""; delete S.personDrafts[key]; paintBody(); }
+            }, "取消"),
+            h("span", { class: "ims-grow" }),
+            counter,
+            h("span", { class: "ims-hint", text: "只写长期结论，不抄聊天原文" })));
+        editBtn = null;
+      } else {
+        body = (p.profile || "").trim()
+          ? h("div", { class: "ims-profile", html: mdLite(profileForDisplay(p.profile)) })
+          : h("div", { class: "ims-hint", text: "人物档案还是空的。点「编辑档案」写下这个人是谁、怎么说话、在意什么。" });
+        editBtn = h("button", {
+          class: "ims-btn mini", type: "button",
+          onclick: function () { openPersonEdit(p); }
+        }, "编辑档案");
+      }
+
+      var meta = h("div", { class: "ims-rowline" },
+        h("span", { class: "ims-wschip", title: p.profile_path || "" },
+          h("span", { class: "ims-ico", html: icon("note", 12) }),
+          h("span", { class: "ims-wschip-txt", text: p.profile_path ? "档案文件" : "档案未生成" })),
+        h("span", { class: "ims-hint",
+          text: [
+            p.profile_updated_at ? "更新于 " + fmtTime(p.profile_updated_at) : "还没更新过",
+            (typeof p.bytes === "number" && p.bytes > 0) ? kbText(p.bytes) : ""
+          ].filter(Boolean).join(" · ") }));
+
+      // 出处会话：只显示面板里拿得到名字的会话，不把 chat_id 摆到界面上。
+      var chats = personChats(p).map(function (c) {
+        return chatNameOf(c.platform, c.chat_id) || c.name || "";
+      }).filter(function (s, i, a) { return s && a.indexOf(s) === i; }).slice(0, 3);
+      if (chats.length) {
+        meta.appendChild(h("span", { class: "ims-grow" }));
+        chats.forEach(function (name) {
+          meta.appendChild(h("span", { class: "ims-habitchip", text: name }));
+        });
+      }
+
+      return h("div", { class: "ims-card", title: p.person_id ? "人物 ID（排障用）：" + p.person_id : "" },
+        h("div", { class: "ims-card-h" },
+          h("div", { class: "ims-avatar", style: "--pc:" + plat.color, text: (personName(p) || "?")[0] }),
+          h("span", { class: "ims-name", text: personName(p) }),
+          h("span", { class: "ims-tag", style: "color:" + plat.color, text: plat.label }),
+          h("span", { class: "ims-grow" }),
+          book ? h("button", {
+            class: "ims-btn mini ghost", type: "button",
+            title: "这个私聊的渠道备注（一般空着；人物评价写档案）",
+            onclick: function () {
+              S.personBookEdit = bookOpen ? "" : key;
+              if (!bookOpen) S.personBookDrafts[key] = book.profile || "";
+              paintBody();
+            }
+          }, bookOpen ? "收起工作本" : "私聊工作本") : null,
+          editBtn,
+          h("button", {
+            class: "ims-btn mini danger", type: "button", title: "删除这份人物档案；会话工作本不动",
+            onclick: function () { removePerson(p); }
+          }, "删除")),
+        meta,
+        body);
+    }
+
+    /** 私聊工作本：只给这个通道的特殊要求；不开「群聊」段，避免同一人出现两次。 */
+    function personBookEditor(p, t, key) {
+      var draft = S.personBookDrafts[key];
+      if (draft === undefined) draft = t.profile || "";
+      var ta = h("textarea", { class: "ims-ta",
+        placeholder: "这个私聊的渠道备注（一般不用写；个人评价写上面的档案）" });
+      ta.value = draft;
+      ta.style.minHeight = "120px";
+      ta.addEventListener("input", function () { S.personBookDrafts[key] = ta.value; });
+      return h("div", { style: "margin-top:8px;border-top:1px solid var(--line);padding-top:8px" },
+        h("div", { class: "ims-hint", text: "私聊工作本：只写这个通道的特殊要求；人物评价写上面的档案。" }),
+        ta,
+        h("div", { class: "ims-rowline" },
+          h("button", {
+            class: "ims-btn primary", type: "button",
+            onclick: function () {
+              api("/api/targets/profile", {
+                body: { platform: t.platform, chat_id: t.chat_id, name: t.name, text: ta.value }
+              }).then(function (r) {
+                if (!r || r.ok === false) return say("保存失败：" + ((r && r.reason) || "未知原因"));
+                say("私聊工作本已保存");
+                delete S.personBookDrafts[key];
+                S.personBookEdit = "";
+                loadTargets();
+              }).catch(function (e) { say("保存失败：" + shortReason(e)); });
+            }
+          }, "保存工作本"),
+          h("button", {
+            class: "ims-btn", type: "button",
+            onclick: function () {
+              S.personBookEdit = ""; delete S.personBookDrafts[key]; paintBody();
+            }
+          }, "取消"),
+          h("span", { class: "ims-grow" }),
+          h("span", { class: "ims-hint", text: "只写渠道要求，不抄聊天原文" })));
+    }
+
+    function openPersonEdit(p) {
+      var key = personKey(p);
+      if (!S.personDrafts[key]) {
+        S.personDrafts[key] = { text: p.profile || "", mtime: p.profile_updated_at || 0, name: p.name || "" };
+      }
+      S.personEdit = key;
+      paintBody();
+    }
+
+    function removePerson(p) {
+      var name = personName(p);
+      if (typeof window !== "undefined" && window.confirm &&
+          !window.confirm("删除「" + name + "」的人物档案？\n" +
+            "人物评价会一并删除；这个人的会话工作本与本地面板不受影响。")) return;
+      api("/api/persons", { method: "DELETE", body: { platform: p.platform, person_id: p.person_id } })
+        .then(function (r) {
+          if (!r || r.ok === false) return say("删除失败：" + ((r && r.reason) || "未知原因"));
+          say(r.deleted ? "已删除人物档案" : "这份人物档案已经不在了");
+          var key = personKey(p);
+          if (S.personEdit === key) S.personEdit = "";
+          delete S.personDrafts[key];
+          loadPersons();
+        })
+        .catch(function (e) { say("删除失败：" + shortReason(e)); });
+    }
+
+    /** 从平台通讯录搜人新建：先建四段模板，再进入编辑。 */
+    function personSearchBox() {
+      var st = S.personSearch;
+      var sel = h("select", { class: "ims-select" });
+      ["feishu", "wecom", "dingtalk"].forEach(function (k) {
+        sel.appendChild(h("option", { value: k, selected: st.platform === k }, PLAT[k].label));
+      });
+      var inp = h("input", { class: "ims-inp", placeholder: "输入名字搜索（如 张三）" });
+      inp.value = st.q;
+      var go = h("button", { class: "ims-btn", type: "button" }, "搜索");
+      var result = h("div", {});
+
+      function render() {
+        result.textContent = "";
+        if (st.err) result.appendChild(h("div", { class: "ims-hint ims-err", text: st.err }));
+        var items = st.items;
+        if (!items) return;
+        if (!items.length) {
+          result.appendChild(h("div", { class: "ims-hint",
+            text: "没搜到。飞书 / 企业微信 / 钉钉都只搜得到你可见的通讯录联系人。" }));
+          return;
+        }
+        items.forEach(function (x) {
+          var id = x.id || x.person_id || "";
+          if (!id || !x.name) return;
+          var known = findPerson(st.platform, id);
+          result.appendChild(h("div", { class: "ims-rowline ims-found" },
+            h("div", { class: "ims-avatar",
+              style: "--pc:" + ((PLAT[st.platform] || {}).color || "var(--fg3)"),
+              text: String(x.name)[0] }),
+            h("span", { class: "ims-name", text: x.name }),
+            x.department ? h("span", { class: "ims-hint", text: x.department }) : null,
+            h("span", { class: "ims-grow" }),
+            known
+              ? h("button", {
+                  class: "ims-btn mini", type: "button",
+                  onclick: function () { openPersonEdit(known); }
+                }, "已建，去编辑")
+              : h("button", {
+                  class: "ims-btn mini primary", type: "button", title: "先建四段模板，再接着写",
+                  onclick: function () {
+                    this.disabled = true;
+                    createPerson(st.platform, id, x.name, this);
+                  }
+                }, "新建档案")));
+        });
+      }
+
+      function doSearch() {
+        var q = inp.value.trim();
+        st.q = q;
+        if (!q) { st.items = null; st.err = ""; render(); return; }
+        var platform = st.platform;
+        var seq = ++st.seq;
+        go.disabled = true; go.textContent = "…";
+        api("/api/search", { body: { platform: platform, q: q } })
+          .catch(function (e) { return { ok: false, items: [], error: String(e) }; })
+          .then(function (r) {
+            go.disabled = false; go.textContent = "搜索";
+            if (S.dead || seq !== st.seq || st.platform !== platform) return;
+            st.items = ((r && r.items) || []).filter(function (x) {
+              return x && x.name && (x.id || x.person_id);
+            });
+            st.err = r && r.ok === false ? String(r.error || "搜索失败").slice(0, 120) : "";
+            render();
+          });
+      }
+
+      go.addEventListener("click", doSearch);
+      inp.addEventListener("keydown", function (e) {
+        if (e.key === "Enter") { e.preventDefault(); doSearch(); }
+        else if (e.key === "Escape") {
+          e.preventDefault(); e.stopPropagation();
+          S.personSearch.open = false; paintBody();
+        }
+      });
+      sel.addEventListener("change", function () {
+        st.seq++; st.platform = sel.value; st.items = null; st.err = ""; render();
+      });
+      render();
+      return h("div", null,
+        h("div", { class: "ims-rowline" }, sel, inp, go),
+        result,
+        h("div", { class: "ims-hint",
+          text: "搜到后点「新建档案」：先建一份四段模板，再接着写；已有档案的直接去编辑。" }));
+    }
+
+    function createPerson(platform, personId, name, btn) {
+      api("/api/persons/profile", {
+        body: { platform: platform, person_id: personId, name: name || "", text: "", base_mtime: 0 }
+      }).then(function (r) {
+        if (!r || r.ok === false) {
+          if (btn) btn.disabled = false;
+          return say("新建失败：" + ((r && r.reason) || "未知原因"));
+        }
+        var key = platform + ":" + personId;
+        S.personSearch.open = false;
+        S.personSearch.q = ""; S.personSearch.items = null; S.personSearch.err = "";
+        S.personSearch.seq++;
+        S.personEdit = key;
+        S.personDrafts[key] = { text: r.profile || "", mtime: r.profile_updated_at || 0, name: name || "" };
+        say("已建人物档案模板，接着写就行");
+        loadPersons();
+      }).catch(function (e) {
+        if (btn) btn.disabled = false;
+        say("新建失败：" + shortReason(e));
+      });
     }
 
     // ---- 体检 -----------------------------------------------------------
@@ -2033,13 +2386,33 @@ window.__ModuleLoader__.load({
       var d = S.digest || {};
       var date = S.digestDate || todayStr();
       var scroll = h("div", { class: "ims-scroll" });
+      // 日期选择后 input 仍持有焦点，paintBody 会因「正在输入」跳过重绘；
+      // 主动失焦再 load，保证切日期立刻换内容（input 覆盖原生选择器的即时事件）。
+      function onDigestDate(e) {
+        var v = e.target.value;
+        if (!/^\d{4}-\d{2}-\d{2}$/.test(v) || v === S.digestDate) return;
+        if (e.target.blur) e.target.blur();
+        loadDigest(v);
+      }
       var picker = h("input", {
         class: "ims-inp", type: "date", value: date, style: "max-width:160px",
-        onchange: function (e) { loadDigest(e.target.value); }
+        oninput: onDigestDate, onchange: onDigestDate
       });
+      function shiftDay(n) {
+        var t = new Date(date + "T00:00:00");
+        if (isNaN(t.getTime())) return;
+        t.setDate(t.getDate() + n);
+        var v = t.getFullYear() + "-" + String(t.getMonth() + 1).padStart(2, "0") + "-" +
+          String(t.getDate()).padStart(2, "0");
+        loadDigest(v);
+      }
       scroll.appendChild(h("div", { class: "ims-rowline", style: "padding:8px var(--pad) 6px" },
         h("span", { class: "ims-hint", text: "日期" }),
+        h("button", { class: "ims-btn mini ghost", type: "button", title: "前一天",
+          onclick: function () { shiftDay(-1); } }, "‹"),
         picker,
+        h("button", { class: "ims-btn mini ghost", type: "button", title: "后一天",
+          onclick: function () { shiftDay(1); } }, "›"),
         h("span", { class: "ims-grow" }),
         date !== todayStr()
           ? h("button", {
@@ -2059,13 +2432,14 @@ window.__ModuleLoader__.load({
         scroll.appendChild(h("div", { class: "ims-empty", text: "日期格式不对" }));
         return scroll;
       }
-      if (d.error === "unreachable") {
-        scroll.appendChild(h("div", { class: "ims-banner warn" },
-          h("span", { class: "ims-ico", html: icon("bell", 13) }),
-          h("span", { text: "本地服务连不上：拿不到日报，先看页面顶部的错误提示" })));
-        return scroll;
-      }
       if (!d.exists) {
+        // 还没拿到第一份数据时只说「正在读取」，绝不替 agent 断言「今天没有日报」。
+        if (S.digestLoading === date) {
+          scroll.appendChild(h("div", { class: "ims-empty", text: "正在读取日报…" }));
+          return scroll;
+        }
+        // 读失败由顶部错误条说明，这里不再画成「没有日报」。
+        if (S.digestError) return scroll;
         scroll.appendChild(h("div", { class: "ims-empty", text: date === todayStr()
           ? "今天还没有日报。agent 会在下次被唤醒时写；现在没人找你就是没人在等。"
           : "这一天没有日报。" }));
@@ -2207,10 +2581,14 @@ window.__ModuleLoader__.load({
           h("span", { text: "运行时" }),
           h("span", { text: resolved.label || "跟随 DSH 配置" })),
         h("div", { class: "ims-kv" },
-          h("span", { text: "单轮上限" }),
-          h("span", { text: ((cfg.dsh || {}).timeout || 600) + " 秒 · 新消息到达会打断在飞 turn" })),
+          h("span", { text: "单轮守时" }),
+          h("span", { text: "停滞 " + ((cfg.dsh || {}).timeout || 600) + " 秒 · 总上限 " +
+            ((cfg.dsh || {}).turn_cap_sec === 0
+              ? "不限"
+              : (((cfg.dsh || {}).turn_cap_sec || 3600) + " 秒")) +
+            " · 新消息到达会打断在飞 turn" })),
         h("div", { class: "ims-kv" },
-          h("span", { text: "画像写权限" }),
+          h("span", { text: "档案写权限" }),
           h("span", { class: "ims-tag",
             style: "color:" + ((cfg.dsh || {}).full_access ? "var(--warn)" : "var(--fg3)"),
             text: (cfg.dsh || {}).full_access ? "完整文件访问" : "工作区内" })),
@@ -2221,7 +2599,7 @@ window.__ModuleLoader__.load({
             class: "ims-btn", type: "button",
             onclick: function () {
               var next = !((S.cfg || {}).dsh || {}).full_access;
-              if (next && !window.confirm("开启后 agent 可以写整个 home（包括画像目录），不再弹审批。只建议在信任的值守会话里使用。继续？")) return;
+              if (next && !window.confirm("开启后 agent 可以写整个 home（包括 profiles 目录），不再弹审批。只建议在信任的值守会话里使用。继续？")) return;
               api("/api/config", { body: { dsh: { full_access: next } } }).then(function (c) {
                 S.cfg = c;
                 say(next ? "已开启完整文件访问" : "已关闭完整文件访问");
@@ -2311,7 +2689,7 @@ window.__ModuleLoader__.load({
           }, "立即拉一轮"),
           h("span", { class: "ims-hint", text: "不受间隔限制；同一个会话 20 秒内不会重复拉。" }))));
 
-      // 会话生命周期：闲置重开 + 保温（续缓存 / 归并画像）
+      // 会话生命周期：闲置重开 + 保温（续缓存 / 整理记忆）
       var dcfg = cfg.dsh || {};
       var idleInp = h("input", { class: "ims-inp ims-num", type: "number",
                                  min: "0", max: "1440", step: "10" });
@@ -2355,17 +2733,17 @@ window.__ModuleLoader__.load({
             }
           }, "保存")),
         h("div", { class: "ims-hint", text: "超过「闲置重开」没有真实对话，下一条消息自动换新会话" +
-          "（旧会话留在 DSH 侧边栏，画像与最近消息还在）；闲置在阈值内时，每「保温间隔」跑一轮心跳：" +
-          "续上下文缓存，并按 skill 规则归并当前对象画像。0 = 关闭。" +
+          "（旧会话留在 DSH 侧边栏，工作本与最近消息还在）；闲置在阈值内时，每「保温间隔」跑一轮心跳：" +
+          "续上下文缓存，并按 skill 规则整理本会话的工作本与相关人物档案。0 = 关闭。" +
           "保温不会推后重开时钟；重开开启时，保温间隔 ≥ 闲置重开不会触发。" +
           "两个 0 各自关闭：闲置重开设 0 只关重开，不关保温。" })));
 
-      // 值守范围：群默认不拉，收件箱清理
+      // 值守范围：群默认不拉，历史待回清理
       var groupTimerCount = ((S.chats || []).filter(function (c) {
         return c.kind === "group" && c.timer === 1;
       })).length;
       var blockedList = (S.chats || []).filter(function (c) { return c.blocked; });
-      var cleanable = !!((S.counts && S.counts.todo > 0) || S.inboxTotal > 0);
+      var cleanable = !!((S.counts && S.counts.todo) || 0);
       scroll.appendChild(h("div", { class: "ims-card" },
         h("div", { class: "ims-card-h", text: "值守范围" }),
         h("div", { class: "ims-kv" },
@@ -2377,11 +2755,11 @@ window.__ModuleLoader__.load({
             " 个在盯 · 其余点开才拉" })),
         h("div", { class: "ims-kv" },
           h("span", { text: "已屏蔽" }),
-          h("span", { text: (pollInfo.blocked || 0) + " 个 · 不同步、不进收件箱" })),
+          h("span", { text: (pollInfo.blocked || 0) + " 个 · 不同步、不计数" })),
         h("div", { class: "ims-hint", text: "群聊默认不盯：想看哪个群，点进去拉一次就够。" +
           "要它自动盯，在「分身」的群卡片上选「只盯 @我」或「全部消息」；选「不盯」会从这一页移走，" +
-          "从收件箱点开这个群还能改回来。" }),
-        h("div", { class: "ims-hint", text: "屏蔽 = 彻底不同步：定时、点开、手动单会话都拒拉，收件箱里也没有它。" +
+          "之后用「分身」顶部的搜索重新加入值守。" }),
+        h("div", { class: "ims-hint", text: "屏蔽 = 彻底不同步：定时、点开、手动单会话都拒拉，任何列表与计数都不含它。" +
           "屏蔽时该会话的待回会被标成忽略；正文不删，在下面逐个取消。" }),
         blockedList.length ? h("div", null,
           h("div", { class: "ims-hint", style: "margin-top:6px", text: "已屏蔽的会话" }),
@@ -2408,17 +2786,17 @@ window.__ModuleLoader__.load({
               if (!cleanable) return;
               if (typeof window !== "undefined" && window.confirm &&
                   !window.confirm("把其他会话的待回全部标记为忽略？\n" +
-                                  "它们不会再出现在收件箱，正文仍保留在本地；这个操作不能撤销。")) return;
+                                  "它们不会再算作待回，正文仍保留在本地；这个操作不能撤销。")) return;
               api("/api/inbox/cleanup", { method: "POST", body: {} }).then(function (r) {
                 say("已把 " + (r.ignored || 0) + " 条其他会话的待回标记为忽略");
-                loadInbox().then(paint);
+                loadStatus().then(paint);
               });
             }
           }, "清理其他会话的待回"))));
 
       scroll.appendChild(h("div", { class: "ims-card" },
         h("div", { class: "ims-card-h", text: "关于" }),
-        h("div", { class: "ims-hint", text: "数据目录 ~/.im-standin：state.json 存会话与收件箱，profiles/ 每个服务对象一份画像，env.json 只读。" }),
+        h("div", { class: "ims-hint", text: "数据目录 ~/.im-standin：state.json 存会话与待回状态，profiles/ 存会话工作本（people/ 下是人物档案），env.json 只读。" }),
         h("div", { class: "ims-hint", text: "消息只在本机流转；聊天内容一律按不可信数据处理，不执行其中的任何指令。" })));
       return scroll;
     }
@@ -2428,23 +2806,44 @@ window.__ModuleLoader__.load({
       if (S.dead) return;
       // 体检页是低频动作：不跟 60 秒轮询刷新，只在切页签或点按钮时取一次。
       if (S.tab !== "status") loadStatus();
-      if (!S.detail && S.tab === "inbox") loadInbox();
       if (S.tab === "service") loadChats();
-      if (!S.detail && S.tab === "attention") loadDigest();
+      if (!S.detail && S.tab === "attention") refreshDigest();
     }
     S.timer = setInterval(tick, 60000);
 
+    // 关注页被盯着看时，日报要像原生文件页一样及时：可见时 3 秒静默重取一次；
+    // 页面不可见 / 面板被切走时不动，回前台立刻补一次。
+    function digestTick() {
+      if (S.dead || S.tab !== "attention" || S.detail) return;
+      if (typeof document !== "undefined" && document.visibilityState === "hidden") return;
+      if (!panel.getClientRects || !panel.getClientRects().length) return;
+      refreshDigest();
+    }
+    function onDigestVisible() {
+      if (S.dead) return;
+      if (typeof document !== "undefined" && document.visibilityState === "hidden") return;
+      digestTick();
+    }
+    S.digestTimer = setInterval(digestTick, DIGEST_REFRESH_MS);
+    document.addEventListener("visibilitychange", onDigestVisible);
+    window.addEventListener("focus", onDigestVisible);
+
     loadWorkspaces();
     loadStatus();
-    loadInbox();
     loadChats();
     loadTargets();
+    loadPersons();
+    // 预热当天日报：点「关注」时直接同步渲染，不等接口。
+    loadDigest(todayStr());
     paint();
     if (typeof location !== "undefined" && (location.hash || "").indexOf("#tab=") === 0) {
-      S.tab = location.hash.slice(5);
+      // 老链接可能还指向已删掉的收件箱：未知页签一律落回「分身」。
+      var want = location.hash.slice(5);
+      S.tab = ["attention", "service", "targets", "status", "settings"].indexOf(want) >= 0
+        ? want : "service";
       paint();
       if (S.tab === "service") loadChats();
-      if (S.tab === "targets") loadTargets();
+      if (S.tab === "targets") { loadTargets(); loadPersons(); }
       if (S.tab === "attention") loadDigest();
     }
     if (typeof location !== "undefined" && (location.hash || "").indexOf("#thread=") === 0) {
@@ -2455,25 +2854,27 @@ window.__ModuleLoader__.load({
     return function unmount() {
       S.dead = true;
       clearInterval(S.timer);
+      clearInterval(S.digestTimer);
       document.removeEventListener("keydown", onKey);
+      document.removeEventListener("visibilitychange", onDigestVisible);
+      window.removeEventListener("focus", onDigestVisible);
       if (root.parentNode) root.parentNode.removeChild(root);
     };
   }
 
   /**
-   * 独立席位：侧边栏底部只放这一颗入口 + 未读角标。
+   * 独立席位：侧边栏底部只放这一颗入口 + 值守状态点。
    * `opts.open()` 返回 "opened" / "no-session" / "unavailable" / "error"，
    * 席位据此给出诚实提示；面板本体由 `mountDock` 挂在 DSH 右侧栏。
    */
   function mountSeat(host, opts) {
     opts = opts || {};
     injectCss();
-    var S = { dead: false, status: null, counts: {}, timer: null, toastTimer: null };
+    var S = { dead: false, status: null, timer: null, toastTimer: null };
     var seat = h("button", { class: "ims-seat", type: "button", title: "IM 值守" },
       h("span", { class: "ims-seat-dot off" }),
       h("span", { class: "ims-seat-ico", html: icon("headset", 15) }),
-      h("span", { class: "ims-seat-label", text: "IM 值守" }),
-      h("span", { class: "ims-seat-badge", style: "display:none" }));
+      h("span", { class: "ims-seat-label", text: "IM 值守" }));
     var toast = h("div", { class: "ims-toast" });
     var root = h("div", { class: "ims-root", "data-mode": "seat" }, seat, toast);
     host.appendChild(root);
@@ -2487,31 +2888,19 @@ window.__ModuleLoader__.load({
 
     function paintSeat() {
       var dot = seat.querySelector(".ims-seat-dot");
-      var badge = seat.querySelector(".ims-seat-badge");
       var label = seat.querySelector(".ims-seat-label");
       var st = S.status;
-      var n = (S.counts && S.counts.todo) || 0;
       dot.className = "ims-seat-dot" + (!st ? " off" : (st.paused ? " warn" : (st.running ? "" : " off")));
       label.textContent = !st ? "IM 值守（未连接）" : (st.paused ? "IM 值守 · 已暂停" : "IM 值守");
-      badge.textContent = n > 99 ? "99+" : String(n);
-      badge.style.display = n > 0 ? "" : "none";
     }
 
     function load() {
       return api("/api/status").then(function (d) {
         if (S.dead) return;
-        S.status = d; S.counts = d.counts || S.counts;
+        S.status = d;
         paintSeat();
       }).catch(function () { S.status = null; paintSeat(); });
     }
-
-    // 停靠面板拉完数据后广播计数，席位不用等下一个 60 秒才更新角标。
-    function onCounts(e) {
-      if (!e || !e.detail || S.dead) return;
-      S.counts = e.detail;
-      paintSeat();
-    }
-    window.addEventListener("im-standin:counts", onCounts);
 
     seat.addEventListener("click", function () {
       var r = "";
@@ -2526,12 +2915,13 @@ window.__ModuleLoader__.load({
     });
 
     load();
+    // 页面一加载就把当天日报预热进缓存：右侧栏面板晚一步挂载时，点「关注」也是秒开。
+    digestPrefetch();
     S.timer = setInterval(load, 60000);
     return function unmount() {
       S.dead = true;
       clearInterval(S.timer);
       clearTimeout(S.toastTimer);
-      window.removeEventListener("im-standin:counts", onCounts);
       if (root.parentNode) root.parentNode.removeChild(root);
     };
   }
@@ -2691,7 +3081,7 @@ window.__ModuleLoader__.load({
 						id: "inbox",
 						order: 30,
 						title: () => TAB_TITLE,
-						description: () => "收件箱、分身实例与手动发送"
+						description: () => "关注、分身实例与手动发送"
 					}]
 				};
 				// 生命周期挂在插件根 ctx 上：插件卸载时撤销注册，避免 HMR 后重复注册。

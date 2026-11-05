@@ -8,7 +8,7 @@
 | 形态 | 入口 | 谁在等消息 | 适合 |
 | --- | --- | --- | --- |
 | Skill | `SKILL.md` + `scripts/*_listen_cli.py` | agent 自己起一个阻塞进程，命中才退出 | 挂在 Claude Code / WorkBuddy 里，按需值守 |
-| DSH 插件 | `dsh-plugin/` | 宿主进程内定时轮询，收件箱展示；命中唤醒绑定 DSH 会话 | 想要一个常驻 GUI：侧边栏席位、右侧栏收件箱、分身实例 |
+| DSH 插件 | `dsh-plugin/` | 宿主进程内定时轮询；命中唤醒绑定 DSH 会话 | 想要一个常驻 GUI：侧边栏席位、右侧栏值守面板、分身实例 |
 
 两者共用同一套平台适配知识（`references/`）和同一份 CLI 登录态（`~/.im-standin/env.json`），
 但**代码不共享**：skill 侧是 `listen_core.py` + 三个适配器，插件侧是 `lib/im.js`。
@@ -32,7 +32,7 @@ listen_cli --chat-id X --until T   （阻塞轮询本地 CLI，最多到 T）
 每 interval_min（≥10 分钟）
   ├─ 刷会话列表（只取元数据，不拉正文）
   ├─ 拉值守私聊 + timer=1 的群
-  ├─ 分类进每会话最近 10 条，收件箱/计数从这 10 条派生
+  ├─ 分类进每会话最近 10 条，待回/计数从这 10 条派生
   └─ 面板轮询 /api/status 拿计数，不靠推送
 点开会话 → 在线拉 30 条，失败回退本地指针
 手动「拉一轮」 → 立即跑整轮（不受 10 分钟限制）
@@ -84,11 +84,11 @@ token 用 `randomBytes(24)` 在进程启动时生成，经 `webserver/index-inje
 | --- | --- | --- |
 | `lib/index.js` | 同源路由、token、面板注入、装 skill、宿主服务接线 | 业务规则、平台分支 |
 | `lib/app.js` | `/api/*` 路由表与参数校验 | 平台命令行细节、直接读写文件 |
-| `lib/state.js` | `state.json` 归一化、收件箱派生、原子写 | 网络与轮询 |
+| `lib/state.js` | `state.json` 归一化、待回派生、原子写 | 网络与轮询 |
 | `lib/poller.js` | 轮询调度、拉取节奏、分类、唤醒判定 | 平台命令拼装 |
 | `lib/im.js` | 平台适配（拉列表 / 拉消息 / 发消息 / 搜索 / 身份） | 调度策略 |
 | `lib/turns.js` | live turn 状态机、append-only prompt、会话权限、取消 | 平台命令行细节、画像内容 |
-| `lib/profiles.js` / `workspaces.js` / `sessions.js` | 画像文件、DSH 工作区只读适配、会话路径换算 | 轮询 |
+| `lib/profiles.js` / `workspaces.js` / `sessions.js` | 画像两层（会话工作本 + 人物档案）、DSH 工作区只读适配、会话路径换算 | 轮询 |
 
 依赖方向是单向的：`app → poller → {state, im, turns}`；`turns → profiles/workspaces`。
 反向引用一律不许。

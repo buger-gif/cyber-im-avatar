@@ -153,7 +153,7 @@ window.__ModuleLoader__.load({
 						id: "inbox",
 						order: 30,
 						title: () => TAB_TITLE,
-						description: () => "收件箱、分身实例与手动发送"
+						description: () => "关注、分身实例与手动发送"
 					}]
 				};
 				// 生命周期挂在插件根 ctx 上：插件卸载时撤销注册，避免 HMR 后重复注册。

@@ -59,24 +59,34 @@ const chats = [
 ];
 
 const thread = [
-  { msg_id: "om_m1", platform: "feishu", chat_id: "oc_demo_lin", sender_id: "me",
+  { msg_id: "om_m1", platform: "feishu", chat_id: "oc_demo_lin", sender_id: "ou_demo_self",
     sender_name: "我", content: "上午那版接口文档发你了，有空过一下。", is_self: true,
     ts: stamp(5200), ts_epoch: now - 5200, kind: "dm", state: "replied" },
-  { msg_id: "om_m2", platform: "feishu", chat_id: "oc_demo_lin", sender_id: "u_lin",
+  { msg_id: "om_m2", platform: "feishu", chat_id: "oc_demo_lin", sender_id: "ou_demo_lin",
     sender_name: "林一帆", content: "在看，等我十分钟。", is_self: false,
     ts: stamp(4800), ts_epoch: now - 4800, kind: "dm", state: "opened" },
-  { msg_id: "om_d0", platform: "feishu", chat_id: "oc_demo_lin", sender_id: "me",
+  { msg_id: "om_d0", platform: "feishu", chat_id: "oc_demo_lin", sender_id: "ou_demo_self",
     sender_name: "我", content: "文档我先过一遍，有问题直接在这儿说。", is_self: true,
     ts: stamp(3000), ts_epoch: now - 3000, kind: "dm", state: "replied" },
-  { msg_id: "om_d1", platform: "feishu", chat_id: "oc_demo_lin", sender_id: "u_lin",
+  { msg_id: "om_d1", platform: "feishu", chat_id: "oc_demo_lin", sender_id: "ou_demo_lin",
     sender_name: "林一帆", content: "好，那我一条条提。", is_self: false,
     ts: stamp(2900), ts_epoch: now - 2900, kind: "dm", state: "opened" },
-  { msg_id: "om_d2", platform: "feishu", chat_id: "oc_demo_lin", sender_id: "u_lin",
+  { msg_id: "om_d2", platform: "feishu", chat_id: "oc_demo_lin", sender_id: "ou_demo_lin",
     sender_name: "林一帆", content: "接口文档我看了，鉴权那节能不能补个示例？现在只有字段说明。", is_self: false,
     ts: stamp(2400), ts_epoch: now - 2400, kind: "dm", state: "new" },
-  { msg_id: "om_d3", platform: "feishu", chat_id: "oc_demo_lin", sender_id: "u_lin",
+  { msg_id: "om_d3", platform: "feishu", chat_id: "oc_demo_lin", sender_id: "ou_demo_lin",
     sender_name: "林一帆", content: "@我 另外周五前能给个联调的时间点吗", is_self: false,
     ts: stamp(1800), ts_epoch: now - 1800, kind: "dm", state: "new" },
+  // 群消息：sender_id 是个人物 ID，面板靠它把「本群人物」chips 对到群会话上。
+  { msg_id: "om_g1", platform: "feishu", chat_id: "oc_demo_grp", sender_id: "ou_demo_wang",
+    sender_name: "王珂", content: "周会纪要已上传，@你 有空看下排期那节", is_self: false,
+    ts: stamp(60000), ts_epoch: now - 60000, kind: "mention", state: "new" },
+  { msg_id: "om_g2", platform: "feishu", chat_id: "oc_demo_grp", sender_id: "ou_demo_lin",
+    sender_name: "林一帆", content: "排期我按上次说的往后挪了一周，你那边能接受吗", is_self: false,
+    ts: stamp(74000), ts_epoch: now - 74000, kind: "mention", state: "new" },
+  { msg_id: "om_g3", platform: "feishu", chat_id: "oc_demo_grp", sender_id: "ou_demo_li",
+    sender_name: "李工", content: "CI 今天下午挂了两次，是不是我们这边改的", is_self: false,
+    ts: stamp(80000), ts_epoch: now - 80000, kind: "mention", state: "new" },
 ];
 
 const inboxMessages = [
@@ -180,14 +190,52 @@ const searchChats = [
   { chat_id: "oc_demo_ops", name: "线上告警 · 值班群", kind: "group" },
 ];
 
+const personBytes = (text) => new TextEncoder().encode(String(text || "")).length;
+
+// 人物档案（两层记忆的第一层）：按平台人物 ID 一份，私聊与群共用同一份。
+const personProfiles = {
+  lin: "# 林一帆\n\n> 飞书 · 人物档案 · ou_demo_lin\n> 人物级评价，跨会话复用：只写下次值守还会用到的信息，不保存聊天原文。\n\n## 身份与角色\n\n- 产品部，云雀项目交付负责人；排期与验收口径由他定。\n\n## 沟通偏好\n\n- 先要结论，再要细节；大段铺垫会被跳过。\n- 消息里带时间点，他会更快回。\n\n## 在意与忌讳\n\n- 不接受「我催一下」这种没有时间点的回复。\n- 会上不表态的事，会后私聊才是他的真意见。\n\n## 历史结论\n\n- 说「马上」≈ 两天；催第三次才会真的动。\n- 报价先给区间和口径，别先解释成本。\n",
+  wang: "# 王珂\n\n> 飞书 · 人物档案 · ou_demo_wang\n> 人物级评价，跨会话复用：只写下次值守还会用到的信息，不保存聊天原文。\n\n## 身份与角色\n\n- 平台组工程师，负责 CI、发布与线上值班。\n\n## 沟通偏好\n\n- 偏好直接给复现步骤和日志链接，不要只发「挂了」。\n- 群里回复简短；要细节会私聊或拉会。\n\n## 在意与忌讳\n\n- 值班交接必须写清当前状态和下一步，不接受口头交接。\n- 不要在群里直接点名线上事故责任人。\n\n## 历史结论\n\n- 说「我看下」通常会在 30 分钟内回贴结论。\n- 周五下午发版要提前到周四确认窗口。\n",
+};
+
+const persons = [
+  {
+    platform: "feishu", person_id: "ou_demo_lin", name: "林一帆",
+    profile: personProfiles.lin,
+    profile_excerpt: "产品部，云雀项目交付负责人；排期与验收口径由他定。",
+    profile_path: "profiles/people/feishu/ou_demo_lin.md",
+    profile_updated_at: now - 5400,
+    bytes: personBytes(personProfiles.lin),
+    chat_ids: [
+      { platform: "feishu", chat_id: "oc_demo_lin", name: "林一帆" },
+      { platform: "feishu", chat_id: "oc_demo_grp", name: "云雀项目 · 交付群" },
+    ],
+  },
+  {
+    platform: "feishu", person_id: "ou_demo_wang", name: "王珂",
+    profile: personProfiles.wang,
+    profile_excerpt: "平台组工程师，负责 CI、发布与线上值班。",
+    profile_path: "profiles/people/feishu/ou_demo_wang.md",
+    profile_updated_at: now - 9000,
+    bytes: personBytes(personProfiles.wang),
+    chat_ids: [
+      { platform: "feishu", chat_id: "oc_demo_grp", name: "云雀项目 · 交付群" },
+    ],
+  },
+];
+
+// 会话工作本（两层记忆的第二层）：字段仍是 profile*，只写本会话成立的要求。
 const targets = [
   {
     platform: "feishu", name: "林一帆", chat_id: "oc_demo_lin", open_id: "ou_demo_lin",
     kind: "p2p", in_env: true,
-    profile: "# 林一帆\n\n> 飞书 · oc_demo_lin\n> 画像由值守 agent 与面板共同维护：只写下次值守还会用到的信息，不保存聊天原文。\n\n## 对方是谁\n\n- 产品部，云雀项目交付负责人。\n\n## 沟通偏好\n\n- 先要结论，再要细节；大段铺垫会被跳过。\n\n## 在意与忌讳\n\n- 不接受「我催一下」这种没有时间点的回复。\n\n## 历史结论\n\n- 说「马上」≈ 两天；催第三次才会真的动。\n- 会上不表态的事，会后私聊才是他的真意见。\n- 报价先给区间和口径，别先解释成本。\n",
-    profile_excerpt: "产品部，负责云雀项目交付。",
+    profile: "# 林一帆\n\n> 飞书 · oc_demo_lin\n> 会话工作本：只写本会话成立的要求与上下文（群规、回复口径、成员角色）；个人评价写人物档案。\n\n## 这个会话是什么\n\n- 私聊：项目排期、接口文档与联调时间点都在这里对。\n\n## 群内工作要求\n\n- 一对一：先回结论，再补细节；没时间点的事先不给承诺。\n\n## 成员与角色\n\n- 林一帆 · 产品负责人 · people/feishu/ou_demo_lin.md\n\n## 本会话结论与待办\n\n- 接口文档鉴权一节补示例；周五前给联调时间点。\n",
+    profile_excerpt: "私聊：项目排期、接口文档与联调时间点都在这里对。",
     profile_path: "profiles/feishu/oc_demo_lin.md",
     profile_updated_at: now - 3600,
+    person: { person_id: "ou_demo_lin", path: "profiles/people/feishu/ou_demo_lin.md",
+              excerpt: "产品部，云雀项目交付负责人；排期与验收口径由他定。",
+              updated_at: now - 5400, exists: true },
     notes: [
       { index: 0, note: "先要结论，再要细节；大段铺垫会被跳过", at: "2026-10-28" },
       { index: 1, note: "周五下午固定开会，那个点找他大概率不回", at: "2026-10-30" },
@@ -198,15 +246,29 @@ const targets = [
   {
     platform: "wecom", name: "周敏", chat_id: "wm_demo_zhou", open_id: "ou_demo_zhou",
     kind: "p2p", in_env: true,
-    profile: "# 周敏\n\n> 企业微信 · wm_demo_zhou\n> 画像由值守 agent 与面板共同维护：只写下次值守还会用到的信息，不保存聊天原文。\n\n## 对方是谁\n\n- 财务部，合同与付款对接人。\n\n## 在意与忌讳\n\n- 金额、合同、对外承诺一律先问她本人。\n",
-    profile_excerpt: "财务部，合同与付款对接人。",
+    profile: "# 周敏\n\n> 企业微信 · wm_demo_zhou\n> 会话工作本：只写本会话成立的要求与上下文（群规、回复口径、成员角色）；个人评价写人物档案。\n\n## 这个会话是什么\n\n- 私聊：合同、付款与对外承诺都在这里对。\n\n## 群内工作要求\n\n- 金额、合同、对外承诺先问本人再回。\n\n## 成员与角色\n\n- 周敏 · 财务部 · people/wecom/wm_demo_zhou.md\n\n## 本会话结论与待办\n",
+    profile_excerpt: "私聊：合同、付款与对外承诺都在这里对。",
     profile_path: "profiles/wecom/wm_demo_zhou.md",
     profile_updated_at: now - 7200,
+    // 私聊能推出人物 ID（企微单聊 chat_id 就是对方 userid），但档案还没建：面板显示空态。
+    person: { person_id: "wm_demo_zhou", path: "profiles/people/wecom/wm_demo_zhou.md",
+              excerpt: "", updated_at: 0, exists: false },
     notes: [
       { index: 0, note: "只在企业微信找她，别发邮件", at: "2026-10-29" },
       { index: 1, note: "金额、合同、对外承诺一律先问她本人", at: "2026-10-30" },
     ],
     chat: { watching: true, mode: "service", auto_send: true, workspace: W2,
+            last_sync: now - 20, last_error: "" },
+  },
+  {
+    platform: "feishu", name: "云雀项目 · 交付群", chat_id: "oc_demo_grp", open_id: "",
+    kind: "group", in_env: true,
+    profile: "# 云雀项目 · 交付群\n\n> 飞书 · oc_demo_grp\n> 会话工作本：只写本会话成立的要求与上下文（群规、回复口径、成员角色）；个人评价写人物档案。\n\n## 这个会话是什么\n\n- 交付群：项目排期、验收口径、上线通知都在这里对齐。\n\n## 群内工作要求\n\n- 群里先给结论再给依据；要拍板的事 @ 到具体负责人。\n- 对外口径一律先发我确认，别在群里直接承诺时间点。\n\n## 成员与角色\n\n- 林一帆 · 产品负责人 · people/feishu/ou_demo_lin.md\n- 王珂 · 平台组 · people/feishu/ou_demo_wang.md\n\n## 本会话结论与待办\n\n",
+    profile_excerpt: "交付群：项目排期、验收口径、上线通知都在这里对齐。",
+    profile_path: "profiles/feishu/oc_demo_grp.md",
+    profile_updated_at: now - 1800,
+    notes: [],
+    chat: { watching: true, mode: "monitor", auto_send: false, workspace: "",
             last_sync: now - 20, last_error: "" },
   },
 ];
@@ -301,6 +363,7 @@ export function resolve(path) {
   if (p === "/api/search") return { ok: true, items: searchUsers };
   if (p === "/api/search/chats") return { ok: true, items: searchChats };
   if (p === "/api/targets") return { items: targets };
+  if (p === "/api/persons") return { ok: true, items: persons };
   if (p === "/api/workspaces") return workspaces;
   if (p === "/api/config") return config;
   if (p === "/api/doctor") return { checks: [] };
@@ -309,7 +372,7 @@ export function resolve(path) {
 
 /** 注入到页面里的拦截器源码（字符串，走 addScriptToEvaluateOnNewDocument）。 */
 export const intercept = `(() => {
-  const FIX = ${JSON.stringify({ chats, inbox: inboxGroups, thread, targets, workspaces, status, config, searchUsers, searchChats, digest })};
+  const FIX = ${JSON.stringify({ chats, inbox: inboxGroups, thread, targets, persons, workspaces, status, config, searchUsers, searchChats, digest })};
   const chatFor = (path) => {
     const q = new URLSearchParams(path.split("?")[1] || "");
     return FIX.chats.find((c) => c.platform === q.get("platform") && c.chat_id === q.get("chat_id")) || FIX.chats[0];
@@ -319,6 +382,24 @@ export const intercept = `(() => {
     return m ? decodeURIComponent(m[1]) : "";
   };
   const zeroCounts = () => ({ todo: 0, unread: 0, unread_dm: 0, unread_mention: 0 });
+  const PLAT_LABEL = { feishu: "飞书", wecom: "企业微信", dingtalk: "钉钉" };
+  // 人物档案的摘要/模板与真实后端（profiles.js 的 excerpt/personTemplate）同口径，
+  // 面板在 standalone 里点保存后立刻能看到同样的效果。
+  const excerptOf = (text) => {
+    for (const line of String(text || "").split(/\\r?\\n/)) {
+      let s = line.trim();
+      if (!s || s.startsWith("#") || s.startsWith(">")) continue;
+      if (s.startsWith("- ") || s.startsWith("* ")) s = s.slice(2).trim();
+      return s.slice(0, 180);
+    }
+    return "";
+  };
+  const bytesOf = (text) => new TextEncoder().encode(String(text || "")).length;
+  const personTemplate = (name, platform, personId) =>
+    "# " + (name || personId || "人物") + "\\n\\n> " + (PLAT_LABEL[platform] || platform) +
+    " · 人物档案" + (personId ? " · " + personId : "") +
+    "\\n> 人物级评价，跨会话复用：只写下次值守还会用到的信息，不保存聊天原文。\\n\\n" +
+    "## 身份与角色\\n\\n## 沟通偏好\\n\\n## 在意与忌讳\\n\\n## 历史结论\\n";
   const pick = (path) => {
     const p = path.split("?")[0];
     if (p === "/api/status") {
@@ -342,6 +423,12 @@ export const intercept = `(() => {
     if (p === "/api/search") return { ok: true, items: FIX.searchUsers };
     if (p === "/api/search/chats") return { ok: true, items: FIX.searchChats };
     if (p === "/api/targets") return { items: FIX.targets };
+    if (p === "/api/persons") {
+      const q = new URLSearchParams(path.split("?")[1] || "");
+      const pf = q.get("platform") || "";
+      const items = pf ? FIX.persons.filter((x) => x.platform === pf) : FIX.persons;
+      return { ok: true, items };
+    }
     if (p === "/api/workspaces") return FIX.workspaces;
     if (p === "/api/config") return FIX.config;
     if (p === "/api/doctor") return { checks: [] };
@@ -376,6 +463,81 @@ export const intercept = `(() => {
       FIX.inbox = { ...FIX.inbox, items: [], chats: 0, total: 0, counts: zeroCounts() };
       FIX.status.counts = zeroCounts();
       return { ok: true, ignored };
+    }
+    // 面板搜索走的是 POST /api/search（api() 带 body 就是 POST）：GET 的 pick 拦不到，
+    // 这里按同样口径回结果，standalone 预览里「搜人新建」才点得动。
+    if (p === "/api/search" || p === "/api/search/chats") {
+      const q = String(body.q || "").trim();
+      const base = p === "/api/search" ? FIX.searchUsers : FIX.searchChats;
+      const items = q ? base.filter((x) => String(x.name || "").indexOf(q) >= 0) : base;
+      return { ok: true, items };
+    }
+    // 会话工作本覆盖写：chat_id 优先定位（和真实 app.js 的 targetProfile 一致），
+    // 老面板只给 name 时按 platform+name 兼容。standalone 里保存后卡片立刻更新。
+    if (p === "/api/targets/profile") {
+      const t = FIX.targets.find((x) => x.platform === body.platform &&
+        ((body.chat_id && x.chat_id === body.chat_id) ||
+         (!body.chat_id && x.name === body.name)));
+      if (!t) return { ok: false, reason: "not_found" };
+      const text = typeof body.text === "string" ? body.text : "";
+      const out = text.trim() ? (text.endsWith("\\n") ? text : text + "\\n") : t.profile;
+      t.profile = out;
+      t.profile_excerpt = excerptOf(out);
+      t.profile_updated_at = Math.floor(Date.now() / 1000);
+      return { ok: true, profile: out, profile_path: t.profile_path,
+               profile_updated_at: t.profile_updated_at };
+    }
+    // 人物档案覆盖写：base_mtime 冲突返回 stale（和真实 profiles.writePerson 一致）。
+    if (p === "/api/persons/profile") {
+      const platform = String(body.platform || "");
+      const personId = String(body.person_id || "");
+      if (!platform || !personId) return { ok: false, reason: "bad_request" };
+      let row = FIX.persons.find((x) => x.platform === platform && x.person_id === personId);
+      const base = Number(body.base_mtime) || 0;
+      if (row && base > 0 && row.profile_updated_at > base + 0.001) {
+        return { ok: false, reason: "stale" };
+      }
+      const text = typeof body.text === "string" ? body.text : "";
+      const name = body.name || (row && row.name) || personId;
+      const out = text.trim()
+        ? (text.endsWith("\\n") ? text : text + "\\n")
+        : personTemplate(name, platform, personId);
+      if (!row) {
+        row = { platform, person_id: personId, name, profile: "", profile_excerpt: "",
+                bytes: 0, profile_updated_at: 0, chat_ids: [],
+                profile_path: "profiles/people/" + platform + "/" + personId + ".md" };
+        FIX.persons.push(row);
+      }
+      row.name = name;
+      row.profile = out;
+      row.profile_excerpt = excerptOf(out);
+      row.bytes = bytesOf(out);
+      row.profile_updated_at = Math.floor(Date.now() / 1000);
+      // 同步 targets 行上的 person 摘要，详情页的人物档案条保存后立刻能看到新摘要。
+      for (const t of FIX.targets) {
+        if (t.platform === platform && t.person && t.person.person_id === personId) {
+          t.person = { ...t.person, excerpt: row.profile_excerpt,
+                       updated_at: row.profile_updated_at, exists: true };
+        }
+      }
+      return { ok: true, profile: row.profile, profile_path: row.profile_path,
+               profile_updated_at: row.profile_updated_at };
+    }
+    // 删除人物档案（面板显式操作；forget 不会走到这里）。
+    if (p === "/api/persons") {
+      const platform = String(body.platform || "");
+      const personId = String(body.person_id || "");
+      if (!platform || !personId) return { ok: false, reason: "bad_request" };
+      const i = FIX.persons.findIndex((x) => x.platform === platform && x.person_id === personId);
+      if (i < 0) return { ok: true, deleted: false };
+      FIX.persons.splice(i, 1);
+      // 文件没了：targets 行上的 person 退回「有路径、无内容」的未建态。
+      for (const t of FIX.targets) {
+        if (t.platform === platform && t.person && t.person.person_id === personId) {
+          t.person = { ...t.person, excerpt: "", updated_at: 0, exists: false };
+        }
+      }
+      return { ok: true, deleted: true };
     }
     if (p === "/api/send") return { ok: true };
     if (p === "/api/state") return { ok: true };

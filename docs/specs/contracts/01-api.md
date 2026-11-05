@@ -13,7 +13,7 @@
 | --- | --- | --- | --- |
 | GET | `/api/health` | — | 存活探针，带 pid 与 `transport=node` |
 | GET | `/api/status` | — | 总状态：counts、poll、platforms、dsh、instances、turns、running。`platforms` 恒为三项（feishu / wecom / dingtalk），每项带 `enabled`；未启用的不跑 `whoami` |
-| GET | `/api/inbox` | `filter`、`limit`、`group` | 收件箱；默认按会话聚合，`group=msg` 逐条；只从每会话最近 10 条派生 |
+| GET | `/api/inbox` | `filter`、`limit`、`group` | 待回聚合；默认按会话聚合，`group=msg` 逐条；只从每会话最近 10 条派生（面板自 spec 0032 起不再展示） |
 | GET | `/api/inbox/cleanup` | — | 把未值守会话的待回批量标成 ignored |
 | GET | `/api/thread` | `platform`、`chat_id`、`fetch`、`limit` | 会话正文：默认在线拉 30 条；`fetch=1` 先补拉分类（**只读，不唤醒**；冷却中直接用本地指针）；失败回退本地 10 条并带 `offline` / `error` |
 | GET | `/api/chats` | — | 会话清单，含 `blocked` / `timer` / `timed` / `watching` / `wake_mode` / `mentionable` / `dsh_session` / `session_turns` / `turn_state`；`mentionable=false` 表示该平台判不了 @（面板置灰「只盯 @我」）。工作区字段见下 |
@@ -31,7 +31,8 @@
 | GET | `/api/doctor` | — | 体检：身份、拉取通路、DSH 宿主、skill 路径、拉取节奏 |
 | GET | `/api/config` | — | 读配置；模型/凭据全在 DSH，插件无 api_key 可回传 |
 | GET | `/api/workspaces` | — | 可选工作区列表（值守会话绑定用） |
-| GET | `/api/targets` | — | 服务对象画像：`profile` / `profile_path` / `profile_updated_at` / `profile_excerpt` |
+| GET | `/api/targets` | — | 服务对象列表：`profile*` = 会话工作本；p2p 能推出人物 ID 时附 `person`（`person_id` / `path` / `excerpt` / `updated_at` / `exists`） |
+| GET | `/api/persons` | `platform`（可选） | 人物档案列表：只扫 `profiles/people/`，不建文件；items 带 `platform` / `person_id` / `name` / `profile` / `profile_path` / `profile_updated_at` / `profile_excerpt` / `bytes` / `chat_ids`（`[{platform, chat_id, name}]`） |
 | GET | `/api/chat/workspace` | `platform`、`chat_id`、`workspace`（别名 `path`） | 给值守会话绑 / 解绑工作区；必须显式给键，空串=解绑。工作区变了且旧会话因此解绑、会话又在值守中（未屏蔽）→ 立刻在新工作区开新会话，返回 `open` |
 | GET | `/api/chat/session` | `platform`、`chat_id` | 查当前绑定的 DSH 会话与工作区 |
 | GET | `/api/logs` | — | 最近轮询错误与在飞 turn 快照（不落盘、不进日志正文） |
@@ -58,7 +59,8 @@
 | --- | --- | --- |
 | POST | `/api/config` | 写配置；`poll.interval_min` 夹到 ≥10 |
 | POST | `/api/platforms` | 启用 / 停用平台：入参 `platform`、`enabled`；只接受 `feishu` / `wecom` / `dingtalk`，写回 `config.platforms`（按固定顺序去重） |
-| POST | `/api/targets/profile` | 覆盖写一份服务对象画像；入参 `platform`、`name`、`text`（≤12KB，超限拒绝不截断） |
+| POST | `/api/targets/profile` | 覆盖写会话工作本；入参 `platform`、`chat_id`（优先）/`name`（兼容旧面板）、`text`（≤12KB，超限拒绝不截断） |
+| POST | `/api/persons/profile` | 覆盖写人物档案；入参 `platform`、`person_id`、`name`、`text`（≤12KB）、`base_mtime`（可选）；mtime 更新过则回 `{ok:false, reason:"stale"}` 不写 |
 | POST | `/api/chat/session/reset` | 重开会话：可带 `workspace` 先落工作区；打断在飞 turn、清空 `dsh_session`；值守中（未屏蔽）立刻在新会话里跑一轮开场，返回 `open: {ok, reason, skipped}`；未值守 / 屏蔽只解绑 |
 | POST | `/api/chat/wake` | 手动唤醒：可带 `workspace` 先落工作区；把该会话最近待回交给 agent，不等新消息；`running` / `blocked` / 未值守时拒绝 |
 
@@ -66,7 +68,8 @@
 
 | 方法 | 路径 | 说明 |
 | --- | --- | --- |
-| DELETE | `/api/forget` | 删除该会话的状态与画像文件；不删线上消息，也不删 DSH 会话文件 |
+| DELETE | `/api/forget` | 删除该会话的状态与会话工作本；人物档案跨会话保留；不删线上消息，也不删 DSH 会话文件 |
+| DELETE | `/api/persons` | 删除一份人物档案（显式操作）；入参 `platform`、`person_id` |
 
 ## 约定
 

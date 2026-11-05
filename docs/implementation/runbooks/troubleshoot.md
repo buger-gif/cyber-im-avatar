@@ -32,7 +32,7 @@ lsof -nP -iTCP -sTCP:LISTEN                # 只应有 DSH 的 3080；多出来�
 - **配置写坏**：`node -e "JSON.parse(require('fs').readFileSync(process.env.HOME+'/.im-standin/state.json','utf8'))"`。
 - **两个宿主同时跑**：桌面 app 与 3080 同时开值守会抢会话/互覆 state；只留一个。
 
-## 症状 D：收件箱空 / 拉不到消息
+## 症状 D：待回一直是 0 / 拉不到消息
 
 按顺序核对（面板「体检」页或 `GET /api/status`）：
 

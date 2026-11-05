@@ -1,16 +1,71 @@
 <!doctype html>
 <!-- UI 走查用的独立挂载页：不依赖 DSH、不连真实服务，数据全走 fixture 拦截。
 
-     用法（仓库根）：
-       node dsh-plugin/scripts/shot.mjs "file://$PWD/dsh-plugin/scripts/demo/standalone.html#tab=service" /tmp/ui-service.png
-     hash 支持 #tab=service / #thread=feishu:oc_demo_lin / #tab=settings 等。
+     用法（仓库根，先起一个静态服务器——file:// 下浏览器会拦 ES module 导入）：
+       python3 -m http.server 8877 --bind 127.0.0.1 &
+       node dsh-plugin/scripts/shot.mjs "http://127.0.0.1:8877/dsh-plugin/scripts/demo/standalone.html#tab=service" /tmp/ui-service.png
+     hash 支持 #tab=service / #thread=feishu:oc_demo_lin / #tab=settings 等；
+     深色用 body[data-ds-dark-theme] 模拟，例如在页面里执行
+       document.body.setAttribute("data-ds-dark-theme", "")
 -->
 <html>
 <head>
   <meta charset="utf-8">
   <title>IM 值守 · UI 预览（假数据）</title>
+  <!-- 只有这个预览页需要：冒充 DSH 宿主把主题 token 注入 body。
+       值取自 @deepseek-ai/dsh-client-ui-theme 的 design-platform.css（浅/深两套解析值）；
+       产品代码只读 token，不依赖这段。 -->
+  <style>
+    body {
+      --dsw-alias-bg-base: #fff;
+      --dsw-alias-bg-layer-1: #fff;
+      --dsw-alias-border-l2: #0000001a;
+      --dsw-alias-border-l3: #0000001f;
+      --dsw-alias-brand-primary: #0f1115;
+      --dsw-alias-button-primary-hover: #43454a;
+      --dsw-alias-interactive-bg-hover: #2631480f;
+      --dsw-alias-label-primary: #0f1115;
+      --dsw-alias-label-primary-foreground: #fff;
+      --dsw-alias-label-secondary: #61666b;
+      --dsw-alias-label-tertiary: #81858c;
+      --dsw-alias-state-business-primary: #4176e6;
+      --dsw-alias-state-error-primary: #ec1313;
+      --dsw-alias-state-success-primary: #22c55e;
+      --dsw-alias-state-warn-primary: #f59e0b;
+      --dsw-alias-toast-bg: #353638;
+      --dsw-alias-toast-label: #fff;
+      --dsw-specific-bubble: #edf3fe;
+      --dsw-specific-bubble-highlight: #d3e2ff;
+      --dsw-specific-sidebar-nav-item-hover: #f1f3f5;
+      margin: 0;
+      height: 100vh;
+      background: var(--dsw-alias-bg-base);
+    }
+    body[data-ds-dark-theme] {
+      --dsw-alias-bg-base: #151517;
+      --dsw-alias-bg-layer-1: #232324;
+      --dsw-alias-border-l2: #ffffff1f;
+      --dsw-alias-border-l3: #ffffff29;
+      --dsw-alias-brand-primary: #f9fafb;
+      --dsw-alias-button-primary-hover: #ebeef2;
+      --dsw-alias-interactive-bg-hover: #ffffff14;
+      --dsw-alias-label-primary: #f9fafb;
+      --dsw-alias-label-primary-foreground: #0f1115;
+      --dsw-alias-label-secondary: #cfd3d6;
+      --dsw-alias-label-tertiary: #adb2b8;
+      --dsw-alias-state-business-primary: #7aaaff;
+      --dsw-alias-state-error-primary: #f25a5a;
+      --dsw-alias-state-success-primary: #22c55e;
+      --dsw-alias-state-warn-primary: #f59e0b;
+      --dsw-alias-toast-bg: #43454a;
+      --dsw-alias-toast-label: #fff;
+      --dsw-specific-bubble: #2c2c2e;
+      --dsw-specific-bubble-highlight: #43454a;
+      --dsw-specific-sidebar-nav-item-hover: #2c2c2e;
+    }
+  </style>
 </head>
-<body style="margin:0;height:100vh;background:#fff">
+<body>
   <div id="app" style="height:100vh"></div>
   <script type="module">
     import { intercept } from "./fixture.mjs";

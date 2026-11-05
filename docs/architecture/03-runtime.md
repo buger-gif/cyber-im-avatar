@@ -25,7 +25,8 @@ poller 判定命中
        ├─ 先取消同会话在飞 turn（agent.inbox.remove / agent.cancel）
        ├─ 闲置超阈值先解绑旧会话：这一轮进新会话
        ├─ resolveAgent(dsh_session) 或 create({workspaceId|cwd})
-       ├─ 每次唤醒只追加本次新消息（首轮带入口与上下文，之后只发消息行）
+       ├─ 每次唤醒只追加本次新消息（首轮带入口、会话工作本与人物档案路径，
+       │  之后只发消息行 / 本批新发言人的档案行）
        ├─ 只对本批待回消息下载媒体：图片 → attachments image block，
        │  文件/音视频 → 本地路径；未适配/失败只留标记
        ├─ agent.followup(createUserMessage(prompt, imageParts))
@@ -38,18 +39,21 @@ poller 判定命中
   （默认 180 分钟）后的下一条消息，都会换新会话；旧会话留在侧边栏。显式工作区目录存在但未在
   DSH 登记时，仍先尝试恢复旧会话。
 - 闲置达到 `dsh.warm_min`（默认 55 分钟）、又没到重开阈值时，轮询器起一轮「值守心跳」：
-  在已绑定会话里续上下文缓存，并让 agent 按 skill 规则归并画像。它不写 `session_turns` /
+  在已绑定会话里续上下文缓存，并让 agent 按 skill 规则整理载荷列出的文件（会话工作本 +
+  最多 3 份人物档案），不扫目录。它不写 `session_turns` /
   `last_turn`，真实消息到达即取消；结果记 `chats.last_warm_at` / `last_warm_ok`。
-- 首轮带 `/cyber-im-avatar`、平台/对象、chat_id、运行形态与画像路径；之后同一
-  `dsh_session` 只发本次新消息行，不再重复这些说明。`chats.prompt_session == dsh_session`
+- 首轮带 `/cyber-im-avatar`、平台/对象、chat_id、运行形态、`会话工作本`路径与本次发言人的
+  「人物档案」路径（≤5，去重、@我优先）；之后同一 `dsh_session` 只发本次新消息行，
+  不再重复这些说明。`chats.prompt_session == dsh_session`
   时判定为后续轮；换会话/重置会清空，下一次重新带完整上下文。
-- 画像只给路径：`~/.im-standin/profiles/<platform>/<chat_id>.md` 由 agent 自己读、自己改；
+- 画像只给路径：会话工作本 `~/.im-standin/profiles/<platform>/<chat_id>.md`、人物档案
+  `~/.im-standin/profiles/people/<platform>/<person_id>.md` 都由 agent 自己读、自己改；
   插件不解析回复、不代写。`dsh.full_access=true` 时插件在 followup 前把会话切到
   `danger-full-access`，否则 `workspace-write` 会拒绝写画像目录。
 - 因为就是宿主里的 live agent，DSH UI 打开同一会话不再是锁问题；只有**另一个
   DSH 宿主持有写锁**时才报 `session_locked_other_host`。所以同一份 state 只让一个宿主写。
 - `turn/start` 先于 `user/message` 是正常顺序；匹配 prompt id 后取 turn 号，等同一 turn 的 `turn/end`；不再收集 assistant 正文。
-- 单轮上限 `dsh.timeout`（默认 600s），超时/取消都 `agent.cancel`；没有 pending 的手动唤醒返回 `no_pending`。
+- 单轮守时：`dsh.timeout`（默认 600s）是**停滞**阈值，本轮每来一条 `session/event` 就重置；`dsh.turn_cap_sec`（默认 3600s，0 = 不限）从本轮开始计时做总上限、不随活动重置；两种超时/取消都 `agent.cancel`，`last_turn.reason` 记 `timeout` / `turn_cap`，没有 pending 的手动唤醒返回 `no_pending`。
 - **点开只读**：`/api/thread?fetch=1` 只补拉分类，不唤醒、不推进水位；显式唤醒只走
   `POST /api/chat/wake`。手动 `/api/poll` 受 `cooldown_sec` 约束，post-turn 补拉是唯一 `force` 例外。
 - 富媒体失败只降级：下载超时/失败/未适配写进 prompt；媒体 7 天/单会话 200MB 清理。

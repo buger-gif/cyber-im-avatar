@@ -77,7 +77,7 @@ test("migration keeps latest 10, target markers, group timer=-1 and new config",
   assert.equal(g.timer, -1);
   assert.equal(state.config.poll.interval_min, 10);
   assert.equal(state.config.poll.per_chat_limit, 5);
-  assert.equal(state.config.dsh.timeout, 30);
+  assert.equal(state.config.dsh.timeout, 120);
   assert.equal(state.config.ui, undefined);
 });
 

@@ -130,7 +130,7 @@ async function waitOpen(expr, tries) {
 }
 
 // ---- 3. 分镜 --------------------------------------------------------------
-// 01 全局：DSH 正常界面 + 侧边栏底部的值守席位（带未读数）
+// 01 全局：DSH 正常界面 + 侧边栏底部的值守席位（值守状态点）
 const probe = await run(`(() => {
   const e = document.elementFromPoint(Math.round(innerWidth * 0.84), Math.round(innerHeight * 0.59));
   return e ? (e.tagName + "." + (e.className || "")).slice(0, 120) : "none";
@@ -138,9 +138,9 @@ const probe = await run(`(() => {
 console.log("probe:", JSON.stringify(probe.result && probe.result.value));
 await shot("01-全局-席位");
 
-// 02 点开席位：右侧栏停靠的收件箱（谁在等你回）
+// 02 点开席位：右侧栏停靠面板的默认页「分身」（值守了哪些会话）
 await run("document.querySelector('.ims-seat').click(); 'ok'");
-let opened = await waitOpen("!!document.querySelector('.ims-panel.open')", 25);
+let opened = await waitOpen("!!document.querySelector('.ims-panel')", 25);
 if (!opened) {
   // 空视图下没有可停靠的会话：先新建一个，再点一次席位
   await run(`(() => {
@@ -151,29 +151,34 @@ if (!opened) {
   })()`);
   await sleep(1800);
   await run("document.querySelector('.ims-seat').click(); 'ok'");
-  opened = await waitOpen("!!document.querySelector('.ims-panel.open')", 25);
+  opened = await waitOpen("!!document.querySelector('.ims-panel')", 25);
 }
 if (!opened) console.warn("值守面板没有打开，截图可能不对");
 await sleep(1200);
-await shot("02-收件箱");
+await shot("02-分身值守");
 
-// 03 会话详情：消息流 + 手动发送 + 实例状态
-await run("document.querySelector('.ims-row').click(); 'ok'");
+// 03 会话详情：消息流 + 手动发送 + 实例状态（从分身卡片「打开」进）
+await run(`(() => {
+  const b = [...document.querySelectorAll('.ims-card button')]
+    .find((x) => x.textContent.trim() === '打开');
+  if (b) b.click();
+  return !!b;
+})()`);
 await sleep(2200);
 await shot("03-会话详情");
 
 // 04 关注：agent 写的每日摘要（面板只显示原文，不解析）
-await run("document.querySelectorAll('.ims-tab')[1].click(); 'ok'");
+await run("document.querySelectorAll('.ims-tab')[0].click(); 'ok'");
 await sleep(1400);
 await shot("04-关注");
 
 // 05 分身实例：绑的哪个 DSH 会话、几轮、工作区与最近的习惯
-await run("document.querySelectorAll('.ims-tab')[2].click(); 'ok'");
+await run("document.querySelectorAll('.ims-tab')[1].click(); 'ok'");
 await sleep(1400);
 await shot("05-分身实例");
 
 // 06 服务对象：每个人的习惯时间线
-await run("document.querySelectorAll('.ims-tab')[3].click(); 'ok'");
+await run("document.querySelectorAll('.ims-tab')[2].click(); 'ok'");
 await sleep(1400);
 await shot("06-服务对象");
 

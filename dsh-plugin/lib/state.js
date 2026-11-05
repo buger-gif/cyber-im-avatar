@@ -40,7 +40,7 @@ export const DEFAULT_CONFIG = {
     group_wake_sec: 60,
   },
   platforms: ["feishu", "wecom"],
-  dsh: { timeout: 600, full_access: false, idle_reset_min: 180, warm_min: 55 },
+  dsh: { timeout: 600, turn_cap_sec: 3600, full_access: false, idle_reset_min: 180, warm_min: 55 },
 };
 
 /** 退役配置键：旧 panel.json 里有，也不许混进运行配置。 */
@@ -105,7 +105,8 @@ export function normalizeConfig(input) {
   if (!DM_SCOPES.includes(p.dm_scope)) p.dm_scope = "recent";
   p.refresh_chatlist = p.refresh_chatlist !== false;
   const d = cfg.dsh || (cfg.dsh = {});
-  d.timeout = int(d.timeout, 30, 3600, 600);
+  d.timeout = int(d.timeout, 120, 3600, 600);
+  d.turn_cap_sec = int(d.turn_cap_sec, 0, 24 * 3600, 3600);
   d.full_access = d.full_access === true || d.full_access === "true" || d.full_access === 1;
   d.idle_reset_min = int(d.idle_reset_min, 0, 24 * 60, 180);
   d.warm_min = int(d.warm_min, 0, 24 * 60, 55);

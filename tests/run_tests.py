@@ -575,6 +575,303 @@ def test_profile_compact():
     shutil.rmtree(d, ignore_errors=True)
 
 
+def test_workbook_layers():
+    """会话工作本新四段：模板 / --note 落点（新旧两种节）/ --compact 两节通用。"""
+    print("\n[会话工作本] 新四段模板 / 补记落点 / 新旧节兼容")
+    d = tempfile.mkdtemp(prefix="standin_book_")
+    env = dict(os.environ, IM_STANDIN_DIR=d)
+    script = os.path.join(SCRIPTS, "bootstrap.py")
+
+    r = subprocess.run([PY, script, "--alias", "feishu", "示例对象", "oc_demo"],
+                       capture_output=True, text=True, env=env, timeout=30)
+    book = os.path.join(d, "profiles", "feishu", "oc_demo.md")
+    text = open(book, encoding="utf-8").read() if os.path.exists(book) else ""
+    check("--alias 建出会话工作本", r.returncode == 0 and os.path.exists(book),
+          f"rc={r.returncode} err={r.stderr[:200]}")
+    check("工作本首行 # 名字", text.startswith("# 示例对象\n"), text[:80])
+    check("工作本第二行 平台·chat_id", "> 飞书 · oc_demo" in text, text[:200])
+    new_sections = ["## 这个会话是什么", "## 群内工作要求", "## 成员与角色",
+                    "## 本会话结论与待办"]
+    check("工作本新四段齐全且有序",
+          all(s in text for s in new_sections) and
+          [text.index(s) for s in new_sections] == sorted(text.index(s) for s in new_sections),
+          text[:500])
+    check("工作本不再有旧四段标题",
+          not any(s in text for s in ("## 对方是谁", "## 沟通偏好", "## 在意与忌讳",
+                                      "## 历史结论")),
+          text[:300])
+    check("工作本说明行指向两层记忆", "个人评价写人物档案" in text, text[:300])
+
+    # --note 落「本会话结论与待办」
+    n1 = subprocess.run([PY, script, "--note", "feishu", "示例对象", "本会话要 @ 全体"],
+                        capture_output=True, text=True, env=env, timeout=30)
+    text = open(book, encoding="utf-8").read()
+    tail = text.partition("## 本会话结论与待办")[2]
+    check("--note 落「本会话结论与待办」",
+          n1.returncode == 0 and tail.strip().splitlines()[0].strip() == "- 本会话要 @ 全体",
+          f"rc={n1.returncode} err={n1.stderr[:200]} tail={tail[:120]!r}")
+    check("--note 不另起「历史结论」节", "## 历史结论" not in text, text[-200:])
+    check("--note stdout 用「会话工作本」措辞", "会话工作本" in n1.stdout, n1.stdout[:120])
+
+    # 旧四段文件：--note 仍落「历史结论」，且不被自动改写成新模板
+    subprocess.run([PY, script, "--alias", "feishu", "旧对象", "oc_old"],
+                   capture_output=True, text=True, env=env, timeout=30)
+    old_book = os.path.join(d, "profiles", "feishu", "oc_old.md")
+    with open(old_book, "w", encoding="utf-8") as f:
+        f.write("# 旧对象\n\n> 飞书 · oc_old\n\n## 对方是谁\n\n## 沟通偏好\n\n"
+                "## 在意与忌讳\n\n## 历史结论\n")
+    n2 = subprocess.run([PY, script, "--note", "feishu", "旧对象", "旧文件结论"],
+                        capture_output=True, text=True, env=env, timeout=30)
+    old_text = open(old_book, encoding="utf-8").read()
+    check("旧四段文件 --note 仍落「历史结论」",
+          n2.returncode == 0 and "- 旧文件结论" in old_text.partition("## 历史结论")[2],
+          f"rc={n2.returncode} err={n2.stderr[:200]}")
+    check("旧四段文件不被自动改写",
+          "## 对方是谁" in old_text and "## 本会话结论与待办" not in old_text, old_text[:200])
+
+    # --compact：新版节（本会话结论与待办）
+    bullets = "\n".join(f"- 11-{i:02d} 待办事实 {i}" for i in range(30))
+    with open(book, "w", encoding="utf-8") as f:
+        f.write("# 示例对象\n\n> 飞书 · oc_demo\n\n## 这个会话是什么\n\n" + "填充" * 1666 +
+                "\n\n## 群内工作要求\n\n- 直接\n\n## 成员与角色\n\n"
+                "- 张三 → people/feishu/ou_x.md\n\n## 本会话结论与待办\n\n" +
+                bullets + "\n- 11-00 待办事实 0\n")
+    hist = os.path.join(d, "profiles", "feishu", "oc_demo.history.md")
+    before = os.path.getsize(book)
+    c1 = subprocess.run([PY, script, "--compact", "feishu", "示例对象", "--dry-run"],
+                        capture_output=True, text=True, env=env, timeout=30)
+    check("新版工作本 --compact --dry-run 不落盘",
+          c1.returncode == 0 and os.path.getsize(book) == before and not os.path.exists(hist),
+          f"rc={c1.returncode} err={c1.stderr[:200]}")
+    c2 = subprocess.run([PY, script, "--compact", "feishu", "示例对象"],
+                        capture_output=True, text=True, env=env, timeout=30)
+    after = open(book, encoding="utf-8").read()
+    kept = [line for line in after.splitlines() if line.startswith("- 11-")]
+    check("新版工作本 --compact 退出 0", c2.returncode == 0, c2.stderr[:300])
+    check("新版工作本 ≤12KB", os.path.getsize(book) <= 12 * 1024, str(os.path.getsize(book)))
+    check("新版工作本结论 ≤20 条", len(kept) <= 20, str(len(kept)))
+    check("新版工作本重复条目被去重",
+          after.count("- 11-00 待办事实 0") == 1, str(after.count("- 11-00 待办事实 0")))
+    check("新版工作本旧条目归档 .history.md",
+          os.path.exists(hist) and "待办事实" in open(hist, encoding="utf-8").read())
+    check("新版工作本整理不改写节标题", "## 本会话结论与待办" in after, after[:300])
+    check("--compact stdout 用「会话工作本」措辞", "会话工作本" in c2.stdout, c2.stdout[:120])
+
+    # --compact：旧版节（历史结论）仍能整理
+    old_bullets = "\n".join(f"- 11-{i:02d} 旧事实 {i}" for i in range(25))
+    with open(old_book, "w", encoding="utf-8") as f:
+        f.write("# 旧对象\n\n> 飞书 · oc_old\n\n## 对方是谁\n\n## 沟通偏好\n\n"
+                "## 在意与忌讳\n\n## 历史结论\n\n" + old_bullets + "\n")
+    old_hist = os.path.join(d, "profiles", "feishu", "oc_old.history.md")
+    c3 = subprocess.run([PY, script, "--compact", "feishu", "旧对象"],
+                        capture_output=True, text=True, env=env, timeout=30)
+    old_after = open(old_book, encoding="utf-8").read()
+    old_kept = [line for line in old_after.splitlines() if line.startswith("- 11-")]
+    check("旧版节 --compact 仍能整理",
+          c3.returncode == 0 and len(old_kept) <= 20
+          and os.path.exists(old_hist) and "旧事实" in open(old_hist, encoding="utf-8").read(),
+          f"rc={c3.returncode} kept={len(old_kept)} err={c3.stderr[:200]}")
+
+    # 两节都在：--note 优先「本会话结论与待办」
+    with open(book, "a", encoding="utf-8") as f:
+        f.write("\n## 历史结论\n\n- 旧节内容\n")
+    n3 = subprocess.run([PY, script, "--note", "feishu", "示例对象", "优先写新节"],
+                        capture_output=True, text=True, env=env, timeout=30)
+    text = open(book, encoding="utf-8").read()
+    new_tail = text.partition("## 本会话结论与待办")[2].partition("## 历史结论")[0]
+    check("两节都在时 --note 优先「本会话结论与待办」",
+          n3.returncode == 0 and "- 优先写新节" in new_tail
+          and "- 优先写新节" not in text.partition("## 历史结论")[2],
+          f"rc={n3.returncode} err={n3.stderr[:200]}")
+    shutil.rmtree(d, ignore_errors=True)
+
+
+PERSON_GOLDEN = [    # (platform, person_id, 期望相对路径)；与 dsh-plugin/tests/profiles.test.mjs 同一组字面
+    ("feishu", "ou_abc", "profiles/people/feishu/ou_abc.md"),
+    ("wecom", "zhangsan", "profiles/people/wecom/zhangsan.md"),
+    ("feishu", "张三", "profiles/people/feishu/张三.md"),
+    ("feishu", "ou 张三/一", "profiles/people/feishu/ou_张三_一.md"),
+    ("feishu", "._-ou_x-._", "profiles/people/feishu/ou_x.md"),
+    ("feishu", "张三（采购）", "profiles/people/feishu/张三_采购.md"),
+    ("feishu", "ou😀x", "profiles/people/feishu/ou_x.md"),
+    ("feishu", "a" * 120, "profiles/people/feishu/" + "a" * 80 + ".md"),
+    ("", "ou_x", "profiles/people/unknown/ou_x.md"),
+    ("  ", "ou_x", "profiles/people/unknown/ou_x.md"),
+    ("feishu", "", ""),
+    ("feishu", "   ", ""),
+    ("feishu", None, ""),
+    ("feishu", 123, "profiles/people/feishu/123.md"),
+]
+
+
+def test_person_profile():
+    """人物档案（独立 skill 形态）：路径 golden / 模板 / 权限 / 追加 / 整理 / 列表 / 删除。"""
+    import stat
+    print("\n[人物档案] 路径 golden / 模板 / 权限 / 追加 / 整理 / 列表 / 删除")
+    d = tempfile.mkdtemp(prefix="standin_person_")
+    env = dict(os.environ, IM_STANDIN_DIR=d)
+    script = os.path.join(SCRIPTS, "bootstrap.py")
+
+    sys.path.insert(0, SCRIPTS)
+    import bootstrap as bs
+
+    bad = []
+    for platform, person_id, want in PERSON_GOLDEN:
+        got = bs._person_rel(platform, person_id)
+        expected = os.path.join(*want.split("/")) if want else ""
+        if got != expected:
+            bad.append(f"{platform}/{person_id!r}: {got!r} != {expected!r}")
+    check("人物路径 golden 与 Node personRel 逐字节一致", not bad, "; ".join(bad[:3]))
+    check("空 ID 不建档案（_person_rel 返回空）",
+          bs._person_rel("feishu", "") == "" and bs._person_rel("feishu", None) == "")
+
+    # 空 ID：CLI 退出 2，且不建任何人物目录
+    e = subprocess.run([PY, script, "--person-path", "feishu", "   "],
+                       capture_output=True, text=True, env=env, timeout=30)
+    check("--person-path 空 ID 退出 2 且不建目录",
+          e.returncode == 2 and not os.path.exists(os.path.join(d, "profiles")),
+          f"rc={e.returncode} err={e.stderr[:200]}")
+
+    # --person-path：打印绝对路径并按需建模板
+    a = subprocess.run([PY, script, "--person-path", "feishu", "ou_demo", "--name", "张三"],
+                       capture_output=True, text=True, env=env, timeout=30)
+    path_a = os.path.join(d, "profiles", "people", "feishu", "ou_demo.md")
+    check("--person-path 打印一行绝对路径",
+          a.returncode == 0 and a.stdout.strip() == os.path.abspath(path_a)
+          and len(a.stdout.strip().splitlines()) == 1,
+          f"rc={a.returncode} out={a.stdout!r} err={a.stderr[:200]}")
+    check("--person-path 建出人物档案", os.path.exists(path_a))
+    text = open(path_a, encoding="utf-8").read() if os.path.exists(path_a) else ""
+    check("模板首行 # 名字", text.startswith("# 张三\n"), text[:80])
+    check("模板第二行 平台·人物档案·ID", "> 飞书 · 人物档案 · ou_demo" in text, text[:200])
+    sections = ["## 身份与角色", "## 沟通偏好", "## 在意与忌讳", "## 历史结论"]
+    check("模板四段齐全且有序",
+          all(s in text for s in sections) and
+          [text.index(s) for s in sections] == sorted(text.index(s) for s in sections),
+          text[:400])
+    check("人物文件权限 600", stat.S_IMODE(os.stat(path_a).st_mode) == 0o600,
+          oct(stat.S_IMODE(os.stat(path_a).st_mode)))
+    for name, directory in (("人物目录权限 700", os.path.dirname(path_a)),
+                            ("人物根目录权限 700", os.path.join(d, "profiles", "people"))):
+        check(name, stat.S_IMODE(os.stat(directory).st_mode) == 0o700,
+              oct(stat.S_IMODE(os.stat(directory).st_mode)))
+    # 幂等：已有档案不被空模板覆盖
+    with open(path_a, "a", encoding="utf-8") as f:
+        f.write("\n- 人工补记\n")
+    subprocess.run([PY, script, "--person-path", "feishu", "ou_demo"],
+                   capture_output=True, text=True, env=env, timeout=30)
+    check("--person-path 幂等（不覆盖已有内容）",
+          "人工补记" in open(path_a, encoding="utf-8").read())
+
+    # --person-note：新结论置顶、去重
+    n1 = subprocess.run([PY, script, "--person-note", "feishu", "ou_demo", "先结论后细节"],
+                        capture_output=True, text=True, env=env, timeout=30)
+    text = open(path_a, encoding="utf-8").read()
+    head, _, tail = text.partition("## 历史结论")
+    check("--person-note 追加成功", n1.returncode == 0 and "- 先结论后细节" in tail,
+          f"rc={n1.returncode} err={n1.stderr[:200]}")
+    check("新结论挂在历史结论段首",
+          tail.strip().splitlines()[0].strip() == "- 先结论后细节", tail[:120])
+    subprocess.run([PY, script, "--person-note", "feishu", "ou_demo", "周五不回消息"],
+                   capture_output=True, text=True, env=env, timeout=30)
+    text = open(path_a, encoding="utf-8").read()
+    check("更新结论置顶（旧的在后）",
+          text.index("- 周五不回消息") < text.index("- 先结论后细节"), text[-300:])
+    n3 = subprocess.run([PY, script, "--person-note", "feishu", "ou_demo", "周五不回消息"],
+                        capture_output=True, text=True, env=env, timeout=30)
+    text = open(path_a, encoding="utf-8").read()
+    check("重复结论幂等（只留一条）", text.count("- 周五不回消息") == 1,
+          f"count={text.count('- 周五不回消息')} rc={n3.returncode}")
+    check("追加后文件仍 600", stat.S_IMODE(os.stat(path_a).st_mode) == 0o600,
+          oct(stat.S_IMODE(os.stat(path_a).st_mode)))
+
+    # --compact-person：去重 / 历史结论 ≤20 / 旧结论归档 / dry-run 不落盘
+    hist = os.path.join(d, "profiles", "people", "feishu", "ou_demo.history.md")
+    bullets = "\n".join(f"- 11-{i:02d} 历史事实 {i}" for i in range(30))
+    text = ("# 张三\n\n> 飞书 · 人物档案 · ou_demo\n\n## 身份与角色\n\n" + "填充" * 1666 +
+            "\n\n## 沟通偏好\n\n- 直接\n\n## 在意与忌讳\n\n- 自证口径\n\n## 历史结论\n\n" +
+            bullets + "\n- 11-00 历史事实 0\n")
+    with open(path_a, "w", encoding="utf-8") as f:
+        f.write(text)
+    before = os.path.getsize(path_a)
+    c1 = subprocess.run([PY, script, "--compact-person", "feishu", "ou_demo", "--dry-run"],
+                        capture_output=True, text=True, env=env, timeout=30)
+    check("--compact-person --dry-run 不落盘",
+          c1.returncode == 0 and os.path.getsize(path_a) == before and not os.path.exists(hist),
+          f"rc={c1.returncode} err={c1.stderr[:200]}")
+    c2 = subprocess.run([PY, script, "--compact-person", "feishu", "ou_demo"],
+                        capture_output=True, text=True, env=env, timeout=30)
+    after = open(path_a, encoding="utf-8").read()
+    kept = [line for line in after.splitlines() if line.startswith("- 11-")]
+    check("--compact-person 退出 0", c2.returncode == 0, c2.stderr[:300])
+    check("人物档案 ≤12KB", os.path.getsize(path_a) <= 12 * 1024, str(os.path.getsize(path_a)))
+    check("历史结论 ≤20 条", len(kept) <= 20, str(len(kept)))
+    check("重复结论被去重", after.count("- 11-00 历史事实 0") == 1,
+          str(after.count("- 11-00 历史事实 0")))
+    check("旧结论归档到 .history.md",
+          os.path.exists(hist) and "历史事实" in open(hist, encoding="utf-8").read())
+    check("history 归档文件 600", stat.S_IMODE(os.stat(hist).st_mode) == 0o600,
+          oct(stat.S_IMODE(os.stat(hist).st_mode)))
+
+    # 12KB 硬上限：整理后仍超限 → 拒写，文件不动
+    subprocess.run([PY, script, "--person-path", "feishu", "ou_big", "--name", "大档案"],
+                   capture_output=True, text=True, env=env, timeout=30)
+    path_big = os.path.join(d, "profiles", "people", "feishu", "ou_big.md")
+    with open(path_big, "w", encoding="utf-8") as f:
+        f.write("# 大档案\n\n> 飞书 · 人物档案 · ou_big\n\n## 身份与角色\n\n" +
+                "填充" * 2500 + "\n\n## 沟通偏好\n\n## 在意与忌讳\n\n"
+                "## 历史结论\n\n- 旧结论\n")
+    big_before = open(path_big, "rb").read()
+    nbig = subprocess.run([PY, script, "--person-note", "feishu", "ou_big", "新结论"],
+                          capture_output=True, text=True, env=env, timeout=30)
+    check("超 12KB 整理后仍超限 → 拒绝写入（退出 2）",
+          nbig.returncode == 2 and "12KB" in nbig.stderr,
+          f"rc={nbig.returncode} err={nbig.stderr[:200]}")
+    check("拒写不改文件", open(path_big, "rb").read() == big_before)
+    cbig = subprocess.run([PY, script, "--compact-person", "feishu", "ou_big"],
+                          capture_output=True, text=True, env=env, timeout=30)
+    check("--compact-person 超限拒绝且不改文件",
+          cbig.returncode == 2 and open(path_big, "rb").read() == big_before,
+          f"rc={cbig.returncode} err={cbig.stderr[:200]}")
+
+    # --persons：path<TAB>name，名字取首个 # 标题；只读
+    people_dir = os.path.join(d, "profiles", "people", "feishu")
+    snap = sorted(os.listdir(people_dir))
+    lst = subprocess.run([PY, script, "--persons"], capture_output=True, text=True,
+                         env=env, timeout=30)
+    lines = [ln for ln in lst.stdout.splitlines() if ln.strip()]
+    check("--persons 列出全部人物档案", lst.returncode == 0 and len(lines) == 2,
+          f"rc={lst.returncode} out={lst.stdout[:300]}")
+    check("--persons 每行 path<TAB>名字（名字取 # 标题）",
+          all("\t" in ln for ln in lines)
+          and any(ln.split("\t")[0] == os.path.abspath(path_a) and ln.endswith("\t张三")
+                  for ln in lines),
+          str(lines))
+    check("--persons 不列 .history.md",
+          all(not ln.split("\t")[0].endswith(".history.md") for ln in lines), str(lines))
+    p1 = subprocess.run([PY, script, "--persons", "feishu"], capture_output=True, text=True,
+                        env=env, timeout=30)
+    p2 = subprocess.run([PY, script, "--persons", "wecom"], capture_output=True, text=True,
+                        env=env, timeout=30)
+    check("--persons PLATFORM 按平台过滤",
+          p1.returncode == 0 and len([x for x in p1.stdout.splitlines() if x.strip()]) == 2
+          and p2.returncode == 0 and not p2.stdout.strip(),
+          f"feishu={p1.stdout[:120]!r} wecom={p2.stdout[:120]!r}")
+    check("--persons 只读（不建/不改文件）", sorted(os.listdir(people_dir)) == snap)
+    check("人物操作不写 env.json（纯推导，不建索引）",
+          not os.path.exists(os.path.join(d, "env.json")))
+
+    # --delete-data：profiles/ 整树删除，人物档案随之清理
+    check("删除前人物档案存在", os.path.exists(path_a) and os.path.exists(path_big))
+    dd = subprocess.run([PY, script, "--delete-data", "--yes"], capture_output=True,
+                        text=True, env=env, timeout=30)
+    check("--delete-data 覆盖 profiles/people（人物档案也被删）",
+          dd.returncode == 0 and not os.path.exists(path_a)
+          and not os.path.exists(os.path.join(d, "profiles", "people")),
+          f"rc={dd.returncode} err={dd.stderr[:200]}")
+    shutil.rmtree(d, ignore_errors=True)
+
+
 def test_privacy_and_redaction():
     """个人数据默认私有；敏感语料脱敏；删除必须显式确认。"""
     import stat
@@ -701,6 +998,8 @@ if __name__ == "__main__":
     test_cache_refresh()
     test_idle_exit()
     test_profile_compact()
+    test_workbook_layers()
+    test_person_profile()
     test_privacy_and_redaction()
     test_schema_error_redaction()
     test_docs()

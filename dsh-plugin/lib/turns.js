@@ -11,6 +11,7 @@ import path from "node:path";
 
 import { chatKey, RECENT_LIMIT } from "./state.js";
 import { MEDIA_ADAPTERS, MEDIA_LABELS, imageMediaType } from "./im.js";
+import { chatPersonId, personRefs } from "./profiles.js";
 import * as workspaces from "./workspaces.js";
 
 const PLAT_LABEL = { feishu: "飞书", wecom: "企业微信", dingtalk: "钉钉" };
@@ -39,7 +40,34 @@ async function makeUserMessage(text, extraParts = []) {
   });
 }
 
-function formatMsgLine(m, mediaInfo = null, platform = "") {
+/** 单行化不可信名字：换行会把一条载荷拆成两行，拼出假的指令行。 */
+function oneLine(value) {
+  return String(value == null ? "" : value).replace(/\s+/g, " ").trim();
+}
+
+/**
+ * 同一批里重名不同 ID 的显示名。命中者消息行 tag 追加发送者 ID 末 6 位，
+ * 避免把「张三 A」说的话归到「张三 B」头上（spec 0031 §3）。
+ * out / cmd 的 tag 本来就不看发送者名字（「我」「本人（@自己）」），不参与判定。
+ */
+function duplicateSenderNames(messages) {
+  const idsByName = new Map();
+  for (const m of (Array.isArray(messages) ? messages : [])) {
+    if (!m || m.kind === "out" || m.kind === "cmd") continue;
+    const id = String(m.sender_id || "");
+    if (!id) continue;
+    const name = oneLine(m.sender_name);
+    if (!idsByName.has(name)) idsByName.set(name, new Set());
+    idsByName.get(name).add(id);
+  }
+  const dup = new Set();
+  for (const [name, ids] of idsByName) {
+    if (ids.size > 1) dup.add(name);
+  }
+  return dup;
+}
+
+function formatMsgLine(m, mediaInfo = null, platform = "", dupNames = null) {
   let text = String(m.content || "").replace(/\s+/g, " ").trim();
   if (!text) text = "（正文在线查）";
   if (text.length > 800) text = text.slice(0, 800) + "…";
@@ -53,10 +81,34 @@ function formatMsgLine(m, mediaInfo = null, platform = "") {
     body = bare ? note : `${text} ${note}`;
   }
   // cmd = 本人在私聊里 @ 自己，对替身说的话（spec 0029），别当成客户消息。
-  const who = m.kind === "cmd" ? "本人（@自己）" : (m.kind === "out" ? "我" : (m.sender_name || "对方"));
+  const who = m.kind === "cmd" ? "本人（@自己）" : (m.kind === "out" ? "我" : (oneLine(m.sender_name) || "对方"));
   // 点名是事实，不是判断：全量模式下 agent 要能一眼分清哪条是 @ 它。
-  const tag = sanitizeUntrusted(m.kind === "mention" ? `${who}（@你）` : who);
+  const notes = [];
+  // 同名不同 ID 时标出 ID 末 6 位，归因才有唯一解。
+  if (dupNames?.size && dupNames.has(oneLine(m.sender_name))) {
+    const tail = String(m.sender_id || "").slice(-6);
+    if (tail) notes.push(`ID ${tail}`);
+  }
+  if (m.kind === "mention") notes.push("@你");
+  const tag = sanitizeUntrusted(notes.length ? `${who}（${notes.join("，")}）` : who);
   return `- [${m.ts || ""}] ${tag}: ${body}`;
+}
+
+/**
+ * 人物档案指针块：`人物档案：` + 每人一行 `- <name> · <id> → <abs>`。
+ * 插件只给路径与 ID，不读正文、不建文件、不解析画像；空 ID / 空路径跳过，
+ * 全员都没有时返回空数组（people 为空不输出块）。
+ */
+function personLines(people) {
+  const rows = [];
+  for (const p of (Array.isArray(people) ? people : [])) {
+    const id = oneLine(p?.id);
+    const file = String(p?.path || "").trim();
+    if (!id || !file) continue;
+    const name = sanitizeUntrusted(oneLine(p?.name) || id.slice(0, 8));
+    rows.push(`- ${name} · ${id} → ${file}`);
+  }
+  return rows.length ? ["人物档案：", ...rows] : [];
 }
 
 const ATTACH_REASON = {
@@ -134,20 +186,23 @@ function payloadNote(count) {
 
 /**
  * 一次唤醒 = 只追加本次新到的消息。新会话首轮带 `/cyber-im-avatar` 入口、
- * 平台/对象、chat_id、运行形态、画像路径与媒体说明；已有会话后续唤醒只发
- * 本次消息行，不重复这些上下文——它们已经在同一 session 的历史里。
- * 画像正文由 agent 自己按路径读，插件不注入、不解析、不回写。
+ * 平台/对象、chat_id、运行形态、两层文件路径（会话工作本 + 人物档案）与媒体说明；
+ * 已有会话后续唤醒只发本次消息行与这批发言人的档案行，不重复这些上下文——
+ * 它们已经在同一 session 的历史里。两层文件正文由 agent 自己按路径读，
+ * 插件不注入、不解析、不回写。
  */
 export function buildWakePrompt(platform, chatName, chatId, messages, {
-  profilePath = "", interrupted = false, firstTurn = false, mediaMap = null, wakeMode = "mention",
-  resetMin = 0, kind = "group",
+  bookPath = "", people = [], interrupted = false, firstTurn = false, mediaMap = null,
+  wakeMode = "mention", resetMin = 0, kind = "group",
 } = {}) {
   const label = PLAT_LABEL[platform] || platform;
   const safeName = sanitizeUntrusted(chatName || chatId);
+  const dupNames = duplicateSenderNames(messages);
   const lines = messages
     .slice()
     .sort((a, b) => (a.ts_epoch - b.ts_epoch))
-    .map((m) => formatMsgLine(m, mediaFor(mediaMap, m.msg_id), platform));
+    .map((m) => formatMsgLine(m, mediaFor(mediaMap, m.msg_id), platform, dupNames));
+  const peopleBlock = personLines(people);
 
   // 本人指令：私聊里本人 @ 自己留给替身的话，不是客户消息，也不是已回复对面。
   const cmdNote = messages.some((m) => m.kind === "cmd")
@@ -164,9 +219,11 @@ export function buildWakePrompt(platform, chatName, chatId, messages, {
         ? "（只认 @ 模式：这通私聊只有对方 @ 你（或正文写 @你的名字）才唤醒；" +
           "其它消息没有转给你，需要上下文时按 skill 在线拉。）"
         : "");
-  // 已有会话：只列本次新消息。chat_id / 运行形态 / 画像路径 / 媒体说明都已在本会话里，
-  // 不再每一轮重复；新增媒体消息的本地路径与降级提示仍由 formatMsgLine 带在行内。
-  if (!firstTurn) return [lines.join("\n"), cmdNote, modeNote].filter(Boolean).join("\n");
+  // 已有会话：只列本次新消息 + 这批发言人的档案路径。chat_id / 运行形态 /
+  // 会话工作本行都已在本会话里，不再每一轮重复；人物档案行是给归因用的指针。
+  if (!firstTurn) {
+    return [lines.join("\n"), ...peopleBlock, cmdNote, modeNote].filter(Boolean).join("\n");
+  }
 
   const parts = ["/cyber-im-avatar"];
   if (interrupted) {
@@ -179,31 +236,36 @@ export function buildWakePrompt(platform, chatName, chatId, messages, {
     parts.push(`会话：上一次会话闲置超过 ${resetMin} 分钟，已自动重开；更早上下文不在本会话，` +
       "需要时按 skill 在线拉，别把新消息当成新客户。");
   }
-  if (profilePath) {
-    parts.push(`画像文件：${profilePath}（起草前自己读；学到长期事实就直接改这个文件，插件不代写。）`);
+  // 两层记忆：会话工作本 = 本会话成立的规矩；人物档案 = 人的评价（跨会话同一份）。
+  if (bookPath) {
+    parts.push(`会话工作本：${bookPath}（本会话的群规与工作要求；个人评价不写这里）`);
   }
+  if (peopleBlock.length) parts.push(...peopleBlock);
   parts.push(...lines);
   if (cmdNote) parts.push(cmdNote);
   if (modeNote) parts.push(modeNote);
   if (mediaSize(mediaMap)) parts.push(MEDIA_HINT);
   parts.push(payloadNote(messages.length));
-  parts.push("按 skill 处理这通会话；画像只改当前对象这一份，不要写 state.json / env.json / media。");
+  parts.push("按 skill 处理这通会话；记忆只改上面给出的会话工作本与人物档案，" +
+    "不要写 state.json / env.json / media。");
   return parts.join("\n");
 }
 
 /**
  * 人工开启值守时的开场载荷：不是命中唤醒，没有新消息也要把会话建起来。
  * 消息只当上下文，回不回由 agent 按 skill 判断；插件不在这里发任何东西。
+ * 与首轮唤醒同一套两层路径：会话工作本 + 最近上下文里的发言人档案。
  */
 export function buildOpenPrompt(platform, chatName, chatId, messages, {
-  profilePath = "", wakeMode = "mention", resetMin = 0, kind = "group",
+  bookPath = "", people = [], wakeMode = "mention", resetMin = 0, kind = "group",
 } = {}) {
   const label = PLAT_LABEL[platform] || platform;
   const safeName = sanitizeUntrusted(chatName || chatId);
+  const dupNames = duplicateSenderNames(messages);
   const lines = messages
     .slice()
     .sort((a, b) => (a.ts_epoch - b.ts_epoch))
-    .map((m) => formatMsgLine(m, null, platform));
+    .map((m) => formatMsgLine(m, null, platform, dupNames));
   const parts = ["/cyber-im-avatar"];
   parts.push(`值守已开启 · ${label} · ${safeName} · 会话开场（人工开启，不是新消息唤醒）`);
   parts.push(`chat_id：${chatId}`);
@@ -212,7 +274,11 @@ export function buildOpenPrompt(platform, chatName, chatId, messages, {
     parts.push(`会话：上一次会话闲置超过 ${resetMin} 分钟，已自动重开；更早上下文不在本会话，` +
       "需要时按 skill 在线拉。");
   }
-  if (profilePath) parts.push(`画像文件：${profilePath}（先读它；学到长期事实就直接改这个文件，插件不代写。）`);
+  if (bookPath) {
+    parts.push(`会话工作本：${bookPath}（本会话的群规与工作要求；个人评价不写这里）`);
+  }
+  const peopleBlock = personLines(people);
+  if (peopleBlock.length) parts.push(...peopleBlock);
   if (lines.length) {
     parts.push(`最近上下文（最近 30 分钟，共 ${lines.length} 条）：`);
     parts.push(...lines);
@@ -230,33 +296,93 @@ export function buildOpenPrompt(platform, chatName, chatId, messages, {
     : (wakeMode === "all"
         ? "关注程度：全部消息（每条新消息都会唤醒）。"
         : "关注程度：只认 @（对方 @ 你（或正文写 @你的名字）才唤醒；其它消息不会转给你）。"));
-  parts.push("这一轮是用户点「加入值守」触发的：先把上下文和画像读进来；" +
+  parts.push("这一轮是用户点「加入值守」触发的：先把上下文和两层文件读进来；" +
     "有该回的就按 skill 处理，**没有需要回的就不要往会话里发任何消息**。");
   if (lines.length) parts.push("上下文来自本地最近消息；更早的按 skill 在线拉，不要重发已经处理过的。");
   return parts.join("\n");
 }
 
 /**
- * 值守心跳：续上下文缓存 + 按 skill 规则归并画像。不是客户消息，不能触发发送。
- * 只在已经消费过首轮载荷的会话里跑，所以不带 `/cyber-im-avatar` 与平台说明。
+ * 值守心跳：续上下文缓存 + 按 skill 规则归并两层记忆。不是客户消息，不能触发发送。
+ * 只在已经消费过首轮载荷的会话里跑，所以不带 `/cyber-im-avatar` 与平台说明；
+ * 只整理载荷列出的文件（会话工作本 + ≤3 份人物档案），不扫目录。
  */
-export function buildWarmPrompt(platform, chatName, chatId, { profilePath = "", idleMin = 0 } = {}) {
+export function buildWarmPrompt(platform, chatName, chatId, {
+  bookPath = "", people = [], idleMin = 0,
+} = {}) {
   const label = PLAT_LABEL[platform] || platform;
   const safeName = sanitizeUntrusted(chatName || chatId);
   const parts = ["（值守心跳，不是客户消息）"];
   parts.push(`保温轮 · ${label} · ${safeName}` +
     (idleMin > 0 ? ` · 已闲置约 ${idleMin} 分钟` : ""));
   parts.push(`chat_id：${chatId}`);
-  if (profilePath) parts.push(`画像文件：${profilePath}`);
+  if (bookPath) {
+    parts.push(`会话工作本：${bookPath}（本会话的群规与工作要求；个人评价不写这里）`);
+  }
+  const peopleBlock = personLines(people);
+  if (peopleBlock.length) parts.push(...peopleBlock);
   parts.push("这一轮只做两件事：");
   parts.push("1. 续上下文缓存——不需要输出正文，也不需要汇报缓存状态。");
-  parts.push("2. 按 skill「服务对象画像」的整理规则检查上面这份画像：该归并就归并" +
-    "（保留四段、合并重复、删一次性/已失效、把日期流水改写成结论）；不需要改就一个字都别改。");
+  const scope = peopleBlock.length
+    ? "这两类文件：会话工作本 + 上面列出的人物档案"
+    : "这一类文件：会话工作本";
+  parts.push(`2. 按 skill 的画像整理规则，只整理${scope}；该归并就归并` +
+    "（合并重复、删一次性/已失效、把日期流水改写成结论）；没列出的文件不要动，不要扫目录；" +
+    "不需要改就一个字都别改。");
   parts.push("边界：不要拉 IM 消息，不要给任何人发消息，不要调用发送类命令，" +
     "不要把这一轮当成客户来信回复。");
   parts.push("写不进去（沙箱拒绝）就跳过，不要重试、不要换路径；" +
     "最后用一句话说明「已归并」或「无需改动」，然后结束本轮。");
   return parts.join("\n");
+}
+
+/**
+ * 单轮看门狗：停滞超时为主、总时长上限兜底（spec 0034）。
+ *
+ * · start()：启动停滞计时；capSec > 0 时另起一枚从本轮开始算的总上限计时。
+ * · touch()：每收到一条该会话的 session/event 调一次，只重置停滞计时——有工具产出 /
+ *   模型输出就不算卡死；长任务不会再被「单轮只能跑 N 秒」的墙钟切掉。
+ * · 先到先触发一次：停滞 → onTimeout("timeout")，总上限 → onTimeout("turn_cap")。
+ * · stop()：本轮收口时清掉两枚计时器；触发后也不会再触发。
+ */
+export function turnWatchdog({ stallSec, capSec = 0, onTimeout }) {
+  const ms = (sec) => Math.max(1, Math.round(Number(sec) * 1000));
+  let stall = null;
+  let cap = null;
+  let done = false;
+  const clear = () => {
+    if (stall) clearTimeout(stall);
+    if (cap) clearTimeout(cap);
+    stall = null;
+    cap = null;
+  };
+  const fire = (reason) => {
+    if (done) return;
+    done = true;
+    clear();
+    onTimeout(reason);
+  };
+  const armStall = () => {
+    if (stall) clearTimeout(stall);
+    stall = setTimeout(() => fire("timeout"), ms(stallSec));
+    stall.unref?.();
+  };
+  return {
+    start() {
+      if (Number(capSec) > 0) {
+        cap = setTimeout(() => fire("turn_cap"), ms(capSec));
+        cap.unref?.();
+      }
+      armStall();
+    },
+    touch() {
+      if (!done) armStall();
+    },
+    stop() {
+      done = true;
+      clear();
+    },
+  };
 }
 
 export class Turns {
@@ -317,6 +443,34 @@ export class Turns {
 
   idleResetMinutes() {
     return Math.max(0, Number(this.state.data.config?.dsh?.idle_reset_min) || 0);
+  }
+
+  /** 本人 ID：身份在轮询器主循环里取；适配层也允许缓存同一份。取不到就空着，不猜。 */
+  selfIdFor(platform) {
+    return this.poller?.identity?.[platform]?.self_id ||
+      this.im?.identity?.[platform]?.self_id || "";
+  }
+
+  /**
+   * 这批消息对应的人物档案指针（确定性推导，不读正文、不建文件）：
+   * 去重、跳过本人与 out、@我/待回优先，最多 cap 个；路径由 personPathFor 拼。
+   * 私聊一条可判定的发言人都不剩时，用会话对端 ID 兜底（chatPersonId 决定平台形态）；
+   * 两者都拿不到就只给会话工作本，不猜。
+   */
+  peopleFor(platform, chat, messages, { cap = 5, p2pFallback = true } = {}) {
+    const selfId = this.selfIdFor(platform);
+    const refs = personRefs(messages, { selfId, cap });
+    if (p2pFallback && !refs.length && chat?.kind === "p2p") {
+      const id = chatPersonId(platform, chat, selfId);
+      if (id) refs.push({ id, name: oneLine(chat.name) || id.slice(0, 8) });
+    }
+    return refs
+      .map((r) => ({
+        id: r.id,
+        name: r.name,
+        path: this.profiles.personPathFor(platform, r.id),
+      }))
+      .filter((r) => r.id && r.path);
   }
 
   snapshot() {
@@ -458,17 +612,18 @@ export class Turns {
       this.state.setSession(current, sid);
       this.state.save();
 
-      // 配置开启时才把会话放进 danger-full-access；agent 需要它直接写画像。
+      // 配置开启时才把会话放进 danger-full-access；agent 需要它直接写两层文件。
       this.applySessionPermission(agent);
-      const profilePath = this.profiles.pathFor(current.platform, current.chat_id, current.name);
+      const bookPath = this.profiles.pathFor(current.platform, current.chat_id, current.name);
       const firstTurn = current.prompt_session !== sid;
       const media = await this.resolveMedia(current, messages, agent);
+      const people = this.peopleFor(current.platform, current, messages, { cap: 5 });
       const prompt = opening
         ? buildOpenPrompt(current.platform, current.name, current.chat_id, messages, {
-            profilePath, wakeMode: current.wake_mode || "mention", resetMin, kind: current.kind,
+            bookPath, people, wakeMode: current.wake_mode || "mention", resetMin, kind: current.kind,
           })
         : buildWakePrompt(current.platform, current.name, current.chat_id, messages, {
-            profilePath, interrupted, firstTurn, mediaMap: media.map,
+            bookPath, people, interrupted, firstTurn, mediaMap: media.map,
             wakeMode: current.wake_mode || "mention", resetMin, kind: current.kind,
           });
       const message = await makeUserMessage(prompt, media.parts);
@@ -851,12 +1006,16 @@ export class Turns {
         if (!existing) return { ok: false, reason: "no_session" };
         const { agent, sessionId: sid, cwd } = existing;
         this.applySessionPermission(agent);
-        const profilePath = this.profiles.pathFor(current.platform, current.chat_id, current.name);
+        const bookPath = this.profiles.pathFor(current.platform, current.chat_id, current.name);
+        // 心跳只整理「最近 10 条里不同发言人」的人物档案（≤3），没发言人就不给档案块。
+        const people = this.peopleFor(current.platform, current, current.recent, {
+          cap: 3, p2pFallback: false,
+        });
         const lastReal = Math.max(Number(current.last_turn?.at) || 0,
           Number(current.session_bound_at) || 0);
         const idleMin = lastReal ? Math.round((nowSec() - lastReal) / 60) : 0;
         const prompt = buildWarmPrompt(current.platform, current.name, current.chat_id, {
-          profilePath, idleMin,
+          bookPath, people, idleMin,
         });
         const message = await makeUserMessage(prompt);
         // 构造载荷期间可能已有真实消息进来：再确认一次，别把心跳插到真实回复后面。
@@ -893,20 +1052,23 @@ export class Turns {
   runTurn(handle, { chat, agent, sid, cwd, message, warm = false }) {
     return new Promise((resolve) => {
       const key = chatKey(chat.platform, chat.chat_id);
-      const timeoutSec = Math.max(30, Number(this.state.data.config?.dsh?.timeout) || 600);
+      // 停滞超时（默认 600s）+ 单轮总上限兜底（默认 3600s，0 = 不限），见 spec 0034。
+      const cfgDsh = this.state.data.config?.dsh || {};
+      const timeoutSec = Math.max(120, Number(cfgDsh.timeout) || 600);
+      const capSec = Math.max(0, Number(cfgDsh.turn_cap_sec ?? 3600) || 0);
       const startedAt = Date.now();
       let promptSeen = false;
       let lastTurnStart = null;
       let turnStarted = false;
       let turnNumber = null;
       let settled = false;
-      let timer = null;
+      let watchdog = null;
       let stop = () => {};
 
       const settle = (result) => {
         if (settled) return;
         settled = true;
-        if (timer) clearTimeout(timer);
+        if (watchdog) watchdog.stop();
         try { stop(); } catch { /* listener already gone */ }
         resolve(result);
       };
@@ -1024,6 +1186,8 @@ export class Turns {
       try {
         stop = this.ctx.on("session/event", (session, event) => {
           if (agent.session && session !== agent.session && session?.id !== agent.session?.id) return;
+          // 这个会话还在出事件 = 这轮还活着：重置停滞计时（spec 0034）。
+          if (watchdog) watchdog.touch();
           collect(event);
         });
       } catch (e) {
@@ -1041,14 +1205,18 @@ export class Turns {
         finish({ ok: false, reason: `followup_failed: ${e?.message || e}` });
         return;
       }
-      timer = setTimeout(() => {
-        if (settled) return;
-        handle.cancelled = true;
-        handle.timedOut = true;
-        this.cancelHandle(handle);
-        finish({ ok: false, reason: "timeout", session_id: sid, cwd, ms: Date.now() - startedAt });
-      }, timeoutSec * 1000);
-      timer.unref?.();
+      watchdog = turnWatchdog({
+        stallSec: timeoutSec,
+        capSec,
+        onTimeout: (reason) => {
+          if (settled) return;
+          handle.cancelled = true;
+          handle.timedOut = true;
+          this.cancelHandle(handle);
+          finish({ ok: false, reason, session_id: sid, cwd, ms: Date.now() - startedAt });
+        },
+      });
+      watchdog.start();
 
       (async () => {
         try {

@@ -66,6 +66,15 @@
 - 群：`im +chat-search --query "群名"`。
 - 兜底：拉一轮历史，从消息里的 `sender.id` 取。
 
+## 人物 ID（人物档案的键）
+
+- 消息里的 `sender.id`（`ou_` 开头的 open_id）就是**人物 ID**，原样用作
+  `~/.im-standin/profiles/people/feishu/<sender.id>.md` 的文件名，不 lower、不用显示名。
+- `contact +search-user` 返回的 `open_id` 与消息 `sender.id` 是同一个值，按名字补人时直接对照。
+- 群成员批量查用 `lark-cli im +chat-members`（命令名以本机 `lark-cli im --help` 为准，
+  本仓库未实测）；宁可查一次，也不要按显示名认人。
+- 系统消息没有 `sender.id`，不给人物档案路径，需要留就写进会话工作本。
+
 ## 坑位
 
 1. 监听进程随 agent 会话存活；会话重启要重挂。`--init latest` 以当前最新为水位，不回溯存量。

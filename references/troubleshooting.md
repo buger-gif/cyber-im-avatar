@@ -29,6 +29,9 @@
 | 值守中途彻底没动静 | 单发唤醒处理完没重挂；后台进程被回收 | `ps aux \| grep listen_cli` | [F](#f-值守进程没在跑-中途消失) |
 | `env.json` 解析失败 / 报 KeyError | 配置被写坏 | `python3 scripts/doctor.py --repair-state` | [I](#i-配置-状态损坏) |
 | 命中内容涉及资金/承诺/外部群 | 合规硬停 | **停手上报，不自动回** | [H](#h-内容与合规硬停不绕过) |
+| 人物档案找不到 / 名字对不上人 | 人物 ID 取错（用了显示名） | `ls ~/.im-standin/profiles/people/<platform>/`；键是消息发送者 ID | [I](#i-配置-状态损坏) |
+| 画像超过 12KB / 面板保存被拒 | 该层文件太大（人物档案累积最快） | 整理「历史结论」并归档 `.history.md` | [I](#i-配置-状态损坏) |
+| 面板刚改完人物档案，agent 又覆盖了 | 两层都有人写、没有共享锁 | 重载面板后再改；agent 写前重读 | [I](#i-配置-状态损坏) |
 
 ## 1. 先体检，别猜
 
@@ -444,10 +447,13 @@ python3 scripts/doctor.py --repair-state       # 隔离损坏的水位/状态文
 |---|---|
 | `env.json` 非法 JSON | `mv ~/.im-standin/env.json ~/.im-standin/env.json.corrupt && python3 scripts/bootstrap.py`（会重建，别名/档案需重录） |
 | `--note` 报「别名未注册」 | 先 `--find` 或 `--alias` 登记 |
-| 画像超过 12KB / 写不进 | 压缩「历史结论」的旧条目；面板写入会拒，DSH 壳内 agent 直接改文件 |
+| 人物档案找不到 / 名字对不上人 | 键是消息发送者 ID（飞书 `open_id` / 企微 `userid` / 钉钉 `senderId`），不是显示名：`ls ~/.im-standin/profiles/people/<platform>/`；取法见对应 `references/<平台>.md` |
+| 会话工作本路径不对 | `~/.im-standin/profiles/<platform>/<chat_id>.md`；独立形态优先用 `env.json` 的 `profile_file`；没有 chat_id 时文件名是「对象名-6位哈希」 |
+| 画像超过 12KB / 写不进 | 两层各自 8KB 软 / 12KB 硬，超限拒写不截断：人物档案先整理「历史结论」（>20 条或日期流水 >8 条就该整理），缩小时归档 `<文件>.history.md`；面板写入同样会拒 |
 | 画像写不进去 / `FS_SANDBOX_DENIED` | 设置页开启「完整文件访问」（`dsh.full_access=true`）；默认 `workspace-write` 只允许写会话工作区 |
-| 面板刚改过画像，agent 又覆盖了 | DSH 壳内没有 mtime CAS；agent 写前重读、增量合并，冲突以磁盘最新内容为准 |
-| 画像路径/权限不对 | `ls -l ~/.im-standin/profiles/<platform>/`；目录 700、文件 600；路径以 `env.json` 的 `profile_file` 为准 |
+| 面板刚改过人物档案，agent 又覆盖了 | 面板写入带 `base_mtime`，冲突会提示「已更新，请重新加载」；两层没有共享锁：重载面板再改、agent 写前重读，以磁盘最新为准（工作本无 CAS） |
+| 删除会话后人物档案还在 / forget 后人物还在 | 符合预期：`DELETE /api/forget` 只删会话工作本与会话状态；删人物走面板「服务对象 → 人物」或 `DELETE /api/persons` |
+| 画像路径/权限不对 | `ls -l ~/.im-standin/profiles/<platform>/ ~/.im-standin/profiles/people/<platform>/`；目录 700、文件 600 |
 | 状态文件权限错 | `chmod -R u+rw ~/.im-standin`；确认不是 root 建的 |
 | 想多账号/测试隔离 | `IM_STANDIN_DIR=/tmp/imtest python3 scripts/doctor.py` |
 | 升级后行为诡异 | 先 `python3 tests/run_tests.py` 判断是引擎还是配置问题 |

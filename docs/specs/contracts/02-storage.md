@@ -81,9 +81,11 @@
 
 ## 画像文件
 
-不在 `state.json` 里：`~/.im-standin/profiles/<platform>/<chat_id>.md`，一个对象一份。
-目录 700、文件 600，写入走临时文件 + rename；上限 12KB，超限拒绝而不是截断。
-`env.json` 只读，提供平台 CLI 路径/登录身份；target 的画像正文不写回 `env.json`。
+不在 `state.json` 里；两层，目录 700、文件 600，临时文件 + rename；每份上限 12KB（超限拒绝不截断）。
+人物档案 `profiles/people/<platform>/<person_id>.md`：人物级评价（身份与角色 / 沟通偏好 / 在意与忌讳 / 历史结论），跨会话复用。
+会话工作本 `profiles/<platform>/<chat_id>.md`：这个会话是什么 / 群内工作要求 / 成员与角色（只留人物档案指针）/ 本会话结论与待办。
+`person_id` 取平台消息发送者 ID（飞书 `open_id`、企微 `userid`、钉钉 `senderId`），空 ID 不建档、不用显示名；文件名 sanitize 为非法连续段替 `_`、去首尾 `._-`、前 80 字符，`dsh-plugin/lib/profiles.js` 与 `scripts/bootstrap.py` 双实现靠 golden 向量对齐。
+`forget` 只删会话工作本，人物档案跨会话保留（只能显式 `DELETE /api/persons`）；旧四段画像由 agent 首次处理该会话时懒迁移，旧全文先归档到 `<工作本>.history.md`；`env.json` 只读，不存画像正文与人物索引。
 
 ## 一次性迁移
 
