@@ -84,9 +84,9 @@ const index = {
       name: pkg.name,
       title: { en: "IM Stand-in", "zh-cn": "IM 值守" },
       description: {
-        en: "Sidebar seat in DSH that watches Feishu / WeCom chats, drafts replies in your voice, and sends after you confirm.",
+        en: "Sidebar seat in DSH that watches Feishu / WeCom chats, wakes the agent only on new messages, and lets it draft, research, and reply in your voice.",
         "zh-cn":
-          "在 DSH 侧边栏常驻的 IM 值守席位：收件箱聚合 @我 与私聊，按你的语气起草回复，确认后以本人身份发出。",
+          "在 DSH 侧边栏常驻的 IM 值守席位：命中 @我 或私聊新消息才唤醒 agent，由它按你的语气起草、调研并回复；面板展示值守实例、消息与手动发送。",
       },
       icon,
       author: pkg.author,

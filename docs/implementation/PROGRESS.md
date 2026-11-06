@@ -5,12 +5,13 @@
 
 ## 更新时间
 
-2026-11-06（spec 0037 命中回执表情已验收归档，0.16.0 发版中；spec 0035 / 0032 仍待用户真机验收）
+2026-11-06（0.16.0 已发布：命中回执表情进 npm latest 与市场索引；CI Trusted Publishing 成功。spec 0035 / 0032 仍待用户真机验收）
 
 ## 最近批次
 
 | 日期 | 主题 | 证据 |
 | --- | --- | --- |
+| 2026-11-06 | 0.16.0 发布：命中回执表情（spec 0037）进 npm latest 与市场索引；CI Trusted Publishing 成功，`v0.16.0` tag 与 `market/index.json` 一致 | `CHANGELOG.md`、`dsh-plugin/package.json`、`dsh-plugin/market/index.json`、[run 42178230488](https://github.com/buger-gif/cyber-im-avatar/actions/runs/42178230488) |
 | 2026-11-06 | 命中回执表情（spec 0037，已验收归档）：`followup` 被接受后给本批 @ 消息点 `Get`；只认群 `mention` 与私聊「只认 @」的 `dm`，仅飞书，失败不影响 turn；新键 `dsh.ack_reaction` 默认开，设置页可关 | `dsh-plugin/lib/{state,im,turns}.js`、`web/panel.js`、`lib/client.js`、`tests/`、契约 03、`README.md`、`dsh-plugin/README.md`、`references/feishu.md`、`CHANGELOG.md`、`docs/specs/archive/0037-命中回执表情.md` |
 | 2026-11-06 | 0.15.0 发布：保温只做一次 + 单聊只用人物档案进 npm latest 与市场索引；CI Trusted Publishing 成功，`v0.15.0` tag 与 `market/index.json` 一致 | `CHANGELOG.md`、`dsh-plugin/package.json`、`dsh-plugin/market/index.json`、[run 42171965913](https://github.com/buger-gif/cyber-im-avatar/actions/runs/42171965913) |
 | 2026-11-06 | 保温只做一次（spec 0036 / ADR 0010）：每段连续闲置最多一次心跳；第二个 `warm_min` 仍无真实消息则下一条消息换新会话；`dsh.idle_reset_min` 退役，`warm_min=0` 同时关保温与自动换会话；面板设置只剩保温间隔 | `dsh-plugin/lib/{state,poller,turns}.js`、`web/panel.js`、`lib/client.js`、`tests/`、契约 02/03、`README.md`、`dsh-plugin/README.md`、`CHANGELOG.md`、`docs/specs/archive/0036-保温只做一次.md`、`docs/decisions/implemented/0010-会话寿命跟随保温节奏.md` |
@@ -50,6 +51,8 @@
 
 - **0037 已验收归档（随 0.16.0 发布）**：命中后给本批 @ 消息点 `Get` 表情回执；
   只认群 `mention` 与私聊「只认 @」的 `dm`，仅飞书，失败不影响 turn。用户已真机确认。
+- **0.16.0 已发布**：CI Trusted Publishing 成功，`dist-tags.latest = 0.16.0`，`v0.16.0` tag 与
+  `market/index.json` 一致；市场卡片描述同步为当前形态（不再写已删除的收件箱页）。
 - **0036 已实施并归档（ADR 0010）**：每段连续闲置最多一次心跳，第二个 `warm_min` 仍无真实
   消息则下一条消息换新会话；`dsh.idle_reset_min` 退役，老配置静默丢弃，`warm_min=0` 同时关
   保温与自动换会话。`node --test` 198、Python 194、全量 gate 与独立预览页走查通过。
