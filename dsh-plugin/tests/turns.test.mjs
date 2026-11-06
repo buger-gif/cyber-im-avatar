@@ -853,7 +853,7 @@ test("warm prompt without people asks to tidy only the workbook", () => {
   assert.match(p, /只整理这一类文件：会话工作本/);
 });
 
-test("idle session is reset before the next wake and gets a fresh first turn", async () => {
+test("idle past the second warm cycle is reset before the next wake and gets a fresh first turn", async () => {
   const { chat, host, turns } = setup({ reply: "新会话" });
   const old = Date.now() / 1000 - 181 * 60;
   chat.dsh_session = "session-old";
@@ -861,6 +861,8 @@ test("idle session is reset before the next wake and gets a fresh first turn", a
   chat.session_turns = 7;
   chat.session_bound_at = old;
   chat.last_turn = { ok: true, reason: "", at: old };
+  // 插件错过了保温窗口也不影响到期判断：看的是真实闲置时长。
+  chat.last_warm_at = 0;
 
   const r = await turns.wake(chat);
   assert.equal(r.ok, true);
@@ -869,12 +871,32 @@ test("idle session is reset before the next wake and gets a fresh first turn", a
   assert.equal(chat.session_turns, 1);
   assert.equal(chat.last_reset.reason, "idle");
   assert.match(host.followups[0].content[0].text, /^\/cyber-im-avatar/);
-  assert.match(host.followups[0].content[0].text, /闲置超过 180 分钟，已自动重开/);
+  assert.match(host.followups[0].content[0].text, /闲置约 110 分钟（期间只保温一次），已自动重开/);
 });
 
-test("idle_reset_min=0 keeps the bound session no matter how old", async () => {
+test("idle before the second warm cycle keeps the bound session", async () => {
+  const { chat, host, turns } = setup({ reply: "继续" });
+  const now = Date.now() / 1000;
+  const idle = 100 * 60;
+  chat.dsh_session = "session-1";
+  chat.prompt_session = "session-1";
+  chat.session_turns = 3;
+  chat.session_bound_at = now - idle;
+  chat.last_turn = { ok: true, reason: "", at: now - idle };
+  chat.last_warm_at = now - 45 * 60;
+
+  const r = await turns.wake(chat);
+  assert.equal(r.ok, true);
+  assert.equal(host.created.length, 0);
+  assert.equal(chat.dsh_session, "session-1");
+  assert.equal(chat.session_turns, 4);
+  assert.equal(chat.last_reset.reason, "");
+  assert.doesNotMatch(host.followups[0].content[0].text, /已自动重开/);
+});
+
+test("warm_min=0 disables warmth and the auto reset it drives", async () => {
   const { state, chat, host, turns } = setup();
-  state.data.config.dsh.idle_reset_min = 0;
+  state.data.config.dsh.warm_min = 0;
   const old = Date.now() / 1000 - 400 * 60;
   chat.dsh_session = "session-1";
   chat.prompt_session = "session-1";

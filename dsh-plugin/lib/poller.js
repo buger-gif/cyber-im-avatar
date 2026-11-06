@@ -137,16 +137,16 @@ export class Poller {
 
   /**
    * 值守心跳：续上下文缓存 + 让 agent 归并画像。
-   * 一次 tick 最多启动一个，避免整点同时叫醒一批会话；只在「已绑定、已消费首轮载荷、
-   * 没有待回、闲置在重开阈值内」的会话上跑，失败也按 warm_min 退避。
+   * 一段连续闲置最多保温一次：第一个 warm_min 到点跑，第二个 warm_min 到点就不再跑
+   * （下一条真实消息会换新会话）。一次 tick 最多启动一个，失败也算一次，不按 tick 重试。
    */
   async maybeWarm() {
     const turns = this.turns;
     const cfg = this.cfg?.dsh || {};
     const warmMin = Math.max(0, Number(cfg.warm_min) || 0);
     if (!warmMin || !turns?.hostReady?.()) return false;
-    const idleMin = Math.max(0, Number(cfg.idle_reset_min) || 0);
     const now = nowSec();
+    const warmSec = warmMin * 60;
     const platforms = this.cfg.platforms || [];
     for (const chat of this.state.listChats()) {
       if (!chat.watching || chat.blocked || !chat.dsh_session) continue;
@@ -162,13 +162,15 @@ export class Poller {
         Number(chat.session_bound_at) || 0);
       if (!lastReal) continue;
       const idle = now - lastReal;
-      if (idle < warmMin * 60) continue;
-      // 快到重开阈值就不再焐：下一条消息会直接换新会话。
-      if (idleMin > 0 && idle >= idleMin * 60) continue;
+      // 第一个周期还没到；或已经过了第二个周期，这通会话下一条消息就会换，别再花钱保温。
+      if (idle < warmSec) continue;
+      if (idle >= warmSec * 2) continue;
+      // 这段闲置已经保温过一次：不再保第二次。
       const lastWarm = Number(chat.last_warm_at) || 0;
-      if (lastWarm && now - lastWarm < warmMin * 60) continue;
+      if (lastWarm > lastReal) continue;
       const r = await turns.warm(chat);
-      if (!r.ok && r.reason !== "running") {
+      // 被真实消息取消不算一次保温；真正启动失败要记账，避免每个 tick 重试。
+      if (!r.ok && r.reason !== "running" && r.reason !== "cancelled") {
         chat.last_warm_at = nowSec();
         chat.last_warm_ok = false;
         this.state.save();

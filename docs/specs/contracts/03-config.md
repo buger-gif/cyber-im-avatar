@@ -26,12 +26,11 @@
 | `dsh.timeout` | `600` | 120–3600 秒 | **停滞**超时：这么久没有收到该会话的任何 `session/event`（工具/模型都没动静）才按卡死取消；有活动会不断重置，长任务不会被墙钟切掉 |
 | `dsh.turn_cap_sec` | `3600` | 0–86400 秒 | 单轮总时长兜底（从 turn 开始算，不随活动重置）；超时按失败处理并取消，`last_turn.reason` 记 `turn_cap`；`0` = 不设上限 |
 | `dsh.full_access` | `false` | true / false | 为 true 时把值守会话切到 DSH 内置 `danger-full-access`，agent 可直接写 `~/.im-standin/profiles`（人物档案；群还有会话工作本）；默认关闭，开启后 agent 能写整个 home |
-| `dsh.idle_reset_min` | `180` | 0–1440 分钟 | 超过这么久没有真实 turn（保温轮不算）→ 下次唤醒前清空会话绑定，在新会话里处理；旧会话留在 DSH 侧边栏；`0` = 关闭 |
-| `dsh.warm_min` | `55` | 0–1440 分钟 | 闲置达到这么久跑一次保温轮（续上下文缓存 + 按 skill 归并载荷列出的记忆文件：单聊一份人物档案，群工作本与人物档案）；`0` = 关闭。重开开启时（`idle_reset_min > 0`）只在重开窗口内跑，`warm_min >= idle_reset_min` 时不触发；`idle_reset_min=0` 只关重开，不关保温 |
+| `dsh.warm_min` | `55` | 0–1440 分钟 | 会话寿命的唯一时钟：闲置达到这么久先跑**一次**保温轮（续上下文缓存 + 按 skill 归并载荷列出的记忆文件：单聊一份人物档案，群工作本与人物档案）；再过一个同样长的周期仍没有真实消息，下一条消息换新会话。真实消息会重新计时；`0` = 关闭保温，同时关闭自动换会话 |
 
 > 退役：`llm.*`、`reply.*`、`reply_guard`、`ui.*`、`seed_targets`、`dsh.profile`、
-> `dsh.pre_draft` 不再有消费者，`normalizeConfig()` 直接丢掉；老 `panel.json` 里残留不影响行为。
-> 插件不跑 headless，也不再需要单独的 profile。
+> `dsh.pre_draft`、`dsh.idle_reset_min` 不再有消费者，`normalizeConfig()` 直接丢掉；老
+> `panel.json` / `state.json` 里残留不影响行为。插件不跑 headless，也不再需要单独的 profile。
 
 ## 取值范围（夹取，不是报错）
 
@@ -48,7 +47,6 @@
 | `poll.group_wake_sec` | 0 | 3600 |
 | `dsh.timeout` | 120 | 3600 |
 | `dsh.turn_cap_sec` | 0 | 86400 |
-| `dsh.idle_reset_min` | 0 | 1440 |
 | `dsh.warm_min` | 0 | 1440 |
 
 ## 老键迁移
@@ -63,6 +61,7 @@
 | `backfill_hours` | `poll.backfill_hours` | 原值 |
 | `poll_watched_only` | `poll.dm_scope="watched"` | true 才生效 |
 | `chatlist_interval` | — | 丢掉：会话列表改为跟着每轮走 |
+| `dsh.idle_reset_min` | — | 丢掉：会话寿命改由 `dsh.warm_min` 推导（一次保温 + 第二个周期换会话） |
 | `port` | — | 丢掉：插件不监听端口，老配置不能把它带回来 |
 
 ## 红线

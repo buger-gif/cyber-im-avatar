@@ -535,11 +535,11 @@ test("config POST clamps and persists", async () => {
 
   const life = await app.handle("/api/config", "POST", null,
     { dsh: { idle_reset_min: 0, warm_min: 99999 } });
-  assert.equal(life.body.dsh.idle_reset_min, 0);
   assert.equal(life.body.dsh.warm_min, 1440);
+  assert.equal("idle_reset_min" in life.body.dsh, false, "退役键不再回给面板");
   const readback = (await app.handle("/api/config", "GET")).body;
-  assert.equal(readback.dsh.idle_reset_min, 0);
   assert.equal(readback.dsh.warm_min, 1440);
+  assert.equal("idle_reset_min" in readback.dsh, false);
   // 只改 dsh 不能把 poll 的已存值带回默认。
   assert.equal(readback.poll.per_chat_limit, 5);
 });

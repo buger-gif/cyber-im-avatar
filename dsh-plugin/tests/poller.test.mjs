@@ -636,12 +636,12 @@ test("heartbeat warms one eligible session per tick and backs off after a failur
   assert.equal(turns.warmCalls, 1);
   assert.equal(turns.lastWarmChat, chat);
 
-  // 同一会话刚跑过保温：即使 last_warm_at 只有一份，也要等下一个窗口。
+  // 这段闲置已经保温过：不再保第二次。
   chat.last_warm_at = Date.now() / 1000;
   assert.equal(await poller.maybeWarm(), false);
   assert.equal(turns.warmCalls, 1);
 
-  // 启动失败也退避，不每个 tick 重试。
+  // 启动失败也记账一次，不每个 tick 重试。
   chat.last_warm_at = 0;
   turns.warmResult = { ok: false, reason: "no_session" };
   assert.equal(await poller.maybeWarm(), true);
@@ -652,7 +652,41 @@ test("heartbeat warms one eligible session per tick and backs off after a failur
   assert.equal(turns.warmCalls, 2);
 });
 
-test("heartbeat skips pending chats, active turns, unwatched, and the reset window", async () => {
+test("heartbeat stops after the second warm cycle and restarts after a real turn", async () => {
+  const { state, poller, turns } = setup();
+  const chat = warmChat(state, { idleMin: 120 });
+  const now = Date.now() / 1000;
+  // 第一个周期（55 分钟）保过温，现在已到第二个周期（110 分钟）：不再保温。
+  chat.last_warm_at = now - 65 * 60;
+  assert.equal(await poller.maybeWarm(), false);
+  assert.equal(turns.warmCalls, 0);
+
+  // 真实消息把闲置时钟拉回 60 分钟前，保温额度重新打开。
+  chat.session_bound_at = now - 60 * 60;
+  chat.last_turn = { ok: true, reason: "", at: chat.session_bound_at };
+  chat.last_warm_at = now - 85 * 60;
+  assert.equal(await poller.maybeWarm(), true);
+  assert.equal(turns.warmCalls, 1);
+});
+
+test("heartbeat never warms a session that is already past the second cycle", async () => {
+  const { state, poller, turns } = setup();
+  warmChat(state, { idleMin: 120 });
+  // 插件睡眠/重启错过了保温窗口，也仍然不焐：下一条消息会直接换会话。
+  assert.equal(await poller.maybeWarm(), false);
+  assert.equal(turns.warmCalls, 0);
+});
+
+test("a cancelled warm is not recorded as the one warm", async () => {
+  const { state, poller, turns } = setup();
+  const chat = warmChat(state);
+  turns.warmResult = { ok: false, reason: "cancelled" };
+  assert.equal(await poller.maybeWarm(), true);
+  assert.equal(turns.warmCalls, 1);
+  assert.equal(chat.last_warm_at, 0);
+});
+
+test("heartbeat skips pending chats, active turns, unwatched, and warm_min=0", async () => {
   const { state, poller, turns } = setup();
   const chat = warmChat(state);
   state.mergeRecent(chat, [msg("m1", 1010, { kind: "dm", state: "new" })]);
@@ -664,14 +698,6 @@ test("heartbeat skips pending chats, active turns, unwatched, and the reset wind
   assert.equal(await poller.maybeWarm(), false);   // 在飞
   turns.active.clear();
 
-  const old = Date.now() / 1000 - 181 * 60;
-  chat.session_bound_at = old;
-  chat.last_turn = { ok: true, reason: "", at: old };
-  assert.equal(await poller.maybeWarm(), false);   // 已到重开阈值
-  assert.equal(turns.warmCalls, 0);
-
-  chat.session_bound_at = Date.now() / 1000 - 60 * 60;
-  chat.last_turn = { ok: true, reason: "", at: chat.session_bound_at };
   chat.watching = false;
   assert.equal(await poller.maybeWarm(), false);
   chat.watching = true;
@@ -686,14 +712,6 @@ test("heartbeat waits for the first turn to consume the skill payload", async ()
   chat.prompt_session = "";
   assert.equal(await poller.maybeWarm(), false);
   assert.equal(turns.warmCalls, 0);
-});
-
-test("heartbeat keeps running when idle reset is off; both knobs are independent", async () => {
-  const { state, poller, turns } = setup();
-  warmChat(state, { idleMin: 60 });
-  state.data.config.dsh.idle_reset_min = 0;
-  assert.equal(await poller.maybeWarm(), true);
-  assert.equal(turns.warmCalls, 1);
 });
 
 test("heartbeat skips a platform whose auth is gone", async () => {

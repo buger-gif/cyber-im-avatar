@@ -324,7 +324,7 @@ const config = {
   poll: { interval_min: 10, dm_scope: "recent", dm_recent: 20, cooldown_sec: 20,
           min_interval_min: 10, max_interval_min: 240, interval_sec: 600, fast_sec: 60 },
   platforms: ["feishu", "wecom"],
-  dsh: { timeout: 600, full_access: true, idle_reset_min: 180, warm_min: 55 },
+  dsh: { timeout: 600, full_access: true, warm_min: 55 },
   resolved: { dsh_ready: true, label: "跟随 DSH 配置" },
 };
 // 面板的设置页从 /api/status 的 config 字段读配置（真实 server 也是这么给的）

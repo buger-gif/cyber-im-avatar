@@ -255,8 +255,8 @@ export function buildWakePrompt(platform, chatName, chatId, messages, {
   parts.push(`chat_id：${chatId}`);
   parts.push("运行形态：DSH 插件壳；监听、水位、唤醒由插件负责，不要挂监听，不要运行 listen_cli/bootstrap.py。");
   if (resetMin > 0) {
-    parts.push(`会话：上一次会话闲置超过 ${resetMin} 分钟，已自动重开；更早上下文不在本会话，` +
-      "需要时按 skill 在线拉，别把新消息当成新客户。");
+    parts.push(`会话：上一段会话闲置约 ${resetMin} 分钟（期间只保温一次），已自动重开；` +
+      "更早上下文不在本会话，需要时按 skill 在线拉，别把新消息当成新客户。");
   }
   // 记忆文件：群两层（工作本 + 人物档案）；单聊一份（对方的人物档案）。
   const memory = memoryLine(bookPath, single);
@@ -297,8 +297,8 @@ export function buildOpenPrompt(platform, chatName, chatId, messages, {
   parts.push(`chat_id：${chatId}`);
   parts.push("运行形态：DSH 插件壳；监听、水位、唤醒由插件负责，不要挂监听，不要运行 listen_cli/bootstrap.py。");
   if (resetMin > 0) {
-    parts.push(`会话：上一次会话闲置超过 ${resetMin} 分钟，已自动重开；更早上下文不在本会话，` +
-      "需要时按 skill 在线拉。");
+    parts.push(`会话：上一段会话闲置约 ${resetMin} 分钟（期间只保温一次），已自动重开；` +
+      "更早上下文不在本会话，需要时按 skill 在线拉。");
   }
   const memory = memoryLine(bookPath, single);
   if (memory) parts.push(memory);
@@ -478,8 +478,8 @@ export class Turns {
     return !!(this.sessionController && this.sessions && this.ctx);
   }
 
-  idleResetMinutes() {
-    return Math.max(0, Number(this.state.data.config?.dsh?.idle_reset_min) || 0);
+  warmMinutes() {
+    return Math.max(0, Number(this.state.data.config?.dsh?.warm_min) || 0);
   }
 
   /** 本人 ID：身份在轮询器主循环里取；适配层也允许缓存同一份。取不到就空着，不猜。 */
@@ -626,17 +626,17 @@ export class Turns {
       else this.cancelHandle(old);
       try { await old.done; } catch { /* old turn already gone */ }
     }
-    // 闲置重开：只在下一条消息到来时做，不动旧会话文件。
-    // 时钟只认真实 turn（last_turn / session_bound_at），保温轮不推后它。
-    const idleMin = this.idleResetMinutes();
+    // 保温只做一次：第二个保温周期仍没有真实消息 -> 下一条消息换新会话。
+    // 两个周期都以 max(last_turn.at, session_bound_at) 为起点，保温轮不推后它。
+    const warmMin = this.warmMinutes();
     let resetMin = 0;
-    if (idleMin > 0 && current.dsh_session && !this.active.has(key)) {
+    if (warmMin > 0 && current.dsh_session && !this.active.has(key)) {
       const lastReal = Math.max(Number(current.last_turn?.at) || 0,
         Number(current.session_bound_at) || 0);
-      if (lastReal && nowSec() - lastReal >= idleMin * 60) {
-        resetMin = idleMin;
+      if (lastReal && nowSec() - lastReal >= warmMin * 120) {
+        resetMin = warmMin * 2;
         this.state.setSession(current, "", "idle");
-        this.logger.info?.(`[im-standin] idle reset ${key}: idle >= ${idleMin}min`);
+        this.logger.info?.(`[im-standin] warm expiry ${key}: idle >= ${warmMin * 2}min`);
       }
     }
     const turnId = crypto.randomUUID();

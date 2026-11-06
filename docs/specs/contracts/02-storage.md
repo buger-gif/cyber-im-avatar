@@ -47,9 +47,9 @@
 | added_at | number | 入库时刻 |
 | recent | array | 最近消息指针，最多 10 条，最新在前；字段见下 |
 | prompt_session | string | 已消费过唤醒载荷的 DSH session id；用于判断首轮是否带完整上下文（`/cyber-im-avatar`、chat_id、运行形态、画像路径），之后只追加消息行 |
-| last_warm_at | number | 最近一次保温轮的墙钟时刻（epoch 秒）；`0` = 没跑过或刚换过会话。失败也写，用于退避，不推进闲置时钟 |
+| last_warm_at | number | 最近一次保温轮的墙钟时刻（epoch 秒）；每段连续闲置最多写一次，失败也写，`0` = 没跑过或刚换过会话。不推进闲置时钟 |
 | last_warm_ok | bool/null | 最近一次保温轮结果；null = 没跑过或刚换过会话，失败不覆盖 `last_error` |
-| last_reset | object | `at` / `reason`；reason = `idle`（闲置重开）/ `manual` / `workspace` / `missing`；`at=0` 表示没重开过 |
+| last_reset | object | `at` / `reason`；reason = `idle`（保温一次后第二个周期仍无新消息）/ `manual` / `workspace` / `missing`；`at=0` 表示没重开过 |
 
 ## recent 里的一条消息
 

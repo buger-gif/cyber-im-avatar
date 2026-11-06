@@ -219,16 +219,19 @@ test("pruneMediaPaths removes deleted files and keeps live ones", () => {
   assert.deepEqual(chat.recent[0].media_paths, [live]);
 });
 
-test("idle reset and warm keys have defaults, clamp to 0..1440, and 0 disables", () => {
+test("warm key has default, clamps to 0..1440, and 0 disables", () => {
   const cfg = normalizeConfig({});
-  assert.equal(cfg.dsh.idle_reset_min, 180);
   assert.equal(cfg.dsh.warm_min, 55);
-  assert.equal(normalizeConfig({ dsh: { idle_reset_min: 0 } }).dsh.idle_reset_min, 0);
   assert.equal(normalizeConfig({ dsh: { warm_min: 0 } }).dsh.warm_min, 0);
-  assert.equal(normalizeConfig({ dsh: { idle_reset_min: -5 } }).dsh.idle_reset_min, 0);
   assert.equal(normalizeConfig({ dsh: { warm_min: 99999 } }).dsh.warm_min, 1440);
   assert.equal(normalizeConfig({ dsh: { turn_cap_sec: -5 } }).dsh.turn_cap_sec, 0);
   assert.equal(normalizeConfig({ dsh: { turn_cap_sec: 99999 * 24 } }).dsh.turn_cap_sec, 86400);
+});
+
+test("retired idle_reset_min is dropped from old configs", () => {
+  const cfg = normalizeConfig({ dsh: { idle_reset_min: 90, warm_min: 55 } });
+  assert.equal("idle_reset_min" in cfg.dsh, false);
+  assert.equal(cfg.dsh.warm_min, 55);
 });
 
 test("old state gets warm/reset defaults; setSession records the reset reason", () => {

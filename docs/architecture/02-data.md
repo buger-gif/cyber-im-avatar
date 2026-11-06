@@ -27,7 +27,7 @@
 
 | 层 | 一行是什么 | 关键字段 |
 | --- | --- | --- |
-| `config` | 插件配置，改动即时生效 | `poll.*`、`platforms`、`dsh.timeout`、`dsh.full_access`、`dsh.idle_reset_min`、`dsh.warm_min` |
+| `config` | 插件配置，改动即时生效 | `poll.*`、`platforms`、`dsh.timeout`、`dsh.full_access`、`dsh.warm_min` |
 | `chats` | 一个会话（一个人或一个群） | `watching`、`timer`、`wake_mode`、`blocked`、`last_msg_id`、`last_epoch`、`dsh_session`、`prompt_session`、`last_warm_at`、`last_reset` |
 | `chats[].recent` | 最近 10 条消息**指针** | `kind`(dm/mention/fyi/out)、`state`(new/opened/replied/ignored)、`msg_id`、`msg_type`、`app_link`、`media_id`、`media_paths` |
 

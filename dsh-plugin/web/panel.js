@@ -1013,10 +1013,7 @@
 
     function resetReasonText(r) {
       if (!r || !r.reason) return "";
-      if (r.reason === "idle") {
-        var m = (S.cfg && S.cfg.dsh && S.cfg.dsh.idle_reset_min) || 180;
-        return "闲置超过 " + m + " 分钟，已自动重开";
-      }
+      if (r.reason === "idle") return "保温后一个周期仍无新消息，已自动重开";
       if (r.reason === "manual") return "手动重开";
       if (r.reason === "workspace") return "工作区变更，已重开";
       if (r.reason === "missing") return "原会话在 DSH 里找不到，已重开";
@@ -2627,54 +2624,44 @@
           }, "立即拉一轮"),
           h("span", { class: "ims-hint", text: "不受间隔限制；同一个会话 20 秒内不会重复拉。" }))));
 
-      // 会话生命周期：闲置重开 + 保温（续缓存 / 整理记忆）
+      // 会话生命周期：保温（续缓存 / 整理记忆）+ 第二个周期换会话
       var dcfg = cfg.dsh || {};
-      var idleInp = h("input", { class: "ims-inp ims-num", type: "number",
-                                 min: "0", max: "1440", step: "10" });
-      idleInp.value = S.lifeDraft.idle_reset_min !== undefined ? S.lifeDraft.idle_reset_min
-        : String(dcfg.idle_reset_min == null ? 180 : dcfg.idle_reset_min);
       var warmInp = h("input", { class: "ims-inp ims-num", type: "number",
                                  min: "0", max: "1440", step: "5" });
       warmInp.value = S.lifeDraft.warm_min !== undefined ? S.lifeDraft.warm_min
         : String(dcfg.warm_min == null ? 55 : dcfg.warm_min);
-      idleInp.addEventListener("input", function () { S.lifeDraft.idle_reset_min = idleInp.value; });
       warmInp.addEventListener("input", function () { S.lifeDraft.warm_min = warmInp.value; });
       scroll.appendChild(h("div", { class: "ims-card" },
         h("div", { class: "ims-card-h" },
           h("span", { class: "ims-ico", html: icon("sync", 15) }), "会话生命周期",
           h("span", { class: "ims-grow" }),
           h("span", { class: "ims-tag",
-            text: "重开 " + (dcfg.idle_reset_min ? dcfg.idle_reset_min + " 分钟" : "关") +
-              " · 保温 " + (dcfg.warm_min ? dcfg.warm_min + " 分钟" : "关") })),
+            text: dcfg.warm_min ? "保温 " + dcfg.warm_min + " 分钟（一次）" : "保温关" })),
         h("div", { class: "ims-rowline" },
-          h("span", { class: "ims-field" },
-            h("span", { class: "ims-hint", text: "闲置重开(分钟)" }), idleInp),
           h("span", { class: "ims-field" },
             h("span", { class: "ims-hint", text: "保温间隔(分钟)" }), warmInp),
           h("span", { class: "ims-grow" }),
           h("button", {
             class: "ims-btn primary", type: "button",
             onclick: function () {
-              var idleV = Math.max(0, Math.min(1440, parseInt(idleInp.value, 10) || 0));
               var warmV = Math.max(0, Math.min(1440, parseInt(warmInp.value, 10) || 0));
-              api("/api/config", { body: { dsh: { idle_reset_min: idleV, warm_min: warmV } } })
+              api("/api/config", { body: { dsh: { warm_min: warmV } } })
                 .then(function (c) {
                   S.cfg = c;
                   S.lifeDraft = {};
                   var cd = c.dsh || {};
-                  idleInp.value = String(cd.idle_reset_min == null ? 180 : cd.idle_reset_min);
                   warmInp.value = String(cd.warm_min == null ? 55 : cd.warm_min);
-                  say("已保存：闲置 " + (cd.idle_reset_min ? cd.idle_reset_min + " 分钟重开" : "不重开") +
-                    " · " + (cd.warm_min ? cd.warm_min + " 分钟保温" : "不保温"));
+                  say(cd.warm_min ? "已保存：" + cd.warm_min + " 分钟保温一次"
+                    : "已保存：不保温、不自动换会话");
                   paint();
                 });
             }
           }, "保存")),
-        h("div", { class: "ims-hint", text: "超过「闲置重开」没有真实对话，下一条消息自动换新会话" +
-          "（旧会话留在 DSH 侧边栏，工作本与最近消息还在）；闲置在阈值内时，每「保温间隔」跑一轮心跳：" +
-          "续上下文缓存，并按 skill 规则整理记忆文件（群工作本与人物档案；单聊一份档案）。0 = 关闭。" +
-          "保温不会推后重开时钟；重开开启时，保温间隔 ≥ 闲置重开不会触发。" +
-          "两个 0 各自关闭：闲置重开设 0 只关重开，不关保温。" })));
+        h("div", { class: "ims-hint", text: "闲置达到「保温间隔」先跑一轮心跳：" +
+          "续上下文缓存，并按 skill 规则整理记忆文件（群工作本与人物档案；单聊一份档案）。" +
+          "只保温一次：再过一个同样长的周期仍没有真实消息，下一条消息自动换新会话" +
+          "（旧会话留在 DSH 侧边栏，工作本与最近消息还在）。真实消息会重新计时；" +
+          "保温间隔设 0 = 关闭保温，同时关闭自动换会话。" })));
 
       // 值守范围：群默认不拉，历史待回清理
       var groupTimerCount = ((S.chats || []).filter(function (c) {
