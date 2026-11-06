@@ -5,12 +5,13 @@
 
 ## 更新时间
 
-2026-11-06（spec 0036 保温只做一次已实施并归档：每段闲置最多一次心跳，第二个周期后下一条消息换新会话；`dsh.idle_reset_min` 退役，面板只留保温间隔。`node --test` 198、Python 194、全量 gate 全绿，真机由用户刷新后自验。spec 0035 / 0032 仍待用户真机验收。已发布 0.14.1，本轮改动进 CHANGELOG「未发布」，目标 0.15.0）
+2026-11-06（0.15.0 已发布：含 spec 0035 单聊只用人物档案与 spec 0036 保温只做一次；CI Trusted Publishing 成功，`dist-tags.latest = 0.15.0`，市场索引同步。spec 0035 / 0032 仍待用户真机验收）
 
 ## 最近批次
 
 | 日期 | 主题 | 证据 |
 | --- | --- | --- |
+| 2026-11-06 | 0.15.0 发布：保温只做一次 + 单聊只用人物档案进 npm latest 与市场索引；CI Trusted Publishing 成功，`v0.15.0` tag 与 `market/index.json` 一致 | `CHANGELOG.md`、`dsh-plugin/package.json`、`dsh-plugin/market/index.json`、[run 42171965913](https://github.com/buger-gif/cyber-im-avatar/actions/runs/42171965913) |
 | 2026-11-06 | 保温只做一次（spec 0036 / ADR 0010）：每段连续闲置最多一次心跳；第二个 `warm_min` 仍无真实消息则下一条消息换新会话；`dsh.idle_reset_min` 退役，`warm_min=0` 同时关保温与自动换会话；面板设置只剩保温间隔 | `dsh-plugin/lib/{state,poller,turns}.js`、`web/panel.js`、`lib/client.js`、`tests/`、契约 02/03、`README.md`、`dsh-plugin/README.md`、`CHANGELOG.md`、`docs/specs/archive/0036-保温只做一次.md`、`docs/decisions/implemented/0010-会话寿命跟随保温节奏.md` |
 | 2026-11-05 | 单聊只用人物档案（spec 0035）：私聊记忆＝`profiles/people/<platform>/<id>.md` 一份，不再建/展示/下发工作本；旧私聊工作本第一次被碰到时整文件改名（已有档案则载荷给「待并入」+ `.history.md`）；面板删「私聊工作本」入口，`/api/targets` 与写接口对 p2p 走人物档案，独立形态搜人登记绑人物档案 | `dsh-plugin/lib/{profiles,turns,app}.js`、`web/panel.js`、`lib/client.js`、`scripts/bootstrap.py`、`tests/`、契约 01–03、`SKILL.md`、`README.md`、`docs/specs/active/0035-单聊只用人物档案.md`、ADR 0009 |
 | 2026-11-05 | 关注页日报即时渲染（spec 0033）：模块级缓存 + 席位页面加载预热，打开页签同步出内容（接口延迟 800ms 下 825ms → 7ms）；可见时 3 秒静默刷新，内容不变不重建 DOM、滚动保持；失败保留内容并挂错误条 | `dsh-plugin/web/panel.js`、`lib/client.js`、`CHANGELOG.md` |
@@ -74,8 +75,8 @@
   [#11669](https://github.com/awesome-dsh-plugin/awesome-dsh-plugin/pull/11669)。唯一的红是
   「仓库满 1 天」自动检查（仓库 2026-11-02T15:59Z 建），该检查自己重跑，约 6 小时后达标；
   合并后市场当日构建即可搜到。自托管索引仍在，两者并存。
-- **0.14.1 已发布**：`dist-tags.latest = 0.14.1`，`v0.14.1` tag 与 `market/index.json` 一致
-  （publish 2026-11-05）。本轮 0035 改动进 `CHANGELOG.md` 的「未发布」，目标 0.15.0。
+- **0.15.0 已发布**：CI Trusted Publishing 成功，`dist-tags.latest = 0.15.0`，`v0.15.0` tag 与
+  `market/index.json` 一致；本版包含 spec 0035（单聊只用人物档案）与 0036（保温只做一次）。
 - **验证环境**：3080 使用 `IM_STANDIN_DIR=/tmp/im-standin-accept` 的隔离状态，只有合成会话
   `oc_e2e_local_only`；web profile 已 link 本地插件。**没有向真实客户外发**，也没有拉真实消息。
 - **合成 live turn**：`chatWake` 创建 `session-76a20026…` → turn/end → `session_turns=1`、
