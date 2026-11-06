@@ -24,6 +24,9 @@ dsh-plugin/skill/
 .workbuddy/
 .zcode/
 
+# 本地公众号发布稿（正文 / 排版 / 封面 / 导出件），不进公开仓库
+article-*/
+
 # 本机/其他宿主的探索性实验，不属于本项目交付物
 probe/
 

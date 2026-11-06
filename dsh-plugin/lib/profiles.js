@@ -150,7 +150,7 @@ export function chatPersonId(platform, chat, selfId = "") {
   const self = String(selfId || "");
   for (const m of Array.isArray(chat.recent) ? chat.recent : []) {
     const sid = String(m?.sender_id || "");
-    // out = 本人发的；cmd = 本人在私聊里 @ 自己（spec 0029），都不是「对面那个人」。
+    // out = 本人发的；cmd = 本人 @ 自己（spec 0029 / 0039），都不是「对面那个人」。
     // 后者尤其重要：selfId 暂时取不到时，cmd 的 sender 就是本人，不能拿来建人物档案。
     if (sid && sid !== self && m?.kind !== "out" && m?.kind !== "cmd") return sid;
   }

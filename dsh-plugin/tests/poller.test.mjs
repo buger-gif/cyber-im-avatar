@@ -542,7 +542,7 @@ test("self-@ in a DM is a command to the stand-in and wakes it (mention mode)", 
   assert.equal(chat.recent.find((m) => m.msg_id === "c3").kind, "out");
 });
 
-test("self-@ wakes in DM all mode too, and never in groups", async () => {
+test("self-@ wakes in DM all mode too, and in groups", async () => {
   const { state, poller, adapter, turns } = setup();
   const dm = state.ensureChat("feishu", "oc_cmd_all", { name: "客户", kind: "p2p" });
   dm.watching = true;
@@ -558,7 +558,7 @@ test("self-@ wakes in DM all mode too, and never in groups", async () => {
   assert.equal(turns.wakes.length, 1);
   assert.equal(dm.recent.find((m) => m.msg_id === "a2").kind, "cmd");
 
-  // 群里的自己消息（哪怕 @ 自己）不特殊处理，仍是 out、不唤醒。
+  // 群里的自 @ 也是指令：kind=cmd、唤醒一次、不算客户待回。
   const grp = state.ensureChat("feishu", "oc_cmd_grp", { name: "群", kind: "group" });
   grp.watching = true;
   grp.timer = 1;
@@ -569,9 +569,86 @@ test("self-@ wakes in DM all mode too, and never in groups", async () => {
     msg("g1", 9030),
   ];
   r = await poller.pollChat("feishu", "oc_cmd_grp", { force: true });
+  assert.equal(r.woke, true);
+  assert.equal(turns.wakes.length, 2);
+  assert.deepEqual(turns.wakes[1].opts.batch.map((m) => m.msg_id), ["g2"]);
+  const g2 = grp.recent.find((m) => m.msg_id === "g2");
+  assert.equal(g2.kind, "cmd");
+  assert.equal(g2.state, "new");
+  assert.match(g2.content, /测试一下/, "指令正文要留给 agent");
+  assert.equal(state.pendingCount(grp), 0, "群里的指令也不算客户待回");
+
+  // 群里本人不 @ 的消息仍是 out、不唤醒（防回环回归）。
+  adapter.messages = [
+    msg("g3", 9050, { sender_id: "ou_me", sender_name: "我", content: "我自己说一句" }),
+    msg("g2", 9040, { sender_id: "ou_me", sender_name: "我", content: "@我 测试一下" }),
+    msg("g1", 9030),
+  ];
+  r = await poller.pollChat("feishu", "oc_cmd_grp", { force: true });
   assert.equal(r.woke, false);
-  assert.equal(turns.wakes.length, 1);
-  assert.equal(grp.recent.find((m) => m.msg_id === "g2").kind, "out");
+  assert.equal(turns.wakes.length, 2);
+  assert.equal(grp.recent.find((m) => m.msg_id === "g3").kind, "out");
+});
+
+test("self-@ in an all-mode group wakes immediately, bypassing the merge window", async () => {
+  const { state, poller, adapter, turns } = setup();
+  const chat = state.ensureChat("feishu", "oc_cmd_gall", { name: "群", kind: "group" });
+  chat.watching = true;
+  chat.timer = 1;
+  chat.wake_mode = "all";
+  adapter.messages = [msg("w1", 11010)];
+  await poller.pollChat("feishu", "oc_cmd_gall");
+
+  // 旁观消息唤醒一次，合并窗口从这一刻开始计时。
+  adapter.messages = [msg("w2", 11020, { content: "随便聊聊" }), msg("w1", 11010)];
+  let r = await poller.pollChat("feishu", "oc_cmd_gall", { force: true });
+  assert.equal(r.woke, true);
+  const afterChatter = turns.wakes.length;
+
+  // 窗口内的第二条旁观消息：攒着，不唤醒。
+  adapter.messages = [
+    msg("w3", 11030, { content: "接着说" }),
+    msg("w2", 11020, { content: "随便聊聊" }),
+    msg("w1", 11010),
+  ];
+  r = await poller.pollChat("feishu", "oc_cmd_gall", { force: true });
+  assert.equal(r.woke, false);
+  assert.equal(turns.wakes.length, afterChatter);
+
+  // 窗口内的指令：不等窗口，立刻唤醒，连同刚才攒下的旁观消息一起给。
+  adapter.messages = [
+    msg("w4", 11040, { sender_id: "ou_me", sender_name: "我", content: "@我 看下 w2 那条" }),
+    msg("w3", 11030, { content: "接着说" }),
+    msg("w2", 11020, { content: "随便聊聊" }),
+    msg("w1", 11010),
+  ];
+  r = await poller.pollChat("feishu", "oc_cmd_gall", { force: true });
+  assert.equal(r.woke, true);
+  assert.equal(turns.wakes.length, afterChatter + 1);
+  assert.deepEqual(turns.wakes.at(-1).opts.batch.map((m) => m.msg_id).sort(), ["w3", "w4"]);
+  assert.equal(chat.recent.find((m) => m.msg_id === "w4").kind, "cmd");
+  assert.equal(Number(chat.last_wake_epoch), 11040);
+});
+
+test("a group command does not swallow a pending counterpart mention", async () => {
+  const { state, poller, adapter, turns } = setup();
+  const chat = state.ensureChat("feishu", "oc_cmd_gkeep", { name: "群", kind: "group" });
+  chat.watching = true;
+  chat.timer = 1;
+  adapter.messages = [msg("k0", 12000)];
+  await poller.pollChat("feishu", "oc_cmd_gkeep");
+
+  // 同一批里：对面 @ 我 + 我下指令。指令不算"已回复"，对面那条仍是待回。
+  adapter.messages = [
+    msg("k2", 12020, { sender_id: "ou_me", sender_name: "我", content: "@我 先看下" }),
+    msg("k1", 12010, { content: "@我 在吗", mentions: [{ id: { open_id: "ou_me" } }] }),
+    msg("k0", 12000),
+  ];
+  const r = await poller.pollChat("feishu", "oc_cmd_gkeep", { force: true });
+  assert.equal(r.woke, true);
+  assert.deepEqual(turns.wakes[0].opts.batch.map((m) => m.msg_id).sort(), ["k1", "k2"]);
+  assert.equal(chat.recent.find((m) => m.msg_id === "k1").state, "new");
+  assert.equal(chat.recent.find((m) => m.msg_id === "k2").kind, "cmd");
 });
 
 test("a command does not swallow a pending counterpart message as replied", async () => {

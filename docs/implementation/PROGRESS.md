@@ -5,12 +5,13 @@
 
 ## 更新时间
 
-2026-11-06（spec 0038 已实施待验收：外来轮次打断 + turn 事件日志；0.16.0 已发布。spec 0035 / 0032 仍待用户真机验收）
+2026-11-06（spec 0039 已实施待真机验收：群聊里 @ 自己也算指令；spec 0038 待验收；0.16.0 已发布。spec 0035 / 0032 仍待用户真机验收）
 
 ## 最近批次
 
 | 日期 | 主题 | 证据 |
 | --- | --- | --- |
+| 2026-11-06 | 群聊里 @ 自己也算指令（spec 0039 / ADR 0011）：`isCmdMsg` 去掉群限制；全量群批次收 `cmd`，指令不等合并窗口；载荷加「群里默认只在本地处理」；契约 02、架构 02、README、CHANGELOG 同步 | `dsh-plugin/lib/{poller,turns,profiles}.js`、`tests/{poller,turns}.test.mjs`、`docs/specs/contracts/02-storage.md`、`docs/architecture/02-data.md`、`dsh-plugin/README.md`、`docs/decisions/implemented/0011-群聊自at也算指令.md` |
 | 2026-11-06 | 外来轮次打断与 turn 事件日志（spec 0038）：`wake` 用 `agent.status` 识别并打断非插件起的在飞轮次；steer 载荷按当前轮收口；看门狗只统计载荷进入会话后的事件；`logs/turns.jsonl` 落盘、体检页「最近事件」、`/api/logs.events` | `dsh-plugin/lib/{turns,app,index,turn-log}.js`、`web/panel.js`、`lib/client.js`、`tests/`、契约 01/02、spec 0038 |
 | 2026-11-06 | 0.16.0 发布：命中回执表情（spec 0037）进 npm latest 与市场索引；CI Trusted Publishing 成功，`v0.16.0` tag 与 `market/index.json` 一致 | `CHANGELOG.md`、`dsh-plugin/package.json`、`dsh-plugin/market/index.json`、[run 42178230488](https://github.com/buger-gif/cyber-im-avatar/actions/runs/42178230488) |
 | 2026-11-06 | 命中回执表情（spec 0037，已验收归档）：`followup` 被接受后给本批 @ 消息点 `Get`；只认群 `mention` 与私聊「只认 @」的 `dm`，仅飞书，失败不影响 turn；新键 `dsh.ack_reaction` 默认开，设置页可关 | `dsh-plugin/lib/{state,im,turns}.js`、`web/panel.js`、`lib/client.js`、`tests/`、契约 03、`README.md`、`dsh-plugin/README.md`、`references/feishu.md`、`CHANGELOG.md`、`docs/specs/archive/0037-命中回执表情.md` |
@@ -50,6 +51,11 @@
 
 ## 当前断点
 
+- **0039 已实施，待真机验收**：群里本人 @ 自己现在与私聊同权，记 `kind=cmd` 进批次唤醒
+  （「只盯 @我」与「全部消息」都算），不算待回；全量群不等 60 秒合并窗口；载荷要求指令默认
+  只在本地处理、别在群里说「收到」。`node --test` 与 `gate --quick` 全绿。**剩余用户自验**：
+  重启宿主（插件后端模块启动时加载）后，在在盯的群（`timer=1`）发 `@自己 …`，面板出现
+  「处理中」，群里没有自动发言。
 - **0038 已实施，待真机验收**：真实唤醒会打断绑定会话里**任何**在飞的 turn（含人在 DSH 面板里直接发消息、goal / 定时任务起的），不再只认插件自己的 active；被手动 steer 的载荷按当前轮收口，不再误报 `timeout`；turn 事件写 `~/.im-standin/logs/turns.jsonl`，体检页「最近事件」可看。`node --test` 215、Python 全量、`gate --quick` 全绿。**剩余用户自验**：在 DSH 面板里手动发一条长任务，再从群里 @，确认旧轮被打断、新载荷立刻起轮，体检页看到 `唤醒 → 打断(外来轮) → 已送达 → 进入会话 → 本轮结束`。
 - **0037 已验收归档（随 0.16.0 发布）**：命中后给本批 @ 消息点 `Get` 表情回执；
   只认群 `mention` 与私聊「只认 @」的 `dm`，仅飞书，失败不影响 turn。用户已真机确认。

@@ -80,7 +80,7 @@ function formatMsgLine(m, mediaInfo = null, platform = "", dupNames = null) {
       (m.msg_type === "file" && text.startsWith("[文件:"));
     body = bare ? note : `${text} ${note}`;
   }
-  // cmd = 本人在私聊里 @ 自己，对替身说的话（spec 0029），别当成客户消息。
+  // cmd = 本人在会话里 @ 自己，对替身说的话（spec 0029 / 0039），别当成客户消息。
   const who = m.kind === "cmd" ? "本人（@自己）" : (m.kind === "out" ? "我" : (oneLine(m.sender_name) || "对方"));
   // 点名是事实，不是判断：全量模式下 agent 要能一眼分清哪条是 @ 它。
   const notes = [];
@@ -226,11 +226,12 @@ export function buildWakePrompt(platform, chatName, chatId, messages, {
   const peopleBlock = personLines(people);
   const legacy = legacyLine(legacyPath, legacyHistory);
 
-  // 本人指令：私聊里本人 @ 自己留给替身的话，不是客户消息，也不是已回复对面。
+  // 本人指令：本人 @ 自己留给替身的话，不是客户消息，也不是已回复对面。
   const cmdNote = messages.some((m) => m.kind === "cmd")
     ? "【本人指令】带「本人（@自己）」的行是本人（你要替的人）在会话里 @ 自己留给你的话，" +
       "不是客户消息：按它执行或回答；除非指令明确要求对外回复、或按 skill 判断确有必要，" +
-      "否则不要往会话里发消息。你的回复里不要 @ 本人自己——那会再次触发唤醒，形成回环。"
+      "否则不要往会话里发消息。你的回复里不要 @ 本人自己——那会再次触发唤醒，形成回环。" +
+      (kind === "group" ? "群聊里你的发言全群可见：指令默认只在本地处理，别为「收到」在群里发言。" : "")
     : "";
   // 口径每轮都带一行：模式可以在会话中途切换，不能只靠首轮记住。
   // 全量提示只对群成立；私聊的 mention 是「只有 @ 才叫醒我」，得让 agent 知道缺上下文。

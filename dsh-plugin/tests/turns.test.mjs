@@ -1178,8 +1178,17 @@ test("self-@ command lines are marked as the owner talking to the stand-in", () 
   assert.match(prompt, /本人（@自己）/);
   assert.match(prompt, /【本人指令】/);
   assert.match(prompt, /不要 @ 本人自己/);
+  assert.doesNotMatch(prompt, /群聊里你的发言全群可见/, "私聊不带群聊限定");
   assert.doesNotMatch(prompt, /非点名的群消息/);
   assert.match(prompt, /对象: 在吗/);
+
+  // 群里下的指令：同一套标记，另加一句「别为收到在群里发言」。
+  const groupPrompt = buildWakePrompt("feishu", "示例群", "oc_grp", rows, {
+    firstTurn: true, wakeMode: "mention", kind: "group",
+  });
+  assert.match(groupPrompt, /本人（@自己）/);
+  assert.match(groupPrompt, /【本人指令】/);
+  assert.match(groupPrompt, /群聊里你的发言全群可见/);
 
   // 后续轮（无首轮头）也要带指令规则。
   const next = buildWakePrompt("feishu", "示例对象 A", "oc_dm", [rows[0]], {

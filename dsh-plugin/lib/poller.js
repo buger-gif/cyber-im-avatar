@@ -51,7 +51,7 @@ export class Poller {
     this.lastResult = runtime.last_result || {};
     this.fastAt = 0;
     this.lastFast = {};
-    // 本人指令（私聊 @ 自己）的唤醒时间：只用于防回环熔断，不落 state。
+    // 本人 @ 自己的唤醒时间：只用于防回环熔断，不落 state。
     this.cmdWakes = new Map();
   }
 
@@ -464,9 +464,9 @@ export class Poller {
     const indexOf = new Map(messages.map((m, i) => [String(m.msg_id), i]));
     const hasWatermark = !!lastId && indexOf.has(lastId);
     const stopAt = hasWatermark ? indexOf.get(lastId) : -1;
-    // 私聊里本人 @ 自己 = 对替身说话（spec 0029）。它不是"已经回复了对面"，
+    // 本人 @ 自己 = 对替身说话（spec 0029 / 0039）。它不是"已经回复了对面"，
     // 不该参与 selfEpoch——否则会把自己刚下指令时对面还没处理的 @ 吞掉。
-    const isCmdMsg = (m) => chat.kind !== "group" && !!selfId && m.sender_id === selfId &&
+    const isCmdMsg = (m) => !!selfId && m.sender_id === selfId &&
       isMention(m, selfId, names);
     const selfEpoch = Math.max(0, ...messages
       .filter((m) => selfId && m.sender_id === selfId && !isCmdMsg(m))
@@ -554,7 +554,7 @@ export class Poller {
    *   把积压的一次性给过去。上限就是本地保留的 10 条指针，更大的突发量按 skill 在线拉。
    */
   collectBatch(chat, classified, newIds) {
-    const pendings = new Set(["dm", "mention", "service", "fyi"]);
+    const pendings = new Set(["dm", "mention", "service", "fyi", "cmd"]);
     const allMode = chat.kind === "group" && chat.wake_mode === "all";
     if (!allMode) {
       return classified.filter((m) => {
@@ -608,7 +608,9 @@ export class Poller {
       ? this.turns.busy(chat.platform, chat.chat_id)
       : !!this.turns?.isActive(chat.platform, chat.chat_id);
     const allMode = chat.kind === "group" && chat.wake_mode === "all";
-    if (allMode && batch.length) {
+    // 指令是交互，不等合并窗口：窗口内的旁观消息仍按窗口攒着。
+    const hasCmd = batch.some((m) => m.kind === "cmd");
+    if (allMode && batch.length && !hasCmd) {
       // 合并窗口：窗口内攒着，下一轮一次给过去。窗口 0 = 不合并。
       const win = Math.max(0, Number(this.cfg.poll?.group_wake_sec ?? 60) || 0);
       const since = nowSec() - (Number(chat.last_wake_at) || 0);
