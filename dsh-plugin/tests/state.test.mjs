@@ -48,6 +48,16 @@ test("dsh.full_access only accepts explicit true", () => {
   assert.equal(normalizeConfig({ dsh: { full_access: false } }).dsh.full_access, false);
 });
 
+test("dsh.ack_reaction defaults on and only explicit off disables it", () => {
+  assert.equal(normalizeConfig({}).dsh.ack_reaction, true);
+  assert.equal(normalizeConfig({ dsh: {} }).dsh.ack_reaction, true);
+  assert.equal(normalizeConfig({ dsh: { ack_reaction: true } }).dsh.ack_reaction, true);
+  assert.equal(normalizeConfig({ dsh: { ack_reaction: "yes" } }).dsh.ack_reaction, true);
+  for (const off of [false, 0, "0", "false", "no", "off", ""]) {
+    assert.equal(normalizeConfig({ dsh: { ack_reaction: off } }).dsh.ack_reaction, false, String(off));
+  }
+});
+
 test("fast lane interval clamps to 0 or 20..interval", () => {
   assert.equal(normalizeConfig({}).poll.fast_sec, 60);
   assert.equal(normalizeConfig({ poll: { fast_sec: 0 } }).poll.fast_sec, 0);

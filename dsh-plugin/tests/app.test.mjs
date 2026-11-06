@@ -542,6 +542,13 @@ test("config POST clamps and persists", async () => {
   assert.equal("idle_reset_min" in readback.dsh, false);
   // 只改 dsh 不能把 poll 的已存值带回默认。
   assert.equal(readback.poll.per_chat_limit, 5);
+  // 命中回执默认开，显式关闭后读回 false，且不影响同段其它 dsh 键。
+  const ack = await app.handle("/api/config", "POST", null, { dsh: { ack_reaction: false } });
+  assert.equal(ack.body.dsh.ack_reaction, false);
+  const ackRead = (await app.handle("/api/config", "GET")).body;
+  assert.equal(ackRead.dsh.ack_reaction, false);
+  assert.equal(ackRead.dsh.warm_min, 1440);
+  assert.equal(ackRead.poll.per_chat_limit, 5);
 });
 
 test("opening a thread only polls; it never starts a turn", async () => {

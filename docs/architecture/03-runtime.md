@@ -30,6 +30,7 @@ poller 判定命中
        ├─ 只对本批待回消息下载媒体：图片 → attachments image block，
        │  文件/音视频 → 本地路径；未适配/失败只留标记
        ├─ agent.followup(createUserMessage(prompt, imageParts))
+       ├─ 给本批 @ 消息点 Get 回执（仅飞书；失败不影响 turn；dsh.ack_reaction 可关）
        ├─ ctx.sessions.flush(agent.session)
        └─ 听 session/event：turn/start → user/message(id 匹配) → turn/end
 ```

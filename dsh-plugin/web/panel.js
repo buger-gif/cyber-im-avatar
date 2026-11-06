@@ -2542,6 +2542,25 @@
               });
             }
           }, (cfg.dsh || {}).full_access ? "关闭完整访问" : "开启完整访问")),
+        h("div", { class: "ims-kv" },
+          h("span", { text: "命中回执" }),
+          h("span", { class: "ims-tag",
+            style: "color:" + ((cfg.dsh || {}).ack_reaction === false ? "var(--fg3)" : "var(--ok)"),
+            text: (cfg.dsh || {}).ack_reaction === false ? "关闭" : "Get 表情" })),
+        h("div", { class: "ims-rowline" },
+          h("span", { class: "ims-hint", text: "任务载荷送进 DSH 会话后，用 lark-cli 给本批 @ 你的消息点一个 Get 表情（表情回复，不是新消息）；只认群 @ 与私聊「只认 @」模式，仅飞书生效，需要 im:message.reactions:write_only 授权。" }),
+          h("span", { class: "ims-grow" }),
+          h("button", {
+            class: "ims-btn", type: "button",
+            onclick: function () {
+              var next = ((S.cfg || {}).dsh || {}).ack_reaction === false;
+              api("/api/config", { body: { dsh: { ack_reaction: next } } }).then(function (c) {
+                S.cfg = c;
+                say(next ? "已开启命中回执表情" : "已关闭命中回执表情");
+                paint();
+              });
+            }
+          }, (cfg.dsh || {}).ack_reaction === false ? "开启回执" : "关闭回执")),
         h("div", { class: "ims-hint", text: "命中值守会话的新消息 → 在绑定的 DSH 会话里跑一轮 agent，由它自己调 IM CLI、查工作区、起草与发送。插件只负责拉取、唤醒和展示。" })));
 
       // 值守节奏：快车道（值守会话，秒级）+ 慢车道（发现新会话，分钟级）

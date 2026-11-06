@@ -10,7 +10,7 @@ import fs from "node:fs";
 import path from "node:path";
 
 import { chatKey, RECENT_LIMIT } from "./state.js";
-import { MEDIA_ADAPTERS, MEDIA_LABELS, imageMediaType } from "./im.js";
+import { ACK_EMOJI, MEDIA_ADAPTERS, MEDIA_LABELS, imageMediaType } from "./im.js";
 import { chatPersonId, personRefs } from "./profiles.js";
 import * as workspaces from "./workspaces.js";
 
@@ -437,6 +437,9 @@ export class Turns {
     this.active = new Map();
     this.starting = new Map();
     this.warming = new Map();
+    // 回执去重：同一条消息在进程内只点一次；失败提醒每个平台每进程一次。
+    this.acked = new Set();
+    this.ackWarned = new Set();
     // 同一条 DSH 会话里已经下发过的人物档案：同一人不再每轮重复一份路径。
     // 换会话 / 重开 / 进程重启后从零开始（最多重复一次，不影响正确性）。
     this.seenPeople = new Map();
@@ -480,6 +483,59 @@ export class Turns {
 
   warmMinutes() {
     return Math.max(0, Number(this.state.data.config?.dsh?.warm_min) || 0);
+  }
+
+  ackEnabled() {
+    return this.state.data.config?.dsh?.ack_reaction !== false;
+  }
+
+  /**
+   * 本批要回执的消息：只认「@ 我」——群里的 mention；私聊只认 @ 模式下的 dm。
+   * cmd / out / fyi 与「全部消息」模式的普通私聊都不点：回执不是替本人对旁观
+   * 消息表态。一条都筛不出时返回空数组，不生成调用。
+   */
+  ackTargets(chat, messages) {
+    const out = [];
+    for (const m of (Array.isArray(messages) ? messages : [])) {
+      if (!m || !m.msg_id) continue;
+      if (chat.kind === "group") {
+        if (m.kind === "mention") out.push(m);
+      } else if (chat.wake_mode === "mention" && m.kind === "dm") {
+        out.push(m);
+      }
+    }
+    return out;
+  }
+
+  /**
+   * 命中回执：followup 已被接受（会话已启动、任务载荷已送出）之后调用。
+   * 尽力而为——不 await、不写 last_error、不影响 turn；平台没有反应命令时
+   * 上层已返回 unsupported，这里直接跳过，不刷日志。
+   */
+  sendAck(chat, messages) {
+    if (!this.ackEnabled() || !this.im || typeof this.im.react !== "function") return;
+    for (const m of (Array.isArray(messages) ? messages : [])) {
+      const id = String(m?.msg_id || "");
+      if (!id) continue;
+      const key = `${chat.platform}:${id}`;
+      if (this.acked.has(key)) continue;
+      this.acked.add(key);
+      if (this.acked.size > 200) this.acked.delete(this.acked.values().next().value);
+      Promise.resolve()
+        .then(() => this.im.react(chat.platform, id, ACK_EMOJI))
+        .then((r) => {
+          if (!r || r.ok || r.unsupported) return;
+          if (this.ackWarned.has(chat.platform)) return;
+          this.ackWarned.add(chat.platform);
+          this.logger.warn?.(`[im-standin] ack reaction ${key}: ${r.error || "failed"}；` +
+            "飞书需要 im:message.reactions:write_only 授权");
+        })
+        .catch((e) => {
+          if (this.ackWarned.has(chat.platform)) return;
+          this.ackWarned.add(chat.platform);
+          this.logger.warn?.(`[im-standin] ack reaction ${key}: ${e?.message || e}`);
+        });
+    }
   }
 
   /** 本人 ID：身份在轮询器主循环里取；适配层也允许缓存同一份。取不到就空着，不猜。 */
@@ -619,6 +675,8 @@ export class Turns {
     const opening = !!open;
     const messages = opening ? this.openMessages(current) : this.wakeMessages(current, batch);
     if (!messages.length && !opening) return { ok: false, reason: "no_pending" };
+    // 回执目标在启动前就定下来：之后即使被新消息打断，也不影响这一批已送出的消息。
+    const ack = opening ? [] : this.ackTargets(current, messages);
     const old = this.active.get(key);
     if (old) {
       old.cancelled = true;
@@ -698,7 +756,7 @@ export class Turns {
       const effective = session.cwd || "";
       this.active.set(key, handle);
       handle.done = this.runTurn(handle, {
-        chat: current, agent, sid, cwd: effective, message,
+        chat: current, agent, sid, cwd: effective, message, ack,
       });
       this.state.save();
       return { ok: true, started: true, turn_id: turnId, state: "running" };
@@ -1124,7 +1182,7 @@ export class Turns {
     }
   }
 
-  runTurn(handle, { chat, agent, sid, cwd, message, warm = false }) {
+  runTurn(handle, { chat, agent, sid, cwd, message, warm = false, ack = [] }) {
     return new Promise((resolve) => {
       const key = chatKey(chat.platform, chat.chat_id);
       // 停滞超时（默认 600s）+ 单轮总上限兜底（默认 3600s，0 = 不限），见 spec 0034。
@@ -1280,6 +1338,8 @@ export class Turns {
         finish({ ok: false, reason: `followup_failed: ${e?.message || e}` });
         return;
       }
+      // 会话已启动、载荷已送出：现在才点回执；失败不影响本轮。
+      this.sendAck(chat, ack);
       watchdog = turnWatchdog({
         stallSec: timeoutSec,
         capSec,

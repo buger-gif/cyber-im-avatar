@@ -187,3 +187,35 @@ test("wecom media command unavailable degrades as unsupported", async () => {
   assert.equal(missing.ok, false);
   assert.match(missing.error, /missing_media_id/);
 });
+
+test("feishu reactions use lark-cli as the user; other platforms skip without spawning", async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "im-react-"));
+  const im = new IM({ dir });
+  const a = im.adapter("feishu");
+  let seen = null;
+  a.run = async (args, timeout) => {
+    seen = { args, timeout };
+    return { rc: 0, raw: "", json: { data: { reaction_id: "rx_1" } } };
+  };
+  const r = await im.react("feishu", "om_1");
+  assert.equal(r.ok, true);
+  assert.equal(r.reaction_id, "rx_1");
+  assert.equal(seen.timeout, 15);
+  assert.deepEqual(seen.args, [
+    "im", "reactions", "create",
+    "--params", '{"message_id":"om_1"}',
+    "--data", '{"reaction_type":{"emoji_type":"Get"}}',
+    "--as", "user",
+  ]);
+  // 企微没有反应命令：不 spawn，直接 unsupported。
+  let spawned = false;
+  im.adapter("wecom").run = async () => { spawned = true; return { rc: 0, raw: "", json: {} }; };
+  const skip = await im.react("wecom", "msg-1");
+  assert.equal(skip.unsupported, true);
+  assert.equal(spawned, false);
+  // 失败只回错误，不抛；错误文本会过 redact。
+  a.run = async () => ({ rc: 1, raw: "permission denied", json: null });
+  const bad = await im.react("feishu", "om_2");
+  assert.equal(bad.ok, false);
+  assert.match(bad.error, /permission denied/);
+});

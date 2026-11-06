@@ -39,6 +39,12 @@ const PLACEHOLDER = {
 };
 export const MEDIA_LABELS = PLACEHOLDER;
 
+/**
+ * 命中回执的表情类型。飞书 emoji_type 区分大小写，`Get` 就是客户端里的
+ * 「收到 / get」那个点击表情；不传时 Adapter/IM 都回落到它。
+ */
+export const ACK_EMOJI = "Get";
+
 export const ADAPTERS = {
   feishu: {
     cli: "lark-cli",
@@ -56,6 +62,11 @@ export const ADAPTERS = {
       "--msg-type", "text", "--text", "{text}", "--as", "user"],
     cmd_send_user: ["im", "+messages-send", "--user-id", "{chat_id}",
       "--msg-type", "text", "--text", "{text}", "--as", "user"],
+    // 表情回执走原生 API（没有 + 快捷命令）；--params/--data 是 lark-cli 的原始入参形状。
+    cmd_reaction: ["im", "reactions", "create",
+      "--params", "{\"message_id\":\"{msg_id}\"}",
+      "--data", "{\"reaction_type\":{\"emoji_type\":\"{emoji}\"}}",
+      "--as", "user"],
     cmd_media_download: ["im", "+messages-resources-download", "--message-id", "{msg_id}",
       "--file-key", "{key}", "--type", "{type}", "--output", "{output}", "--as", "user"],
     cmd_mget: ["im", "+messages-mget", "--message-ids", "{msg_id}",
@@ -411,6 +422,11 @@ export class Adapter {
     return !!(this.ad.f_mentions || this.ad.f_self_name);
   }
 
+  /** 有没有表情回执通路：只有配了 cmd_reaction 的平台才点头，其余静默跳过。 */
+  get supportsReaction() {
+    return !!this.ad.cmd_reaction;
+  }
+
   resolveCli() {
     const configured = this.env?.platforms?.[this.platform]?.cli_path;
     if (configured && fs.existsSync(configured)) return configured;
@@ -691,6 +707,27 @@ export class Adapter {
     return { ok: true, message_id: dig(json, [["data", "message_id"], ["message_id"]]) || "" };
   }
 
+  /**
+   * 给一条消息点表情回执。只有配了 cmd_reaction 的平台才走这里；
+   * 失败只回错误字符串，由上层降级为日志，不影响 turn。
+   */
+  async react(msgId, emoji = ACK_EMOJI) {
+    if (!this.ad.cmd_reaction) {
+      return { ok: false, unsupported: true, error: "reaction_unavailable" };
+    }
+    const id = String(msgId || "");
+    if (!id) return { ok: false, error: "missing_msg_id" };
+    const { rc, json, raw } = await this.run(
+      this.argv(this.ad.cmd_reaction, { msg_id: id, emoji: String(emoji || ACK_EMOJI) }), 15);
+    if (rc !== 0) return { ok: false, error: redact(raw || `rc=${rc}`, 300) };
+    if (json && json.ok === false) return { ok: false, error: redact(JSON.stringify(json), 300) };
+    return {
+      ok: true,
+      reaction_id: dig(json, [["data", "reaction_id"], ["reaction_id"]]) || "",
+      error: "",
+    };
+  }
+
   async search(q) {
     const { rc, json, raw } = await this.run(this.argv(this.ad.cmd_search, { q }));
     if (rc !== 0 || !json) return { ok: false, items: [], error: redact(raw || `rc=${rc}`) };
@@ -815,5 +852,26 @@ export class IM {
 
   cliPath(platform) {
     try { return this.adapter(platform).cli; } catch { return ADAPTERS[platform]?.cli || ""; }
+  }
+
+  /**
+   * 命中回执：平台没有反应命令就返回 unsupported（不 spawn、不报错），
+   * 适配层异常也只回错误字符串；调用方把它当尽力而为。
+   */
+  async react(platform, msgId, emoji = ACK_EMOJI) {
+    let adapter;
+    try {
+      adapter = this.adapter(platform);
+    } catch (e) {
+      return { ok: false, unsupported: true, error: `adapter: ${e?.message || e}` };
+    }
+    if (!adapter.supportsReaction) {
+      return { ok: false, unsupported: true, error: "reaction_unavailable" };
+    }
+    try {
+      return await adapter.react(msgId, emoji);
+    } catch (e) {
+      return { ok: false, error: `${e?.name || "Error"}: ${e?.message || e}` };
+    }
   }
 }

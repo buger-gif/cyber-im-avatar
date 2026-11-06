@@ -5,12 +5,13 @@
 
 ## 更新时间
 
-2026-11-06（0.15.0 已发布：含 spec 0035 单聊只用人物档案与 spec 0036 保温只做一次；CI Trusted Publishing 成功，`dist-tags.latest = 0.15.0`，市场索引同步。spec 0035 / 0032 仍待用户真机验收）
+2026-11-06（spec 0037 命中回执表情已验收归档，0.16.0 发版中；spec 0035 / 0032 仍待用户真机验收）
 
 ## 最近批次
 
 | 日期 | 主题 | 证据 |
 | --- | --- | --- |
+| 2026-11-06 | 命中回执表情（spec 0037，已验收归档）：`followup` 被接受后给本批 @ 消息点 `Get`；只认群 `mention` 与私聊「只认 @」的 `dm`，仅飞书，失败不影响 turn；新键 `dsh.ack_reaction` 默认开，设置页可关 | `dsh-plugin/lib/{state,im,turns}.js`、`web/panel.js`、`lib/client.js`、`tests/`、契约 03、`README.md`、`dsh-plugin/README.md`、`references/feishu.md`、`CHANGELOG.md`、`docs/specs/archive/0037-命中回执表情.md` |
 | 2026-11-06 | 0.15.0 发布：保温只做一次 + 单聊只用人物档案进 npm latest 与市场索引；CI Trusted Publishing 成功，`v0.15.0` tag 与 `market/index.json` 一致 | `CHANGELOG.md`、`dsh-plugin/package.json`、`dsh-plugin/market/index.json`、[run 42171965913](https://github.com/buger-gif/cyber-im-avatar/actions/runs/42171965913) |
 | 2026-11-06 | 保温只做一次（spec 0036 / ADR 0010）：每段连续闲置最多一次心跳；第二个 `warm_min` 仍无真实消息则下一条消息换新会话；`dsh.idle_reset_min` 退役，`warm_min=0` 同时关保温与自动换会话；面板设置只剩保温间隔 | `dsh-plugin/lib/{state,poller,turns}.js`、`web/panel.js`、`lib/client.js`、`tests/`、契约 02/03、`README.md`、`dsh-plugin/README.md`、`CHANGELOG.md`、`docs/specs/archive/0036-保温只做一次.md`、`docs/decisions/implemented/0010-会话寿命跟随保温节奏.md` |
 | 2026-11-05 | 单聊只用人物档案（spec 0035）：私聊记忆＝`profiles/people/<platform>/<id>.md` 一份，不再建/展示/下发工作本；旧私聊工作本第一次被碰到时整文件改名（已有档案则载荷给「待并入」+ `.history.md`）；面板删「私聊工作本」入口，`/api/targets` 与写接口对 p2p 走人物档案，独立形态搜人登记绑人物档案 | `dsh-plugin/lib/{profiles,turns,app}.js`、`web/panel.js`、`lib/client.js`、`scripts/bootstrap.py`、`tests/`、契约 01–03、`SKILL.md`、`README.md`、`docs/specs/active/0035-单聊只用人物档案.md`、ADR 0009 |
@@ -47,6 +48,8 @@
 
 ## 当前断点
 
+- **0037 已验收归档（随 0.16.0 发布）**：命中后给本批 @ 消息点 `Get` 表情回执；
+  只认群 `mention` 与私聊「只认 @」的 `dm`，仅飞书，失败不影响 turn。用户已真机确认。
 - **0036 已实施并归档（ADR 0010）**：每段连续闲置最多一次心跳，第二个 `warm_min` 仍无真实
   消息则下一条消息换新会话；`dsh.idle_reset_min` 退役，老配置静默丢弃，`warm_min=0` 同时关
   保温与自动换会话。`node --test` 198、Python 194、全量 gate 与独立预览页走查通过。
@@ -75,21 +78,11 @@
   [#11669](https://github.com/awesome-dsh-plugin/awesome-dsh-plugin/pull/11669)。唯一的红是
   「仓库满 1 天」自动检查（仓库 2026-11-02T15:59Z 建），该检查自己重跑，约 6 小时后达标；
   合并后市场当日构建即可搜到。自托管索引仍在，两者并存。
-- **0.15.0 已发布**：CI Trusted Publishing 成功，`dist-tags.latest = 0.15.0`，`v0.15.0` tag 与
-  `market/index.json` 一致；本版包含 spec 0035（单聊只用人物档案）与 0036（保温只做一次）。
 - **验证环境**：3080 使用 `IM_STANDIN_DIR=/tmp/im-standin-accept` 的隔离状态，只有合成会话
   `oc_e2e_local_only`；web profile 已 link 本地插件。**没有向真实客户外发**，也没有拉真实消息。
 - **合成 live turn**：`chatWake` 创建 `session-76a20026…` → turn/end → `session_turns=1`、
   `last_ok=true`、post-turn `last_sync` 更新；会话元数据出现 `danger-full-access`，agent 直接
   写了 `profiles/feishu/oc_e2e_local_only.md`。无效 chat_id 的 CLI 报错是该演练的预期结果。
-- **关注摘要**：同一合成会话连续两轮更新，同一对象始终一行、无重复；把未结项放进
-  `2026-11-02.md` 后，今天的文件带回该行且 `首次` 仍是 11-02；删掉今天文件，面板显示
-  「今天还没有日报」。
-- **重开会话**：空闲时 `{ok:true, interrupted:false}`，运行中 `{ok:true, interrupted:true}`；
-  两种情况下 `dsh_session=""`、`session_turns=0`。面板确认文案与 toast 均在 360/420 验过。
-- **快车道**：slow=1793690337.48；fast=1793690397.95 → 1793690458.43 → 1793690518.95，
-  约 60 秒一跳，slow 在 160 秒观察窗内未变。体检页读到「值守 60 秒（N 个会话） · 发现 10 分钟」；
-  设置页保存 45 秒后 `/api/status` 立即读到新值。
 - **面板走查**：320 / 360 / 420，浅/深两套（spec 0032 后按五个页签重走一遍：无溢出、席位无角标）；`.ims-panel` 各宽度
   `scrollWidth === clientWidth`，越界元素 0；设置页三个数字框均 92px；详情「重开会话」
   在 DSH 会话行右侧不换行。走查截图在本地临时目录（未入库）。
@@ -127,9 +120,9 @@
 5. 用户自行验收 0026–0029 的真机项（spec 已归档）：重启宿主后测「只盯 @我」普通消息不唤醒 /
    @ 唤醒、重开会话立刻有新会话、私聊里 @ 自己能被处理、闲置重开与心跳；临时调
    `warm_min` 的话记得改回 55。有问题按新 spec 修。
-5. 等真实客户消息/媒体命中；只观察，不主动给真实客户发消息。
-6. 用户确认后清理历史待回；清理前不要当作用户已同意。
-7. 钉钉补完真人闭环：在环境里启用钉钉，给一个真人会话跑「命中 → 草稿 → 发送 → 重挂」，
+6. 等真实客户消息/媒体命中；只观察，不主动给真实客户发消息。
+7. 用户确认后清理历史待回；清理前不要当作用户已同意。
+8. 钉钉补完真人闭环：在环境里启用钉钉，给一个真人会话跑「命中 → 草稿 → 发送 → 重挂」，
    先定 `--ai-tag` 口径。
 
 ## 规则性提醒

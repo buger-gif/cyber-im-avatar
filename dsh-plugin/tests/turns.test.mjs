@@ -241,6 +241,17 @@ class FakeHost {
   }
 }
 
+class FakeIM {
+  constructor(result = { ok: true }) {
+    this.result = result;
+    this.calls = [];
+  }
+  async react(platform, msgId, emoji) {
+    this.calls.push({ platform, msgId, emoji, followups: this.followups ?? 0 });
+    return this.result;
+  }
+}
+
 function setup(hostOpts, extra = {}) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "im-turn-"));
   const state = new State(dir);
@@ -318,6 +329,78 @@ test("live turn follows up, waits for turn/end, stores session and counts the tu
   assert.equal(chat.last_error, "");
   await new Promise((r2) => setTimeout(r2, 5));
   assert.equal(turns.isActive("feishu", "oc_abc"), false);
+});
+
+function ackRow(id, kind, extra = {}) {
+  return {
+    msg_id: id, sender_id: "ou_other", sender_name: "客户", content: `正文-${id}`,
+    ts: `t-${id}`, ts_epoch: 200, kind, state: "new", ...extra,
+  };
+}
+
+test("group mention wake adds one Get reaction after the prompt is handed over", async () => {
+  const im = new FakeIM();
+  const { chat, turns } = setup({ kind: "group" }, { im });
+  const rows = [
+    ackRow("m_mention", "mention"),
+    ackRow("m_fyi", "fyi"),
+    ackRow("m_out", "out", { sender_id: "ou_me", state: "replied" }),
+    ackRow("m_cmd", "cmd", { sender_id: "ou_me" }),
+  ];
+  const r = await turns.wake(chat, { batch: rows });
+  assert.equal(r.ok, true);
+  await new Promise((res) => setTimeout(res, 5));
+  assert.deepEqual(im.calls.map((c) => c.msgId), ["m_mention"],
+    "只回 @ 我的，旁观 / 自己发的 / 本人指令都不点");
+  assert.equal(im.calls[0].platform, "feishu");
+  assert.equal(im.calls[0].emoji, "Get");
+});
+
+test("DM reactions only fire in mention mode, never in all mode", async () => {
+  const im = new FakeIM();
+  const { chat, turns } = setup({}, { im });
+  chat.wake_mode = "all";
+  await turns.wake(chat, { batch: [ackRow("m_all", "dm")] });
+  await new Promise((res) => setTimeout(res, 5));
+  assert.equal(im.calls.length, 0, "全部消息模式的普通私聊不点");
+  chat.wake_mode = "mention";
+  await turns.wake(chat, { batch: [ackRow("m_at", "dm")] });
+  await new Promise((res) => setTimeout(res, 5));
+  assert.deepEqual(im.calls.map((c) => c.msgId), ["m_at"]);
+});
+
+test("ack reaction can be switched off and never fires twice for the same message", async () => {
+  const im = new FakeIM();
+  const { state, chat, turns } = setup({ kind: "group" }, { im });
+  state.data.config.dsh.ack_reaction = false;
+  await turns.wake(chat, { batch: [ackRow("m_off", "mention")] });
+  await new Promise((res) => setTimeout(res, 5));
+  assert.equal(im.calls.length, 0);
+
+  state.data.config.dsh.ack_reaction = true;
+  await turns.wake(chat, { batch: [ackRow("m_on", "mention")] });
+  await new Promise((res) => setTimeout(res, 5));
+  await turns.wake(chat, { batch: [ackRow("m_on", "mention")] });
+  await new Promise((res) => setTimeout(res, 5));
+  assert.deepEqual(im.calls.map((c) => c.msgId), ["m_on"]);
+});
+
+test("followup failure skips the ack; reaction failure never changes the turn result", async () => {
+  const im = new FakeIM({ ok: false, error: "no scope" });
+  const { chat, host, turns } = setup({ kind: "group" }, { im });
+  const real = host.agent.followup;
+  host.agent.followup = () => { throw new Error("inbox closed"); };
+  await turns.wake(chat, { batch: [ackRow("m_fail", "mention")] });
+  await new Promise((res) => setTimeout(res, 5));
+  assert.equal(im.calls.length, 0, "followup 没成功就不该点");
+
+  host.agent.followup = real;
+  const r = await turns.wake(chat, { batch: [ackRow("m_bad_ack", "mention")] });
+  assert.equal(r.ok, true);
+  await new Promise((res) => setTimeout(res, 5));
+  assert.equal(im.calls.length, 1);
+  assert.equal(chat.last_turn.ok, true, "回执失败不影响 turn");
+  assert.equal(chat.last_error, "", "回执失败不写 last_error");
 });
 
 test("second wake reuses the bound session instead of creating another", async () => {

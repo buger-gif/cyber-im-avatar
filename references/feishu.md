@@ -26,6 +26,15 @@
 | 下载图片/文件 | `lark-cli im +messages-resources-download --message-id om_xxx --file-key img_xxx --type image` |
 | 一次取回附图 | `lark-cli im +messages-mget --message-ids om_xxx --download-resources --as user` |
 | 回复 | `lark-cli im +messages-send --chat-id oc_xxx --msg-type text --as user --text "..."` |
+| 表情回执 | `lark-cli im reactions create --params '{"message_id":"om_xxx"}' --data '{"reaction_type":{"emoji_type":"Get"}}' --as user` |
+
+## 表情回执
+
+- 表情是**点击**，不产生新消息；`emoji_type` 用官方枚举（区分大小写），「收到 / get」那个叫
+  `Get`，常用还有 `OK`、`DONE`、`THUMBSUP`。
+- user / bot 身份都能点，但调用者必须在消息所在会话里；删除只能删自己点的。
+- 需要 `im:message.reactions:write_only` 授权。缺权限时命令非 0 退出，消息本身不受影响；
+  重登一次 `lark-cli auth login` 会按当前命令重新要权限。
 
 ## 媒体资源
 
