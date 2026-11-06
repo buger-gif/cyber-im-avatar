@@ -364,6 +364,20 @@ const digest = {
   ].join("\n"),
 };
 
+/** turn 生命周期事件（面板体检页「最近事件」用；虚构数据，不含正文）。 */
+const turnEvents = [
+  { ts: now - 95, event: "turn_end", platform: "feishu", chat_id: "oc_demo_lin",
+    turn_id: "t-demo-3", ok: true, ms: 41200 },
+  { ts: now - 130, event: "prompt_seen", platform: "feishu", chat_id: "oc_demo_lin",
+    turn_id: "t-demo-3", wait_ms: 420 },
+  { ts: now - 131, event: "followup", platform: "feishu", chat_id: "oc_demo_lin",
+    turn_id: "t-demo-3" },
+  { ts: now - 131, event: "wake", platform: "feishu", chat_id: "oc_demo_lin",
+    turn_id: "t-demo-3", count: 1, interrupted: true, first_turn: false },
+  { ts: now - 132, event: "cancel", platform: "feishu", chat_id: "oc_demo_lin",
+    turn_id: "", owner: "foreign", reason: "wake" },
+];
+
 /** 按路径返回夹具；没覆盖的接口回落到真实服务。 */
 export function resolve(path) {
   const p = path.split("?")[0];
@@ -379,12 +393,13 @@ export function resolve(path) {
   if (p === "/api/workspaces") return workspaces;
   if (p === "/api/config") return config;
   if (p === "/api/doctor") return { checks: [] };
+  if (p === "/api/logs") return { sends: [], errors: [], turns: {}, events: turnEvents };
   return null;
 }
 
 /** 注入到页面里的拦截器源码（字符串，走 addScriptToEvaluateOnNewDocument）。 */
 export const intercept = `(() => {
-  const FIX = ${JSON.stringify({ chats, inbox: inboxGroups, thread, targets, persons, workspaces, status, config, searchUsers, searchChats, digest })};
+  const FIX = ${JSON.stringify({ chats, inbox: inboxGroups, thread, targets, persons, workspaces, status, config, searchUsers, searchChats, digest, turnEvents })};
   const chatFor = (path) => {
     const q = new URLSearchParams(path.split("?")[1] || "");
     return FIX.chats.find((c) => c.platform === q.get("platform") && c.chat_id === q.get("chat_id")) || FIX.chats[0];
@@ -444,6 +459,7 @@ export const intercept = `(() => {
     if (p === "/api/workspaces") return FIX.workspaces;
     if (p === "/api/config") return FIX.config;
     if (p === "/api/doctor") return { checks: [] };
+    if (p === "/api/logs") return { sends: [], errors: [], turns: {}, events: FIX.turnEvents };
     return null;
   };
 

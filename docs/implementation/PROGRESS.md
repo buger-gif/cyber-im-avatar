@@ -5,12 +5,13 @@
 
 ## 更新时间
 
-2026-11-06（0.16.0 已发布：命中回执表情进 npm latest 与市场索引；CI Trusted Publishing 成功。spec 0035 / 0032 仍待用户真机验收）
+2026-11-06（spec 0038 已实施待验收：外来轮次打断 + turn 事件日志；0.16.0 已发布。spec 0035 / 0032 仍待用户真机验收）
 
 ## 最近批次
 
 | 日期 | 主题 | 证据 |
 | --- | --- | --- |
+| 2026-11-06 | 外来轮次打断与 turn 事件日志（spec 0038）：`wake` 用 `agent.status` 识别并打断非插件起的在飞轮次；steer 载荷按当前轮收口；看门狗只统计载荷进入会话后的事件；`logs/turns.jsonl` 落盘、体检页「最近事件」、`/api/logs.events` | `dsh-plugin/lib/{turns,app,index,turn-log}.js`、`web/panel.js`、`lib/client.js`、`tests/`、契约 01/02、spec 0038 |
 | 2026-11-06 | 0.16.0 发布：命中回执表情（spec 0037）进 npm latest 与市场索引；CI Trusted Publishing 成功，`v0.16.0` tag 与 `market/index.json` 一致 | `CHANGELOG.md`、`dsh-plugin/package.json`、`dsh-plugin/market/index.json`、[run 42178230488](https://github.com/buger-gif/cyber-im-avatar/actions/runs/42178230488) |
 | 2026-11-06 | 命中回执表情（spec 0037，已验收归档）：`followup` 被接受后给本批 @ 消息点 `Get`；只认群 `mention` 与私聊「只认 @」的 `dm`，仅飞书，失败不影响 turn；新键 `dsh.ack_reaction` 默认开，设置页可关 | `dsh-plugin/lib/{state,im,turns}.js`、`web/panel.js`、`lib/client.js`、`tests/`、契约 03、`README.md`、`dsh-plugin/README.md`、`references/feishu.md`、`CHANGELOG.md`、`docs/specs/archive/0037-命中回执表情.md` |
 | 2026-11-06 | 0.15.0 发布：保温只做一次 + 单聊只用人物档案进 npm latest 与市场索引；CI Trusted Publishing 成功，`v0.15.0` tag 与 `market/index.json` 一致 | `CHANGELOG.md`、`dsh-plugin/package.json`、`dsh-plugin/market/index.json`、[run 42171965913](https://github.com/buger-gif/cyber-im-avatar/actions/runs/42171965913) |
@@ -49,6 +50,7 @@
 
 ## 当前断点
 
+- **0038 已实施，待真机验收**：真实唤醒会打断绑定会话里**任何**在飞的 turn（含人在 DSH 面板里直接发消息、goal / 定时任务起的），不再只认插件自己的 active；被手动 steer 的载荷按当前轮收口，不再误报 `timeout`；turn 事件写 `~/.im-standin/logs/turns.jsonl`，体检页「最近事件」可看。`node --test` 215、Python 全量、`gate --quick` 全绿。**剩余用户自验**：在 DSH 面板里手动发一条长任务，再从群里 @，确认旧轮被打断、新载荷立刻起轮，体检页看到 `唤醒 → 打断(外来轮) → 已送达 → 进入会话 → 本轮结束`。
 - **0037 已验收归档（随 0.16.0 发布）**：命中后给本批 @ 消息点 `Get` 表情回执；
   只认群 `mention` 与私聊「只认 @」的 `dm`，仅飞书，失败不影响 turn。用户已真机确认。
 - **0.16.0 已发布**：CI Trusted Publishing 成功，`dist-tags.latest = 0.16.0`，`v0.16.0` tag 与

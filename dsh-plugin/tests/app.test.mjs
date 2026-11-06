@@ -7,6 +7,7 @@ import test from "node:test";
 import { State } from "../lib/state.js";
 import { Profiles } from "../lib/profiles.js";
 import { App } from "../lib/app.js";
+import { TurnLog } from "../lib/turn-log.js";
 
 function msg(id, epoch, extra = {}) {
   return {
@@ -21,6 +22,7 @@ function makeApp() {
   const state = new State(dir);
   state.load();
   const profiles = new Profiles(dir);
+  const turnLog = new TurnLog(dir);
   const calls = { send: [], wake: [], open: [], cancel: [], poll: [], fetchThread: [] };
   const turns = {
     hostReady: () => true,
@@ -79,8 +81,8 @@ function makeApp() {
     },
     async doctor() { return { checked_at: 1, checks: [] }; },
   };
-  const app = new App({ state, im, poller, turns, profiles, logger: { error() {}, warn() {}, info() {} } });
-  return { dir, state, profiles, app, calls, poller };
+  const app = new App({ state, im, poller, turns, profiles, turnLog, logger: { error() {}, warn() {}, info() {} } });
+  return { dir, state, profiles, app, calls, poller, turnLog };
 }
 
 test("GET /api/status exposes panel fields and clamps config", async () => {
@@ -846,4 +848,17 @@ test("switching a group from off to mention opens a session; re-joining does not
     platform: "feishu", chat_id: "oc_g10", mode: "all",
   });
   assert.deepEqual(calls.open, ["oc_g10"], "已有会话的会话再切模式不重复开会话");
+});
+
+test("GET /api/logs exposes turn events and never message bodies", async () => {
+  const { app, turnLog } = makeApp();
+  turnLog.append("wake", { platform: "feishu", chat_id: "oc_abc", turn_id: "t1", count: 1 });
+  turnLog.append("cancel", { platform: "feishu", chat_id: "oc_abc", owner: "foreign", reason: "wake" });
+  const out = await app.handle("/api/logs", "GET");
+  assert.equal(out.status, 200);
+  assert.equal(out.body.events.length, 2);
+  assert.equal(out.body.events[0].event, "cancel");
+  assert.equal(out.body.events[0].owner, "foreign");
+  assert.equal(out.body.events[1].event, "wake");
+  assert.equal(JSON.stringify(out.body.events).includes("content"), false);
 });

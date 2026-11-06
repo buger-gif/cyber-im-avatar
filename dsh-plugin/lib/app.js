@@ -76,13 +76,14 @@ function pick(q, body, key, fallback = "") {
 }
 
 export class App {
-  constructor({ state, im, poller, turns, profiles, logger = console }) {
+  constructor({ state, im, poller, turns, profiles, logger = console, turnLog = null }) {
     this.state = state;
     this.im = im;
     this.poller = poller;
     this.turns = turns;
     this.profiles = profiles;
     this.logger = logger;
+    this.turnLog = turnLog;
     this.startedAt = Date.now() / 1000;
   }
 
@@ -882,6 +883,7 @@ export class App {
     return {
       sends: [], errors: this.poller.errors.slice(0, 20),
       turns: this.turns.snapshot(),
+      events: this.turnLog?.recent?.(80) || [],
     };
   }
 

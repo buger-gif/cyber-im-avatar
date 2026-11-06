@@ -30,6 +30,12 @@ window.__ModuleLoader__.load({
     system: "[系统消息]", merge_forward: "[合并转发]", location: "[位置]"
   };
 
+  var LOG_LABEL = {
+    wake: "唤醒", open: "开场", warm: "保温", cancel: "打断",
+    followup: "已送达", warm_sent: "保温已送达", prompt_seen: "进入会话",
+    turn_end: "本轮结束", warm_end: "保温结束", wake_failed: "唤醒失败"
+  };
+
   var SVG = {
     headset: "M4 14v-2a8 8 0 0 1 16 0v2M4 14h3v6H5a1 1 0 0 1-1-1v-5Zm16 0h-3v6h2a1 1 0 0 0 1-1v-5Z",
     user: "M12 12a4 4 0 1 0 0-8 4 4 0 0 0 0 8Zm-8 8a8 8 0 0 1 16 0",
@@ -385,6 +391,7 @@ window.__ModuleLoader__.load({
       connError: null,
       detail: null, thread: [], threadOffline: false, threadError: "", sending: false,
       chats: [], targets: [], workspaces: [], doctor: null, cfg: null,
+      logs: [],
       search: { q: "", platform: "feishu", items: null, err: "", seq: 0,
                 wc: { name: "", id: "", kind: "group" } },
       composerDrafts: {}, pollDraft: {}, lifeDraft: {},
@@ -512,6 +519,55 @@ window.__ModuleLoader__.load({
         paintBody();
       });
     }
+    // turn 事件流水（~/.im-standin/logs/turns.jsonl）：低频、按需取，不跟 60 秒轮询。
+    function loadLogs() {
+      return api("/api/logs").then(function (d) {
+        if (S.dead) return S.logs;
+        if (d && !d.error) {
+          S.logs = d.events || [];
+          if (S.tab === "status") paintBody();
+        }
+        return S.logs;
+      }).catch(function () { /* 日志是非必需信息，读不到不挂错误条 */ });
+    }
+    function fmtDur(ms) {
+      var n = Number(ms) || 0;
+      if (n < 1000) return n + "ms";
+      if (n < 60000) return (n / 1000).toFixed(1) + "s";
+      return Math.round(n / 6000) / 10 + "min";
+    }
+    function logChatName(e) {
+      var lists = [(S.status && S.status.instances) || [], S.chats || []];
+      for (var l = 0; l < lists.length; l += 1) {
+        for (var i = 0; i < lists[l].length; i += 1) {
+          var c = lists[l][i];
+          if (c.platform === e.platform && c.chat_id === e.chat_id && c.name) return c.name;
+        }
+      }
+      return e.chat_id ? String(e.chat_id).slice(-6) : "-";
+    }
+    function logDetail(e) {
+      if (e.event === "cancel") {
+        return (e.owner === "foreign" ? "外来轮" : "本插件轮") +
+          (e.reason ? " · " + e.reason : "");
+      }
+      if (e.event === "wake") {
+        return (e.count || 0) + " 条" + (e.interrupted ? " · 已打断在飞轮" : "") +
+          (e.first_turn ? " · 首轮" : "");
+      }
+      if (e.event === "prompt_seen") {
+        return (e.adopted ? "插队进入 · " : "") +
+          (e.wait_ms ? "等待 " + fmtDur(e.wait_ms) : "已进入");
+      }
+      if (e.event === "turn_end" || e.event === "warm_end") {
+        return (e.ok ? "成功" : "失败：" + (e.reason || "未知")) +
+          (e.ms ? " · " + fmtDur(e.ms) : "");
+      }
+      if (e.event === "wake_failed") return e.reason || "未知";
+      if (e.event === "open") return (e.count || 0) + " 条上下文";
+      return "";
+    }
+
     // 日报只由 agent 写；这里只读文件，不解析、不统计。缓存 / 预热 / 去重见模块级 digestFetch。
     function digestSame(a, b) {
       a = a || {}; b = b || {};
@@ -770,7 +826,7 @@ window.__ModuleLoader__.load({
             if (d[0] === "service") loadChats();
             if (d[0] === "targets") { loadTargets(); loadPersons(); }
             if (d[0] === "attention") loadDigest();
-            if (d[0] === "status") loadStatus().then(paint);
+            if (d[0] === "status") { loadLogs(); loadStatus().then(paint); }
           }
         },
           h("span", { class: "ims-ico", html: icon(d[2], 15) }),
@@ -2410,7 +2466,7 @@ window.__ModuleLoader__.load({
           h("span", { class: "ims-grow" }),
           h("button", {
             class: "ims-btn ghost", type: "button", title: "重新取一次状态快照",
-            onclick: function () { loadStatus().then(paint); }
+            onclick: function () { loadLogs(); loadStatus().then(paint); }
           }, "刷新"),
           h("button", {
             class: "ims-btn", type: "button",
@@ -2495,6 +2551,17 @@ window.__ModuleLoader__.load({
         });
         scroll.appendChild(dc);
       }
+
+      var events = (S.logs || []);
+      scroll.appendChild(h("div", { class: "ims-card" },
+        h("div", { class: "ims-card-h", text: "最近事件 " + (events.length || "") }),
+        events.length ? events.slice(0, 20).map(function (e) {
+          var label = LOG_LABEL[e.event] || e.event || "?";
+          return h("div", { class: "ims-kv" },
+            h("span", { text: fmtTime(e.ts) + " · " +
+              ((PLAT[e.platform] || {}).label || e.platform || "-") + " · " + logChatName(e) }),
+            h("span", { title: e.reason || "", text: label + (logDetail(e) ? " · " + logDetail(e) : "") }));
+        }) : h("div", { class: "ims-hint", text: "暂无事件；turn 生命周期会写进 ~/.im-standin/logs/turns.jsonl" })));
 
       var errs = (st.errors || []);
       scroll.appendChild(h("div", { class: "ims-card" },
@@ -2783,6 +2850,7 @@ window.__ModuleLoader__.load({
 
     loadWorkspaces();
     loadStatus();
+    loadLogs();
     loadChats();
     loadTargets();
     loadPersons();
@@ -2798,6 +2866,7 @@ window.__ModuleLoader__.load({
       if (S.tab === "service") loadChats();
       if (S.tab === "targets") { loadTargets(); loadPersons(); }
       if (S.tab === "attention") loadDigest();
+      if (S.tab === "status") loadLogs();
     }
     if (typeof location !== "undefined" && (location.hash || "").indexOf("#thread=") === 0) {
       var parts = location.hash.slice(8).split(":");

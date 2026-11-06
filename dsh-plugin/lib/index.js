@@ -21,6 +21,7 @@ import { IM } from "./im.js";
 import { MediaStore } from "./media.js";
 import { Poller } from "./poller.js";
 import { Turns } from "./turns.js";
+import { TurnLog } from "./turn-log.js";
 import { App } from "./app.js";
 import { ensureSkill } from "./skill-install.js";
 
@@ -37,6 +38,7 @@ let media = null;
 let poller = null;
 let turns = null;
 let app = null;
+let turnLog = null;
 let alive = false;
 let rootCtx = null;
 let registry = null;
@@ -67,11 +69,12 @@ function boot() {
   state.load();
   profiles = new Profiles(state.dir);
   media = new MediaStore(state.dir);
+  turnLog = new TurnLog(state.dir, { logger: console });
   im = new IM({ dir: state.dir, media });
   poller = new Poller({ state, im });
-  turns = new Turns({ state, profiles, poller, im, media });
+  turns = new Turns({ state, profiles, poller, im, media, turnLog });
   poller.turns = turns;
-  app = new App({ state, im, poller, turns, profiles });
+  app = new App({ state, im, poller, turns, profiles, turnLog });
   if (registry) turns.setRegistry(registry);
   if (sessionController && sessions) {
     turns.setHost({ sessionController, sessions, attachments, llm, permissionPresets }, rootCtx);
@@ -104,6 +107,7 @@ function shutdown() {
   media = null;
   state = null;
   app = null;
+  turnLog = null;
   registry = null;
   sessionController = null;
   sessions = null;

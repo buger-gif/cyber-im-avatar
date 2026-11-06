@@ -7,6 +7,7 @@ import test from "node:test";
 import { State } from "../lib/state.js";
 import { Profiles } from "../lib/profiles.js";
 import { Turns, buildOpenPrompt, buildWakePrompt, buildWarmPrompt, sanitizeUntrusted, turnWatchdog } from "../lib/turns.js";
+import { TurnLog } from "../lib/turn-log.js";
 
 function recent(n = 2) {
   const out = [];
@@ -193,14 +194,19 @@ class FakeHost {
     this.followups = [];
     this.created = [];
     this.flushed = 0;
+    this.cancelCalls = [];
     this.agent = {
       id: "session-1",
+      status: "idle",
       session: {
         id: "session-1", header: { cwd: "" },
         requestHeader: () => ({ config: { provider: "test", model: "test-model" } }),
       },
       inbox: { removed: [], remove(id) { this.removed.push(id); } },
-      cancel: () => { this.cancelled = true; },
+      cancel: (cause, options) => {
+        this.cancelled = true;
+        this.cancelCalls.push({ cause, options });
+      },
       followup: (message) => {
         this.followups.push(message);
         if (!this.auto) return;
@@ -484,6 +490,83 @@ test("a new message during the first turn interrupts into an append-only payload
   assert.equal(lines[0], "- [t9] 客户: 插进来的新消息");
   assert.doesNotMatch(second, /人物档案：|客户 · ou_other/);
   assert.doesNotMatch(second, /\/cyber-im-avatar|值守命中|上一轮被新消息打断|会话工作本：/);
+});
+
+test("a wake cancels a running turn the plugin does not own", async () => {
+  const { chat, host, turns } = setup();
+  // 会话已经绑过，但插件没有它的 active：人刚在 DSH 面板里起了一轮。
+  chat.dsh_session = "session-1";
+  chat.session_bound_at = Date.now() / 1000 - 60;
+  chat.prompt_session = "";
+  host.agent.status = "running";
+
+  const r = await turns.wake(chat);
+  assert.equal(r.ok, true);
+  assert.equal(host.cancelCalls.length, 1, "要打断，不能只 followup 排队");
+  assert.deepEqual(host.cancelCalls[0], {
+    cause: { kind: "user" }, options: { keepInbox: true },
+  });
+  assert.match(host.followups[0].content[0].text, /上一轮被新消息打断/);
+});
+
+test("joining watch does not cancel a running turn", async () => {
+  const { chat, host, turns } = setup();
+  chat.dsh_session = "session-1";
+  chat.prompt_session = "session-1";
+  chat.session_bound_at = Date.now() / 1000 - 60;
+  host.agent.status = "running";
+
+  const r = await turns.open(chat);
+  assert.equal(r.ok, true);
+  assert.equal(host.cancelCalls.length, 0, "开场轮不打断在飞 turn（spec 0025）");
+  assert.equal(host.followups.length, 1);
+});
+
+test("someone else's turn end before our payload does not settle the wake", async () => {
+  const { chat, host, turns } = setup({ auto: false });
+  await turns.wake(chat);
+  // 监听挂上之后，另一个轮次先开始又结束；本轮载荷还没进会话，不能跟着收口。
+  host.emit({ type: "turn/start", data: { turn: 4 } });
+  host.emit({ type: "turn/end", data: { turn: 4, reason: { kind: "completed" } } });
+  await new Promise((res) => setTimeout(res, 10));
+  assert.equal(chat.last_turn.ok, null);
+  assert.equal(turns.isActive("feishu", "oc_abc"), true);
+});
+
+test("a payload steered into a running turn settles at that turn's end", async () => {
+  const { chat, host, turns } = setup({ auto: false });
+  const r = await turns.wake(chat);
+  assert.equal(r.ok, true);
+  const message = host.followups[0];
+
+  // 监听挂晚：用户手动 steer，插件只看到 user/message，没有 turn/start。
+  host.emit({ type: "user/message", data: { id: message.id } });
+  host.emit({ type: "turn/end", data: { turn: 7, reason: { kind: "completed" } } });
+  await new Promise((res) => setTimeout(res, 10));
+
+  assert.equal(chat.last_turn.ok, true, "不能挂在「等一个永远不来的 turn/end」");
+  assert.equal(chat.session_turns, 1);
+  assert.equal(turns.isActive("feishu", "oc_abc"), false);
+});
+
+test("foreign cancel and wake are recorded in the turn log", async () => {
+  const { dir, chat, host, turns } = setup();
+  turns.turnLog = new TurnLog(dir, { logger: { warn() {} } });
+  chat.dsh_session = "session-1";
+  chat.session_bound_at = Date.now() / 1000 - 60;
+  chat.prompt_session = "";
+  host.agent.status = "running";
+
+  await turns.wake(chat);
+  const rows = turns.turnLog.recent(20).reverse();
+  const cancel = rows.find((r) => r.event === "cancel");
+  const wake = rows.find((r) => r.event === "wake");
+  assert.equal(cancel.owner, "foreign");
+  assert.equal(cancel.reason, "wake");
+  assert.equal(wake.interrupted, true);
+  assert.equal(wake.chat_id, "oc_abc");
+  assert.equal(rows.some((r) => r.event === "followup"), true);
+  assert.equal(JSON.stringify(rows).includes("基础消息"), false, "日志里不能有正文");
 });
 
 test("a wake without a batch falls back to the pending messages", async () => {

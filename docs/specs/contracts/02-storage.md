@@ -89,6 +89,13 @@
 旧私聊工作本在新版第一次被面板/值守碰到时**整文件搬进**人物档案路径（排他复制成功后删旧文件，不改写、不拆段、不覆盖已有档案）；人物档案已存在则旧文件保留，载荷给「旧私聊工作本（待并入）」与 `.history.md` 目标，由 agent 合并归档。
 `forget` 只删旧工作本与会话状态，人物档案跨会话保留（只能显式 `DELETE /api/persons`）；旧四段群画像由 agent 首次处理该会话时懒迁移，旧全文先归档到 `<工作本>.history.md`；`env.json` 只读，不存画像正文与人物索引。
 
+## turn 事件日志
+
+`logs/turns.jsonl`（目录 700、文件 600）：JSON Lines，一个事件一行；字段只有 `ts` / `event` /
+`platform` / `chat_id` / `turn_id` / `owner` / `reason` / `count` / `interrupted` / `first_turn` /
+`wait_ms` / `ms` / `ok` / `adopted`，**不写正文、发送者与聊天名**。超过 512 KiB 轮转为
+`turns.1.jsonl`（只留一份旧的）；写失败只降级，不影响值守。面板 `/api/logs` 的 `events` 读它。
+
 ## 一次性迁移
 
 `node scripts/migrate-state.mjs` 把旧 `panel.db` 的 chats + 每会话最新 10 条消息 +

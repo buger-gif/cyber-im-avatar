@@ -420,8 +420,9 @@ export function turnWatchdog({ stallSec, capSec = 0, onTimeout }) {
 }
 
 export class Turns {
-  constructor({ state, profiles, poller = null, im = null, media = null, logger = console }) {
+  constructor({ state, profiles, poller = null, im = null, media = null, logger = console, turnLog = null }) {
     this.state = state;
+    this.turnLog = turnLog;
     this.profiles = profiles;
     this.poller = poller;
     this.im = im;
@@ -601,6 +602,18 @@ export class Turns {
     return this.active.has(chatKey(platform, chatId));
   }
 
+  /** 落一条 turn 事件；日志永远不能拖垮值守（字段白名单在 turn-log.js）。 */
+  logTurn(event, chat, fields = {}) {
+    if (!this.turnLog) return;
+    try {
+      this.turnLog.append(event, {
+        platform: chat?.platform || "",
+        chat_id: chat?.chat_id || "",
+        ...fields,
+      });
+    } catch { /* noop */ }
+  }
+
   /**
    * 真正在跑的轮次：已被取消、正在收尾的不算。
    * 「加入 / 重开 / 切关注程度」要立刻起会话时用它判断，否则刚 cancel 的旧轮
@@ -617,8 +630,11 @@ export class Turns {
     }
     const key = chatKey(chat.platform, chat.chat_id);
     // 新消息到了：先立刻打断在飞 turn，别等它跑完再排队。
+    // 只记插件自己起的轮次；人 / goal / 定时任务起的轮次在 _wake() 里按 agent.status 补打断。
     const old = this.active.get(key);
+    const hadActive = !!old;
     if (old) {
+      this.logTurn("cancel", chat, { turn_id: old.turnId, owner: "plugin", reason: "wake" });
       old.cancelled = true;
       if (old.cancel) old.cancel();
       else this.cancelHandle(old);
@@ -629,7 +645,7 @@ export class Turns {
     if (starting) {
       try { await starting; } catch { /* 上一次启动失败也继续 */ }
     }
-    const run = this._wake(chat, { interrupted, batch });
+    const run = this._wake(chat, { interrupted, batch, hadActive });
     this.starting.set(key, run);
     try {
       return await run;
@@ -662,7 +678,7 @@ export class Turns {
       .slice(-limit);
   }
 
-  async _wake(chat, { interrupted = false, batch = null, open = false } = {}) {
+  async _wake(chat, { interrupted = false, batch = null, open = false, hadActive = false } = {}) {
     const key = chatKey(chat.platform, chat.chat_id);
     const current = this.state.getChat(chat.platform, chat.chat_id) || chat;
     // 真实消息优先：正在启动的保温轮让位。
@@ -726,6 +742,16 @@ export class Turns {
       this.state.setSession(current, sid);
       this.state.save();
 
+      // 在飞的那一轮不一定是插件起的：人可以在 DSH 面板里直接发消息，goal / 定时任务
+      // 也会在同一会话里起轮。此时 active 里没有句柄，但 agent 正在跑；不打断的话
+      // followup 只会进 next-turn 排队，@ 消息要等那一轮结束（spec 0038）。
+      // 开场（加入值守）不打断，保持 spec 0025。
+      if (!opening && !hadActive && agent.status === "running") {
+        try { agent.cancel({ kind: "user" }, { keepInbox: true }); } catch { /* best effort */ }
+        interrupted = true;
+        this.logTurn("cancel", current, { turn_id: "", owner: "foreign", reason: "wake" });
+      }
+
       // 配置开启时才把会话放进 danger-full-access；agent 需要它直接写记忆文件。
       this.applySessionPermission(agent);
       // 群：工作本 + 人物档案；单聊：对方的人物档案一份（spec 0035）。
@@ -741,6 +767,9 @@ export class Turns {
         cap: 5, seen: firstTurn ? null : seen,
       });
       for (const p of people) seen.add(p.id);
+      this.logTurn(opening ? "open" : "wake", current, {
+        turn_id: turnId, count: messages.length, interrupted, first_turn: firstTurn,
+      });
       const prompt = opening
         ? buildOpenPrompt(current.platform, current.name, current.chat_id, messages, {
             bookPath: memory.path, single: memory.single, legacyPath, legacyHistory, people,
@@ -770,6 +799,7 @@ export class Turns {
       current.last_error = reason;
       this.state.save();
       this.logger.warn?.(`[im-standin] wake ${key}: ${reason}`);
+      this.logTurn("wake_failed", current, { turn_id: turnId, reason });
       return { ok: false, reason };
     }
   }
@@ -1130,6 +1160,9 @@ export class Turns {
         if (token.cancelled || this.active.has(key)) return { ok: false, reason: "cancelled" };
         if (!existing) return { ok: false, reason: "no_session" };
         const { agent, sessionId: sid, cwd } = existing;
+        // 会话里可能有插件之外的轮次在跑（人在 DSH 面板里直接发消息 / goal 驱动）。
+        // 保温是后台维护，不该为它打断人的活，也不该把心跳排到别人后面等一轮。
+        if (agent.status === "running") return { ok: false, reason: "running" };
         this.applySessionPermission(agent);
         // 心跳的记忆文件与真实轮一致：群两层，单聊只有对方的人物档案。
         const selfId = this.selfIdFor(current.platform);
@@ -1161,6 +1194,7 @@ export class Turns {
           warm: true,
         };
         this.active.set(key, handle);
+        this.logTurn("warm", current, { turn_id: turnId, state: "warm" });
         handle.done = this.runTurn(handle, {
           chat: current, agent, sid, cwd, message, warm: true,
         });
@@ -1218,6 +1252,10 @@ export class Turns {
               this.state.save();
             }
           }
+          this.logTurn(warm ? "warm_end" : "turn_end", chat, {
+            turn_id: handle.turnId, ok: false, reason: "cancelled",
+            ms: Date.now() - startedAt,
+          });
           settle({ ok: false, reason: "cancelled" });
           return;
         }
@@ -1238,6 +1276,10 @@ export class Turns {
           if (!result.ok) {
             this.logger.warn?.(`[im-standin] warm turn ${key}: ${handle.lastReason}`);
           }
+          this.logTurn("warm_end", chat, {
+            turn_id: handle.turnId, ok: !!result.ok, reason: handle.lastReason,
+            ms: Date.now() - startedAt,
+          });
           settle(result);
           return;
         }
@@ -1263,6 +1305,11 @@ export class Turns {
           handle.lastAt = nowSec();
           this.logger.warn?.(`[im-standin] turn ${key}: ${reason}`);
         }
+        this.logTurn("turn_end", chat, {
+          turn_id: handle.turnId, ok: !!result.ok,
+          reason: result.ok ? "" : (result.reason || "turn_failed"),
+          ms: Date.now() - startedAt,
+        });
         settle(result);
       };
 
@@ -1286,10 +1333,23 @@ export class Turns {
               this.state.save();
             }
             // DSH 在轮次边界先发 turn/start，再提交 user/message。
-            if (!turnStarted && lastTurnStart != null) {
-              turnStarted = true;
-              turnNumber = lastTurnStart;
+            // 监听挂晚的两种情况：
+            // · DSH 没发 turn/start（手动 steer 进已在跑的轮）→ 认作当前唯一在跑的轮；
+            // · turn/start 比 user/message 晚到 → 下面 turn/start 分支补上。
+            if (!turnStarted) {
+              if (lastTurnStart != null) {
+                turnStarted = true;
+                turnNumber = lastTurnStart;
+              } else if (!warm) {
+                turnStarted = true;
+                turnNumber = null; // 轮号未知，turn/end 不再比对
+                handle.adopted = true;
+              }
             }
+            this.logTurn("prompt_seen", chat, {
+              turn_id: handle.turnId, wait_ms: Date.now() - startedAt,
+              adopted: !!handle.adopted,
+            });
           }
           return;
         }
@@ -1302,7 +1362,8 @@ export class Turns {
           return;
         }
         if (type === "turn/end") {
-          if (!turnStarted || event.data?.turn !== turnNumber) return;
+          if (!turnStarted) return;
+          if (turnNumber !== null && event.data?.turn !== turnNumber) return;
           const reason = event.data?.reason || { kind: "completed" };
           const kind = reason.kind || "completed";
           if (kind === "completed") {
@@ -1319,8 +1380,9 @@ export class Turns {
       try {
         stop = this.ctx.on("session/event", (session, event) => {
           if (agent.session && session !== agent.session && session?.id !== agent.session?.id) return;
-          // 这个会话还在出事件 = 这轮还活着：重置停滞计时（spec 0034）。
-          if (watchdog) watchdog.touch();
+          // 只有本轮载荷已进会话，这个会话的事件才算本轮活着（spec 0038）。
+          // 载荷还排在 next-turn 时，别人的轮次事件不能给这轮续命，否则永远不超时。
+          if (watchdog && promptSeen) watchdog.touch();
           collect(event);
         });
       } catch (e) {
@@ -1338,6 +1400,7 @@ export class Turns {
         finish({ ok: false, reason: `followup_failed: ${e?.message || e}` });
         return;
       }
+      this.logTurn(warm ? "warm_sent" : "followup", chat, { turn_id: handle.turnId });
       // 会话已启动、载荷已送出：现在才点回执；失败不影响本轮。
       this.sendAck(chat, ack);
       watchdog = turnWatchdog({
@@ -1393,6 +1456,8 @@ export class Turns {
         this.state.save();
       }
     }
+    const chat = this.state.getChat(platform, chatId) || { platform, chat_id: chatId };
+    this.logTurn("cancel", chat, { turn_id: handle.turnId, owner: "plugin", reason });
     this.logger.info?.(`[im-standin] cancel ${key}: ${reason}`);
     return true;
   }

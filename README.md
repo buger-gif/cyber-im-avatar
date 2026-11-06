@@ -233,6 +233,7 @@ python3 scripts/doctor.py feishu                # 必需权限是否齐备
 ├── profiles/<platform>/<chat_id>.md            # 会话工作本（仅群：本群成立的要求与上下文）
 ├── persona.md                                  # 本人风格（只含风格，不含事实）
 ├── digest/YYYY-MM-DD.md                        # 每日关注摘要
+├── logs/turns.jsonl                            # turn 事件流水（唤醒/打断/结束；无正文）
 └── media/                                      # 唤醒时取回的媒体（7 天 / 单会话 200MB 清理）
 ```
 

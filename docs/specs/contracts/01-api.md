@@ -35,7 +35,7 @@
 | GET | `/api/persons` | `platform`（可选） | 人物档案列表：只扫 `profiles/people/`，不建文件；items 带 `platform` / `person_id` / `name` / `profile` / `profile_path` / `profile_updated_at` / `profile_excerpt` / `bytes` / `chat_ids`（`[{platform, chat_id, name}]`） |
 | GET | `/api/chat/workspace` | `platform`、`chat_id`、`workspace`（别名 `path`） | 给值守会话绑 / 解绑工作区；必须显式给键，空串=解绑。工作区变了且旧会话因此解绑、会话又在值守中（未屏蔽）→ 立刻在新工作区开新会话，返回 `open` |
 | GET | `/api/chat/session` | `platform`、`chat_id` | 查当前绑定的 DSH 会话与工作区 |
-| GET | `/api/logs` | — | 最近轮询错误与在飞 turn 快照（不落盘、不进日志正文） |
+| GET | `/api/logs` | — | `{sends, errors, turns, events}`：`errors`=最近 20 条轮询错误；`turns`=在飞快照；`events`=最近 80 条 turn 事件（落盘 `~/.im-standin/logs/turns.jsonl`，只有事件/ID/耗时/原因，无正文） |
 | GET | `/api/digest` | `date`（`YYYY-MM-DD`，默认今天） | 只读 `~/.im-standin/digest/<date>.md`（agent 维护）：`{ok, date, exists, text, mtime}`；日期非法 `bad_date`；不建目录、不解析、不统计 |
 
 ### `/api/chats` 的工作区字段
