@@ -751,9 +751,17 @@ export class Adapter {
     return msg;
   }
 
-  async listChats(limit = 15) {
+  async listChats(limit = 15, { all = false } = {}) {
     if (!this.ad.cmd_chats) return { ok: false, items: [], error: "该平台 CLI 不提供会话枚举，只能用已登记目标" };
-    const { rc, json, raw } = await this.run(this.argv(this.ad.cmd_chats, { limit: String(limit) }));
+    const args = this.argv(this.ad.cmd_chats, { limit: all && this.platform === "feishu" ? "100" : String(limit) });
+    // 飞书首轮/升级要用完整列表登记存量；旧版只拉第一页，旧群后来出现会被当成新群。
+    // 完整基线只取群（3k+ 会话时 p2p 会让单次命令超时）；日常列表仍 p2p,group。
+    if (all && this.platform === "feishu") {
+      const ti = args.indexOf("--types");
+      if (ti >= 0 && args[ti + 1]) args[ti + 1] = "group";
+      args.push("--page-all", "--page-limit", "100");
+    }
+    const { rc, json, raw } = await this.run(args, all ? 120 : 45);
     if (rc !== 0 || !json) return { ok: false, items: [], error: redact(raw || `rc=${rc}`) };
     const chats = dig(json, this.ad.f_chats) || [];
     const out = [];

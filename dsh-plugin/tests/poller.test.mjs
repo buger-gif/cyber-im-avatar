@@ -21,6 +21,8 @@ class FakeAdapter {
     this.chats = [];
     this.calls = [];
     this.listCalls = 0;
+    this.listArgs = [];
+    this.listOk = true;
     this.atMeCalls = 0;
     this.atMe = [];
     this.memberCount = 8;
@@ -34,7 +36,10 @@ class FakeAdapter {
     this.calls.push({ chatId, limit });
     return { ok: true, messages: this.messages.slice(0, limit) };
   }
-  async listChats() { this.listCalls += 1; return { ok: true, items: this.chats }; }
+  async listChats(limit, opts) {
+    this.listCalls += 1; this.listArgs.push({ limit, opts });
+    return this.listOk ? { ok: true, items: this.chats } : { ok: false, items: [], error: "auth expired" };
+  }
   async searchAtMe() { this.atMeCalls += 1; return { ok: true, items: this.atMe }; }
   async chatMembers() { return { ok: true, known: this.memberKnown, count: this.memberCount }; }
   async sendText() { return { ok: true, message_id: "om_sent" }; }
@@ -951,4 +956,85 @@ test("trial review runs once and applies ignore; attempts are reset on success",
   assert.equal(chat.duty.state, "ignore");
   assert.equal(chat.duty.attempts, 0);
   assert.equal(chat.duty.review_at, 0);
+});
+
+
+test("first refresh does a full Feishu baseline and stores full_baseline_at", async () => {
+  const { state, poller, adapter } = setup();
+  adapter.chats = [
+    { chat_id: "oc_old_1", name: "旧群一", kind: "group" },
+    { chat_id: "oc_old_2", name: "旧群二", kind: "group" },
+  ];
+  await poller.refreshChatlist(["feishu"]);
+  assert.equal(adapter.listArgs[0].limit, 100);
+  assert.equal(adapter.listArgs[0].opts.all, true);
+  assert.ok(state.data.desk.baseline_at > 0);
+  assert.ok(state.data.desk.full_baseline_at > 0);
+  assert.deepEqual(state.data.desk.baseline_group_ids.sort(), ["oc_old_1", "oc_old_2"]);
+  assert.equal(state.getChat("feishu", "oc_old_1").duty.state, "none");
+  assert.equal(state.getChat("feishu", "oc_old_2").duty.state, "none");
+});
+
+test("0.18.0 upgrade full baseline clears queued added events but keeps sweep/manual", async () => {
+  const { state, poller, adapter } = setup();
+  const now = Date.now() / 1000;
+  state.data.desk.baseline_at = now - 100;
+  state.data.desk.full_baseline_at = 0;
+  const old = state.ensureChat("feishu", "oc_old", { name: "旧群", kind: "group" });
+  old.added_at = now - 50;
+  old.duty.state = "queued";
+  old.duty.trigger = "added";
+  old.duty.event_id = "d-old";
+  const swept = state.ensureChat("feishu", "oc_swept", { name: "被@的旧群", kind: "group" });
+  swept.added_at = now - 50;
+  swept.duty.state = "queued";
+  swept.duty.trigger = "sweep";
+  swept.duty.event_id = "d-sweep";
+  const manual = state.ensureChat("feishu", "oc_manual", { name: "手动", kind: "group" });
+  manual.added_at = now - 50;
+  manual.duty.state = "queued";
+  manual.duty.trigger = "manual";
+  manual.duty.event_id = "d-manual";
+  adapter.chats = [
+    { chat_id: "oc_old", name: "旧群", kind: "group" },
+    { chat_id: "oc_swept", name: "被@的旧群", kind: "group" },
+    { chat_id: "oc_manual", name: "手动", kind: "group" },
+  ];
+  await poller.refreshChatlist(["feishu"]);
+  assert.ok(state.data.desk.full_baseline_at > 0);
+  assert.equal(old.duty.state, "none");
+  assert.equal(swept.duty.state, "queued");
+  assert.equal(manual.duty.state, "queued");
+
+  adapter.chats.push({ chat_id: "oc_new", name: "真新群", kind: "group" });
+  await poller.refreshChatlist(["feishu"]);
+  assert.equal(state.getChat("feishu", "oc_new").duty.trigger, "added");
+});
+
+
+test("a failed full baseline is retried and not marked complete", async () => {
+  const { state, poller, adapter } = setup();
+  adapter.listOk = false;
+  await poller.refreshChatlist(["feishu"]);
+  assert.equal(state.data.desk.baseline_at, 0);
+  assert.equal(state.data.desk.full_baseline_at, 0);
+  adapter.listOk = true;
+  await poller.refreshChatlist(["feishu"]);
+  assert.ok(state.data.desk.baseline_at > 0);
+  assert.ok(state.data.desk.full_baseline_at > 0);
+});
+
+test("known baseline group IDs are skipped on normal refresh, new groups still queue", async () => {
+  const { state, poller, adapter } = setup();
+  const now = Date.now() / 1000;
+  state.data.desk.baseline_at = now - 100;
+  state.data.desk.full_baseline_at = now - 90;
+  state.data.desk.baseline_group_ids = ["oc_very_old"];
+  adapter.chats = [
+    { chat_id: "oc_very_old", name: "以前就有的群", kind: "group" },
+    { chat_id: "oc_fresh", name: "今天新建的群", kind: "group" },
+  ];
+  await poller.refreshChatlist(["feishu"]);
+  assert.equal(state.getChat("feishu", "oc_very_old"), null);
+  assert.equal(state.getChat("feishu", "oc_fresh").duty.state, "queued");
 });

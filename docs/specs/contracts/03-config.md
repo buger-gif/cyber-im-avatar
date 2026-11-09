@@ -31,7 +31,7 @@
 | `duty.trial_hours` | `0` | 0–168 小时 | 试用时长；0=关闭（严格两段式），只能 watch/ignore；>0 才允许 trial |
 | `duty.max_groups` | `20` | 0–200 | 自动开监听的值守群上限；0=不限；手动不受限 |
 | `duty.max_per_day` | `20` | 0–200 | 每天自动分诊 turn 上限；0=不限；复核与手动不占 |
-| `duty.session_max_turns` | `20` | 0–200 | 值守台会话累计 turn 上限；达到后下个事件换新；0=不限 |
+| `duty.session_max_turns` | `20` | 0–200 | 已废弃：值守台每次判断新建会话；保留读取兼容，不再生效 |
 | `duty.record_keep_days` | `30` | 0–365 天 | ignore/failed 记录保留；0=永不清；watch/trial 不清 |
 | `duty.sweep_min` | `10` | 0 或 10–1440 分钟 | @ 清查间隔；0=关；>0 时最小 10 |
 | `duty.sweep_lookback_hours` | `24` | 1–168 小时 | 清查回看窗口；更早不自动补 |

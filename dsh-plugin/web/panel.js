@@ -2603,8 +2603,8 @@
           "钉钉逐新群回退，企微没有 mentions。群成员超过 10 人或人数未知，自动只能不盯；手动可开。" }),
         h("div", { class: "ims-kv" },
           h("span", { text: "值守台" }),
-          h("span", { text: (desk.session_turns || 0) + " / " + (desk.session_max_turns || "不限") +
-            " 轮 · " + (desk.last_sweep_at ? "上次清查 " + new Date(desk.last_sweep_at * 1000).toLocaleString() : "尚未清查") })));
+          h("span", { text: (desk.session_turns || 0) + " 次判断（每次新建会话） · " +
+            (desk.last_sweep_at ? "上次清查 " + new Date(desk.last_sweep_at * 1000).toLocaleString() : "尚未清查") })));
       if (!items.length) {
         card.appendChild(h("div", { class: "ims-empty", text: "没有待判断的新群。" }));
       }
@@ -2651,7 +2651,6 @@
       card.appendChild(num("max_groups", "值守群上限", 0, 200));
       card.appendChild(num("max_per_day", "每日分诊上限", 0, 200));
       card.appendChild(num("max_group_members", "群成员上限（只数人）", 0, 1000));
-      card.appendChild(num("session_max_turns", "值守台轮数上限", 0, 200));
       card.appendChild(num("record_keep_days", "记录保留天数", 0, 365));
       card.appendChild(num("sweep_min", "@ 清查间隔（分钟，0=关）", 0, 1440));
       card.appendChild(num("sweep_lookback_hours", "@ 清查回看小时", 1, 168));

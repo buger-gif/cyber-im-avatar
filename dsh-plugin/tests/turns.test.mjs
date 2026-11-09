@@ -221,9 +221,9 @@ class FakeHost {
       },
     };
     this.sessionController = {
-      resolveAgent: async (sid) => (sid === this.agent.id ? { agent: this.agent } : {
+      resolveAgent: async (sid) => { this.resolveCalls = (this.resolveCalls || 0) + 1; return sid === this.agent.id ? { agent: this.agent } : {
         error: { code: "session/not-found", message: "missing" },
-      }),
+      }; },
       create: async (req) => {
         this.created.push(req);
         if (req.cwd) this.agent.session.header.cwd = req.cwd;
@@ -1428,4 +1428,27 @@ test("desk triage starts a private-cwd session, updates desk state, and runs onD
   assert.equal(state.data.desk.session_turns, 1);
   assert.equal(state.data.desk.last_turn.ok, true);
   assert.equal(turns.deskBusy(), false);
+});
+
+
+test("desk triage always creates a fresh session and never reuses history", async () => {
+  const { dir, state, chat, host, turns } = setup({ kind: "group", reply: "已判断" });
+  const facts = {
+    trigger: "added", member_count: 8, member_limit: 10, watch_groups: 0,
+    watch_max: 20, quota_used: 0, quota_max: 20, trial_hours: 0,
+    policy_path: path.join(dir, "duty", "policy.md"),
+    decision_path: path.join(dir, "duty", "decisions", "d-1.json"),
+    recent: [],
+  };
+  await turns.deskTriage(chat, { eventId: "d-1", trigger: "added", messages: [], facts });
+  await new Promise((res) => setTimeout(res, 5));
+  await turns.deskTriage(chat, { eventId: "d-2", trigger: "added", messages: [], facts });
+  await new Promise((res) => setTimeout(res, 5));
+  assert.equal(host.created.length, 2);
+  assert.equal(host.resolveCalls, host.created.length, "只解析新建会话，不复用旧会话");
+  assert.equal(host.followups.length, 2);
+  assert.match(host.followups[0].content[0].text, /一次性判断/);
+  assert.doesNotMatch(host.followups[0].content[0].text, /最近判断|人物档案/);
+  assert.equal(state.data.desk.dsh_session, "session-2");
+  assert.equal(state.data.desk.session_turns, 1);
 });

@@ -17,7 +17,7 @@
 | GET | `/api/inbox/cleanup` | — | 把未值守会话的待回批量标成 ignored |
 | GET | `/api/thread` | `platform`、`chat_id`、`fetch`、`limit` | 会话正文：默认在线拉 30 条；`fetch=1` 先补拉分类（**只读，不唤醒**；冷却中直接用本地指针）；失败回退本地 10 条并带 `offline` / `error` |
 | GET | `/api/chats` | — | 会话清单，含 `blocked` / `timer` / `timed` / `watching` / `wake_mode` / `mentionable` / `dsh_session` / `session_turns` / `turn_state` / `duty`；`mentionable=false` 表示该平台判不了 @（面板置灰「只盯 @我」）。工作区字段见下 |
-| GET | `/api/duty` | — | 值守候选：`enabled`、`counts`（排队/判断中/试用/失败/忽略/值守/复核 + 配额与上限）、`desk`（session_id/workspace/session_turns/session_max_turns/last_turn/last_error/baseline_at/last_sweep_at）、`last_sweep`、`items`（每个非 none 的会话 + duty） |
+| GET | `/api/duty` | — | 值守候选：`enabled`、`counts`（排队/判断中/试用/失败/忽略/值守/复核 + 配额与上限）、`desk`（session_id/workspace/session_turns/session_max_turns/last_turn/last_error/baseline_at/full_baseline_at/last_sweep_at）、`last_sweep`、`items`（每个非 none 的会话 + duty） |
 | GET | `/api/send` | `platform`、`chat_id`、`text`、`msg_id` | 以本人身份发出；不写发送历史 |
 | GET | `/api/state` | `platform`、`msg_id`、`state`、`chat_id` | 改最近 10 条里的一条：new / opened / replied / ignored；更早的返回 `not_cached` |
 | GET | `/api/watch` | `platform`、`chat_id`、`watching`、`name`、`kind`、`workspace` | 加入 / 移出值守；`workspace` 非空时一并绑定，空串不改变已有绑定。加入时把 `timer` 拉回 1（去掉「不盯」留下的 `-1`，否则看着在盯其实不拉），`wake_mode` 沿用上次设置；群首次加入默认 `wake_mode=mention`（只盯 @我），私聊默认 `all`（每条都唤醒）；要改得显式调 `/api/chat/mode`。**加入即开会话**（新加入或绑定会话缺了才开；已经盯上且有会话不重复开场）：补拉一次（`wake=false, force=true`，不推进水位）后起一轮开场 turn；失败不影响值守，只在返回的 `open: {ok, reason, skipped}` 里说明（真的在飞时 `skipped="running"`；已取消正在收尾的旧轮不算） |

@@ -358,10 +358,36 @@ export class Poller {
   async refreshChatlist(platforms) {
     // 飞书 +chat-list 的 --page-size 实测上限 100；配置允许 200 只是面板口径。
     const limit = Math.max(20, Math.min(Number(this.cfg.poll?.dm_recent) || 20, 100));
-    const baselineBefore = Number(this.state.data.desk?.baseline_at) || 0;
+    const desk = this.state.data.desk || (this.state.data.desk = {});
+    const baselineBefore = Number(desk.baseline_at) || 0;
+    const fullBefore = Number(desk.full_baseline_at) || 0;
+    // 首轮，或从 0.18.0 只拉了第一页升上来：先把全部已有群登记成存量。
+    const needFull = !baselineBefore || !fullBefore;
+    const baselineIds = new Set(Array.isArray(desk.baseline_group_ids) ? desk.baseline_group_ids : []);
     let anyOk = false;
+    let fullFailed = false;
     let queued = 0;
+    let fullIds = null;
     for (const p of platforms) {
+      if (needFull && p === "feishu") {
+        // 完整基线只取群，不把 3k+ p2p 灌进 state；结果只用于 baseline_group_ids。
+        try {
+          const all = await this.im.adapter(p).listChats(100, { all: true });
+          if (all.ok) {
+            fullIds = [...new Set(all.items
+              .filter((c) => c.kind === "group")
+              .map((c) => String(c.chat_id || ""))
+              .filter(Boolean))];
+          } else {
+            fullFailed = true;
+            if (all.error) this.logError(p, null, "chat-list full: " + String(all.error).slice(0, 200));
+          }
+        } catch (e) {
+          fullFailed = true;
+          this.logError(p, null, `chat-list full ${e?.name || "Error"}: ${e?.message || e}`);
+        }
+      }
+      // 日常列表始终走一页，用来维护面板/候选；完整基线只额外记 ID，不建 3k 个 chat。
       let r;
       try {
         r = await this.im.adapter(p).listChats(limit);
@@ -378,11 +404,14 @@ export class Poller {
       anyOk = true;
       for (const c of r.items) {
         const existed = !!this.state.getChat(p, c.chat_id);
+        const oldBaseline = !existed && baselineIds.has(String(c.chat_id || ""));
+        // 不在 state 里的完整基线圈：日常刷新不再建行，直接跳过。
+        if (oldBaseline && !needFull) continue;
         const chat = this.state.ensureChat(p, c.chat_id, { name: c.name, kind: c.kind });
-        if (!baselineBefore || !this.cfg.duty?.enabled) continue;
+        if (needFull || !baselineBefore || !this.cfg.duty?.enabled) continue;
         if (chat.kind !== "group" || chat.blocked || chat.watching) continue;
         if (chat.duty?.state && chat.duty.state !== "none") continue;
-        // 基线之前就在 state 里的群是存量；基线之后才首次见到的群一律算新群。
+        if (oldBaseline) continue;
         if (existed && Number(chat.added_at) <= baselineBefore) continue;
         if (!existed || chat.duty?.state === "none") {
           duty.newEvent(chat, "added");
@@ -390,14 +419,34 @@ export class Poller {
         }
       }
     }
-    if (anyOk && !baselineBefore) {
-      this.state.data.desk = this.state.data.desk || {};
-      this.state.data.desk.baseline_at = nowSec();
-      this.logger.info?.(`[im-standin] duty baseline at ${this.state.data.desk.baseline_at}`);
+    let fullSet = false;
+    let cleared = 0;
+    if (anyOk && needFull && !fullFailed) {
+      const now = nowSec();
+      if (!baselineBefore) desk.baseline_at = now;
+      desk.full_baseline_at = now;
+      if (fullIds) desk.baseline_group_ids = fullIds.slice(0, 10000);
+      fullSet = true;
+      // 升级清理：0.18.0 把第一页之后的旧群排成了 added 事件；完整登记后这些不是新群。
+      if (baselineBefore && !fullBefore) {
+        for (const c of this.state.listChats()) {
+          if (!["queued", "triaging"].includes(c.duty?.state) || c.duty?.trigger !== "added") continue;
+          c.duty.state = "none";
+          c.duty.trigger = "";
+          c.duty.event_id = "";
+          c.duty.event_at = 0;
+          c.duty.triaged_at = 0;
+          c.duty.attempts = 0;
+          c.duty.error = "";
+          cleared += 1;
+        }
+      }
+      this.logger.info?.(`[im-standin] duty full baseline at ${now}` +
+        (fullIds ? `; ${fullIds.length} groups in snapshot` : "") +
+        (cleared ? `; cleared ${cleared} queued added event(s)` : ""));
     }
-    if (queued || (!baselineBefore && anyOk)) this.state.save();
+    if (queued || fullSet) this.state.save();
   }
-
   candidates(platforms = this.cfg.platforms || []) {
     const out = [];
     for (const c of this.state.listChats()) {
@@ -1186,6 +1235,7 @@ export class Poller {
         last_turn: desk.last_turn || { ok: null, reason: "", at: 0 },
         last_error: String(desk.last_error || ""),
         baseline_at: Number(desk.baseline_at) || 0,
+        full_baseline_at: Number(desk.full_baseline_at) || 0,
         last_sweep_at: Number(desk.last_sweep_at) || 0,
       },
       last_sweep: this.lastSweep,
@@ -1260,7 +1310,7 @@ export class Poller {
       platform: "duty", label: "值守分诊", level: "ok", name: "候选与值守台",
       detail: `${di.counts.queued} 排队 / ${di.counts.trial} 试用 / ${di.counts.watch} 值守 · ` +
         `今日 ${di.counts.quota_used}/${di.counts.quota_max || "不限"} · ` +
-        `值守台 ${di.desk.session_turns}/${di.desk.session_max_turns || "不限"} 轮 · ` +
+        `值守台 ${di.desk.session_turns} 次判断（每次新建） · ` +
         `上次 @ 清查 ${di.desk.last_sweep_at ? new Date(di.desk.last_sweep_at * 1000).toLocaleString() : "未跑"}`,
     });
     const due = this.candidates(this.cfg.platforms || []);

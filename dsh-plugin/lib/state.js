@@ -66,7 +66,7 @@ export function defaultState() {
     desk: {
       workspace: "", dsh_session: "", session_bound_at: 0, session_turns: 0,
       prompt_session: "", last_turn: { ok: null, reason: "", at: 0 },
-      last_error: "", baseline_at: 0, last_sweep_at: 0,
+      last_error: "", baseline_at: 0, full_baseline_at: 0, baseline_group_ids: [], last_sweep_at: 0,
     },
     chats: {},
   };
@@ -235,6 +235,9 @@ export class State {
       if (!base.desk.last_turn || typeof base.desk.last_turn !== "object") {
         base.desk.last_turn = { ok: null, reason: "", at: 0 };
       }
+      base.desk.full_baseline_at = Math.max(0, Number(base.desk.full_baseline_at) || 0);
+      base.desk.baseline_group_ids = Array.isArray(base.desk.baseline_group_ids)
+        ? base.desk.baseline_group_ids.map(String).filter(Boolean).slice(0, 10000) : [];
       base.chats = {};
       for (const [key, chat] of Object.entries(raw.chats || {})) {
         const c = this.normalizeChat(chat);

@@ -84,6 +84,8 @@
 | last_turn | object | `ok` / `reason` / `at` |
 | last_error | string | 最近一次值守台启动/判断错误 |
 | baseline_at | number | 第一次成功刷会话列表的时刻；之前已在的群=存量，不分诊/不清查 |
+| full_baseline_at | number | 第一次**完整**登记群列表的时刻；0=还需要一次完整分页（0.18.0 升级补全） |
+| baseline_group_ids | array | 完整基线里的群 ID 集合（最多 10000）；日常刷新命中这些 ID 的旧群不再建行/排队 |
 | last_sweep_at | number | 上一次 @ 清查时刻 |
 
 ## recent 里的一条消息

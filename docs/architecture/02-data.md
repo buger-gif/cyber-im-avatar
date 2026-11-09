@@ -107,13 +107,14 @@ Markdown，都不在 `state.json` 里。**群两层，单聊一份**：
 ## 值守分诊：一次发现，@ 才重判
 
 - 第一次成功刷会话列表只建 `desk.baseline_at`；那一刻已在的群是**存量**，之后不读、不分诊、
-  不清查。基线之后新出现的群才进 `chats[].duty`，第一次判一次；之后不再定时判，只有**新的
-  个人 @** 才判第二次；没有 @ 不跑模型。已经在值守的群 @ 直接进群会话。
+  不清查。首轮/0.18.0 升级会做一次**完整分页**（`desk.full_baseline_at`），把第一页之后的旧群
+  也先登记成存量；否则旧群今天才出现会被误当新群。基线之后真正新出现的群才进 `chats[].duty`，
+  第一次判一次；之后只有**新的个人 @** 才判第二次；没有 @ 不跑模型。已经在值守的群 @ 直接进群会话。
 - 飞书用 `im +messages-search --is-at-me --chat-type group` 直接拉跨群 @我，一条搜索取代
   逐群扫；`--is-at-me` 会带 @all/@everyone，插件必须再用 `isMention` 过滤。钉钉没有 @我
   搜索，退回逐新群；企微没有 mentions，不扫。细节与缺口见 `references/feishu.md`。
-- 判定不放在群会话：一个全局值守台会话，cwd 固定 `<state.dir>/duty/`，只写
-  `decisions/<event_id>.json`；插件校验后执行。`policy.md` 在插件安装/启动时写入初始版本
+- 判定不放在群会话：cwd 固定 `<state.dir>/duty/`，每次判断**新建值守台会话**（一次性、无历史），
+  只写 `decisions/<event_id>.json`；插件校验后执行。`policy.md` 在插件安装/启动时写入初始版本
   （缺/空才补，已有内容不覆盖），agent 可自行维护。值守台按闲置 `2 × dsh.warm_min` 或
   `duty.session_max_turns` 轮换，旧会话不删。群会话仍在原工作区。
 - 自动开监听一律 `mention`；`duty.max_group_members`（默认 10，只数人）是硬门：超过或

@@ -268,3 +268,19 @@ test("feishu chatMembers counts users and reports truncation/unsupported", async
   assert.equal(r.ok, false);
   assert.equal(r.known, false);
 });
+
+test("feishu full baseline list uses page-all and page-size 100", async () => {
+  const a = new Adapter("feishu", { dir: "/nonexistent-im-test" });
+  let seen = null;
+  a.run = async (args) => {
+    seen = args;
+    return { rc: 0, raw: "", json: { data: { chats: [{ chat_id: "oc_g", name: "群", chat_mode: "group" }] } } };
+  };
+  const r = await a.listChats(100, { all: true });
+  assert.equal(r.ok, true);
+  assert.equal(r.items[0].chat_id, "oc_g");
+  assert.ok(seen.includes("--page-all"));
+  assert.equal(seen[seen.indexOf("--types") + 1], "group");
+  assert.ok(seen.includes("--page-limit"));
+  assert.ok(seen.includes("100"));
+});

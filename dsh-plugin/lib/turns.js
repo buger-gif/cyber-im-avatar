@@ -365,7 +365,7 @@ export function buildDeskPrompt(chat, {
   const parts = ["（值守台，不是客户消息）"];
   parts.push("你是值守台，不是群里的替身。只判断，不发消息、不拉历史、不运行 listen_cli。");
   parts.push(`值守台 · ${label} · ${name}`);
-  parts.push(`候选：${name}`);
+  parts.push("本轮是一次性判断：新会话、无历史；不要依赖上一轮或会话上下文。");
   parts.push(`chat_id：${chat?.chat_id || f.chat_id || ""}`);
   parts.push(`触发：${trigLabel}`);
   if (review) {
@@ -374,21 +374,13 @@ export function buildDeskPrompt(chat, {
   parts.push(`探针：最近 ${rows.length} 条（只读，未回复；媒体未取回）`);
   if (rows.length) parts.push(...rows);
   else parts.push("- （没有可读消息）");
-  const peopleBlock = personLines(people);
-  if (peopleBlock.length) parts.push(...peopleBlock);
   const count = Number(f.member_count) || 0;
   const limit = Number(f.member_limit) || 0;
   parts.push(`群成员：${count > 0 ? `${count} 人` : "未知"}（自动上限 ${limit || "不限"}；` +
     `${limit > 0 && (count <= 0 || count > limit) ? "超过/未知，自动只能 ignore，手动可开" : "可以自动判断"}）`);
   parts.push(`当前值守：${Number(f.watch_groups) || 0} 个群 / 上限 ${Number(f.watch_max) || "不限"}；` +
     `今日已分诊 ${Number(f.quota_used) || 0} / ${Number(f.quota_max) || "不限"}`);
-  const recent = Array.isArray(f.recent) ? f.recent : [];
-  if (recent.length) {
-    parts.push("最近判断：");
-    for (const x of recent) parts.push(`- ${sanitizeUntrusted(x.name)} → ${x.action}（${x.reason || "无理由"}）`);
-  }
-  parts.push(`值守方针：${f.policy_path || "（未提供）"}（存在时读；不存在写「暂无」）`);
-  parts.push("若用户在本会话给出长期偏好，按「值得值守 / 先试用 / 不盯 / 硬约束」四段更新它。");
+  parts.push(`值守方针：${f.policy_path || "（未提供）"}（可选读；判断口径仍以下面硬门为准）`);
   parts.push("你的任务：");
   parts.push("1. 判断这个群值不值得值守：watch / trial / ignore。");
   parts.push(`2. 只写决策文件：${f.decision_path || "（未提供）"}（字段见本 prompt；没有 mode，新群一律 mention）。`);
@@ -427,9 +419,9 @@ export function buildWarmPrompt(platform, chatName, chatId, {
   parts.push(`保温轮 · ${label} · ${safeName}` +
     (idleMin > 0 ? ` · 已闲置约 ${idleMin} 分钟` : ""));
   parts.push(`chat_id：${chatId}`);
+  const peopleBlock = personLines(people);
   const memory = memoryLine(bookPath, single);
   if (memory) parts.push(memory);
-  const peopleBlock = personLines(people);
   if (peopleBlock.length) parts.push(...peopleBlock);
   const legacy = legacyLine(legacyPath, legacyHistory);
   if (legacy) parts.push(legacy);
@@ -729,58 +721,17 @@ export class Turns {
     fs.mkdirSync(path.join(dir, "decisions"), { recursive: true, mode: 0o700 });
     try { fs.chmodSync(dir, 0o700); } catch { /* best effort */ }
     try { fs.chmodSync(path.join(dir, "decisions"), 0o700); } catch { /* best effort */ }
+    // 值守判断是一次性的：每次新建会话，不读也不复用 desk.dsh_session。
+    const made = await this.agentFromCreated(await this.sessionController.create({ cwd: dir }));
     desk.workspace = dir;
-    const cfg = this.state.data.config?.duty || {};
-    const maxTurns = Math.max(0, Number(cfg.session_max_turns) || 0);
-    const warmMin = this.warmMinutes();
-    const lastAt = Math.max(Number(desk.session_bound_at) || 0,
-      Number(desk.last_turn?.at) || 0);
-    if (desk.dsh_session && (
-      (maxTurns > 0 && Number(desk.session_turns) >= maxTurns) ||
-      (warmMin > 0 && lastAt && nowSec() - lastAt >= warmMin * 120)
-    )) {
-      this.logger.info?.(`[im-standin] desk rotate: turns=${desk.session_turns} idle=${Math.round(nowSec() - lastAt)}s`);
-      this.clearDeskBinding("");
-    }
-    let sid = String(desk.dsh_session || "");
-    let agent = null;
-    if (sid) {
-      try {
-        const resolved = await this.sessionController.resolveAgent(sid);
-        if (resolved?.agent && !resolved.error) {
-          const cwd = resolved.agent.session?.header?.cwd || resolved.agent.session?.cwd ||
-            resolved.agent.cwd || "";
-          const norm = cwd ? workspaces.normalize(cwd) : "";
-          if (!norm || norm === dir) agent = resolved.agent;
-          else this.clearDeskBinding("workspace_mismatch");
-        } else {
-          this.clearDeskBinding("missing");
-          sid = "";
-        }
-      } catch (e) {
-        if (e?.code === "session/not-found") {
-          this.clearDeskBinding("missing");
-          sid = "";
-        } else {
-          throw e;
-        }
-      }
-    }
-    if (!agent) {
-      const made = await this.agentFromCreated(await this.sessionController.create({ cwd: dir }));
-      agent = made.agent;
-      sid = made.sessionId;
-      desk.dsh_session = sid;
-      desk.session_bound_at = nowSec();
-      desk.session_turns = 0;
-      desk.prompt_session = "";
-      desk.last_error = "";
-      this.state.save();
-    }
-    desk.workspace = dir;
-    return { agent, sessionId: sid, cwd: dir };
+    desk.dsh_session = made.sessionId;
+    desk.session_bound_at = nowSec();
+    desk.session_turns = 0;
+    desk.prompt_session = "";
+    desk.last_error = "";
+    this.state.save();
+    return { agent: made.agent, sessionId: made.sessionId, cwd: dir };
   }
-
   /**
    * 值守台 turn：独立 desk session，不唤醒群、不 ack、不下载媒体、不 post-turn poll。
    * 启动后立即返回；onDone 在 runTurn 结束回调里读决策文件。
@@ -804,9 +755,8 @@ export class Turns {
       return { ok: false, reason: "desk_busy" };
     }
     const desk = this.state.data.desk || (this.state.data.desk = {});
-    const people = this.peopleFor(chat.platform, chat, messages, { cap: 5, p2pFallback: false });
     const prompt = buildDeskPrompt(chat, {
-      facts: { ...facts, event_id: eventId }, messages, people, review,
+      facts: { ...facts, event_id: eventId }, messages, review,
     });
     const message = await makeUserMessage(prompt);
     const fake = {

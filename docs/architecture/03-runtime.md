@@ -62,7 +62,7 @@ poller 判定命中
 
 ## 值守台与 @ 清查
 
-分诊不是群会话里的一轮，而是宿主内一个独立的**值守台会话**：
+分诊不是群会话里的一轮，而是宿主内一个独立的**值守台会话**；每次判断新建会话，不复用上下文：
 
 ```
 poller 发现新群 / sweep 命中 @
@@ -73,7 +73,7 @@ poller 发现新群 / sweep 命中 @
        └─ onDone → 读 decisions/<event_id>.json → 校验 → apply → 删除
 ```
 
-- 值守台一个全局会话，按闲置 `2 × dsh.warm_min` 或 `duty.session_max_turns` 解绑重开；
+- 每次判断都 `sessionController.create({cwd})` 新建会话，不使用 `desk.dsh_session` 复用；
   旧会话留在 DSH 历史，不删。它不写群的 `last_turn`/`session_turns`。
 - 读接口 `GET /api/duty` 与手动 `POST /api/duty/triage`；手动事件 `trigger=manual`。
 - `sweep` 每 `duty.sweep_min`（默认 10）跑：飞书一条 `--is-at-me` 搜索，钉钉逐新群回退，
