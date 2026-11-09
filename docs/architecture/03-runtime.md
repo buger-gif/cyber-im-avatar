@@ -60,6 +60,28 @@ poller 判定命中
   `POST /api/chat/wake`。手动 `/api/poll` 受 `cooldown_sec` 约束，post-turn 补拉是唯一 `force` 例外。
 - 富媒体失败只降级：下载超时/失败/未适配写进 prompt；媒体 7 天/单会话 200MB 清理。
 
+## 值守台与 @ 清查
+
+分诊不是群会话里的一轮，而是宿主内一个独立的**值守台会话**：
+
+```
+poller 发现新群 / sweep 命中 @
+  └─ probe（10 条 + 成员数，消费水位）→ turns.deskTriage
+       ├─ resolveDesk：cwd=<state.dir>/duty/， create({cwd})；不注册工作区
+       ├─ buildDeskPrompt：事实 + 硬门 + 决策路径；不加载完整 skill
+       ├─ agent.followup；听 turn/end
+       └─ onDone → 读 decisions/<event_id>.json → 校验 → apply → 删除
+```
+
+- 值守台一个全局会话，按闲置 `2 × dsh.warm_min` 或 `duty.session_max_turns` 解绑重开；
+  旧会话留在 DSH 历史，不删。它不写群的 `last_turn`/`session_turns`。
+- 读接口 `GET /api/duty` 与手动 `POST /api/duty/triage`；手动事件 `trigger=manual`。
+- `sweep` 每 `duty.sweep_min`（默认 10）跑：飞书一条 `--is-at-me` 搜索，钉钉逐新群回退，
+  企微跳过；只处理基线之后、未值守的新群；`@all` 不算；`sweep_epoch` 去重。清查本身
+  0 token，命中个人 @ 才起一次分诊。
+- 硬门：`trial_hours=0` 拒绝 trial；`max_group_members` 超过/未知拒绝 watch/trial；
+  `all` 一律拒绝；平台判不了 @ 只能 ignore。用户手动入口不受自动硬门限制。
+
 ## 配置
 
 键、默认值、取值范围以 `docs/specs/contracts/03-config.md` 为准（测试对账）。

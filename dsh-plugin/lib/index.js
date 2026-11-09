@@ -23,6 +23,7 @@ import { Poller } from "./poller.js";
 import { Turns } from "./turns.js";
 import { TurnLog } from "./turn-log.js";
 import { App } from "./app.js";
+import { ensureDutyDir } from "./duty.js";
 import { ensureSkill } from "./skill-install.js";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
@@ -67,6 +68,12 @@ function boot() {
   if (app) return app;
   state = new State();
   state.load();
+  // 插件安装/首次启动就初始化私有值守台目录与初始 policy.md；本地缺文件也在这里补。
+  try {
+    ensureDutyDir(state);
+  } catch (e) {
+    console.warn(LOG, "duty dir init failed:", e?.message || e);
+  }
   profiles = new Profiles(state.dir);
   media = new MediaStore(state.dir);
   turnLog = new TurnLog(state.dir, { logger: console });

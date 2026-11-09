@@ -6,7 +6,7 @@ import test from "node:test";
 
 import { State } from "../lib/state.js";
 import { Profiles } from "../lib/profiles.js";
-import { Turns, buildOpenPrompt, buildWakePrompt, buildWarmPrompt, sanitizeUntrusted, turnWatchdog } from "../lib/turns.js";
+import { Turns, buildDeskPrompt, buildOpenPrompt, buildWakePrompt, buildWarmPrompt, sanitizeUntrusted, turnWatchdog } from "../lib/turns.js";
 import { TurnLog } from "../lib/turn-log.js";
 
 function recent(n = 2) {
@@ -1372,4 +1372,60 @@ test("turn watchdog with capSec=0 has no total cap (spec 0034)", async () => {
   await new Promise((resolve) => setTimeout(resolve, 120));
   wd.stop();
   assert.deepEqual(fired, [], "0 = 不设总上限");
+});
+
+
+test("desk prompt is compact, carries member cap and decision path, and never loads skill", () => {
+  const prompt = buildDeskPrompt(
+    { platform: "feishu", chat_id: "oc_g", name: "项目群" },
+    {
+      facts: {
+        platform: "feishu", trigger: "sweep", member_count: 8, member_limit: 10,
+        watch_groups: 2, watch_max: 20, quota_used: 1, quota_max: 20,
+        policy_path: "/tmp/duty/policy.md", decision_path: "/tmp/duty/decisions/d-1.json",
+        trial_hours: 0, recent: [],
+      },
+      messages: [{
+        msg_id: "m1", sender_id: "ou_x", sender_name: "同事", content: "周三前给排期",
+        ts: "t1", ts_epoch: 101, kind: "mention", state: "new",
+      }],
+      people: [],
+    });
+  assert.match(prompt, /值守台/);
+  assert.match(prompt, /群成员：8 人/);
+  assert.match(prompt, /自动上限 10/);
+  assert.match(prompt, /\/tmp\/duty\/decisions\/d-1\.json/);
+  assert.match(prompt, /定期清查/);
+  assert.match(prompt, /只允许 mention/);
+  assert.equal(prompt.includes("/cyber-im-avatar"), false);
+});
+
+test("desk triage starts a private-cwd session, updates desk state, and runs onDone", async () => {
+  const { dir, state, chat, host, turns } = setup({ kind: "group", reply: "已判断" });
+  const done = [];
+  const r = await turns.deskTriage(chat, {
+    eventId: "d-test", trigger: "added",
+    messages: [{
+      msg_id: "m1", sender_id: "ou_x", sender_name: "同事", content: "排期一下",
+      ts: "t1", ts_epoch: 101, kind: "mention", state: "new",
+    }],
+    facts: {
+      trigger: "added", member_count: 8, member_limit: 10, watch_groups: 0,
+      watch_max: 20, quota_used: 0, quota_max: 20, trial_hours: 0,
+      policy_path: path.join(dir, "duty", "policy.md"),
+      decision_path: path.join(dir, "duty", "decisions", "d-test.json"),
+      recent: [],
+    },
+    onDone: (x) => done.push(x),
+  });
+  assert.equal(r.ok, true);
+  assert.equal(host.created.length, 1);
+  assert.equal(host.created[0].cwd, path.join(dir, "duty"));
+  assert.match(host.followups[0].content[0].text, /值守台/);
+  await new Promise((res) => setTimeout(res, 5));
+  assert.equal(done.length, 1);
+  assert.equal(state.data.desk.dsh_session, "session-1");
+  assert.equal(state.data.desk.session_turns, 1);
+  assert.equal(state.data.desk.last_turn.ok, true);
+  assert.equal(turns.deskBusy(), false);
 });

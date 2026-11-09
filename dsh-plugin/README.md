@@ -157,6 +157,24 @@ agent 在这一轮里自己用 `lark-cli` 拉上下文、去绑定工作区核�
 显式工作区目录存在但未登记进 DSH 时，仍先恢复旧会话，不会每轮白开新的。
 
 
+## 值守分诊（新群 / @ 兜底）
+
+新群不是自动全量盯：第一次成功刷会话列表只建基线，存量群完全不看；基线之后的新群判一次，
+之后只在**新的个人 @** 时再判一次。没有 @ 不跑模型；已经在值守的群 @ 直接进群会话。
+
+| 平台 | 拉 @我 | 群成员数 | 自动开监听 |
+| --- | --- | --- | --- |
+| 飞书 | `im +messages-search --is-at-me` 一条搜索（**会带 @all，必须过滤**） | `+chat-members-list` 只数 users；truncations=未知 | 可；≤10 人 |
+| 钉钉 | 没有 @我 搜索，逐新群 `+chat-messages` 回退 | 当前没有成员列表命令 | 只能手动（人数未知） |
+| 企业微信 | 没有 mentions / 会话枚举 | 没有 | 只能手动 |
+
+判定在独立的**值守台**：cwd `<state.dir>/duty/`，私有、不注册工作区；插件安装/启动时
+写入初始 `policy.md`（缺/空才补，已有内容不覆盖），agent 只写 `decisions/<event_id>.json`，
+插件校验后执行。`trial_hours=0` 默认关（严格两段式）；
+`max_group_members=10`（0=不限）只数人，超过/未知时自动只能 ignore，手动可开。
+`GET /api/duty` 看候选，`POST /api/duty/triage` 手动重判。详细契约见
+`docs/specs/contracts/01-api.md`、`02-storage.md`、`03-config.md`。
+
 ## 拉取节奏：定时 / 按需 / 手动
 
 | 路径 | 什么时候发生 | 拉什么 |
@@ -361,6 +379,7 @@ agent 在这一轮里自己用 `lark-cli` 拉上下文、去绑定工作区核�
 | 路径 | 作用 |
 | --- | --- |
 | `GET /api/status` `/api/thread` `/api/chats` | 面板数据（`/api/status` 带 `instances` / `turns` / `dsh`） |
+| `GET /api/duty` · `POST /api/duty/triage` | 值守候选 / 手动让值守台判断 |
 | `POST /api/send` `/api/state` | 手动发送、标记消息状态 |
 | `POST /api/watch` `/api/unwatch` | 加入 / 移出值守（加入时带 `workspace` 一并绑定） |
 | `POST /api/chat/session/reset` | 重开会话：可带 `workspace` 先落工作区；打断在飞 turn、解绑当前 DSH 会话，值守中立刻在新会话里开场 |
@@ -377,7 +396,9 @@ agent 在这一轮里自己用 `lark-cli` 拉上下文、去绑定工作区核�
 
 ## 已知限制
 
-- 企业微信 CLI 没有会话枚举接口，只能对已登记的会话值守（面板里手动加）。
+- 企业微信 CLI 没有会话枚举接口，只能对已登记的会话值守（面板里手动加）。自动分诊的 @ 清查和群成员上限也因此只能手动。
+- 钉钉没有跨群 @我 搜索，清查退回逐新群；也没有成员列表命令，自动开监听一律只能 ignore（手动可开）。
+- 飞书 `--is-at-me` 会返回 @all / @everyone，插件用结构化 mentions 过滤；缺 mentions 的 @all 不会被当成个人 @。
 - 群消息里的 @ 用 mentions 的 open_id 精确判定；缺少 mentions 且只剩 `@_user_N`
   占位符时按「不是 @我」处理。企微既没有 mentions、也拿不到本人显示名，所以
   「只盯 @我」（群与私聊）在企微上不会触发，面板把该选项置灰。

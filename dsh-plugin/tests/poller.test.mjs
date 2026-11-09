@@ -21,7 +21,13 @@ class FakeAdapter {
     this.chats = [];
     this.calls = [];
     this.listCalls = 0;
+    this.atMeCalls = 0;
+    this.atMe = [];
+    this.memberCount = 8;
+    this.memberKnown = true;
     this.self = { ok: true, self_id: "ou_me", name: "我", detail: "" };
+    this.supportsAtMe = true;
+    this.canMention = true;
   }
   async whoami() { return this.self; }
   async fetchMessages(chatId, { limit = 10 } = {}) {
@@ -29,6 +35,8 @@ class FakeAdapter {
     return { ok: true, messages: this.messages.slice(0, limit) };
   }
   async listChats() { this.listCalls += 1; return { ok: true, items: this.chats }; }
+  async searchAtMe() { this.atMeCalls += 1; return { ok: true, items: this.atMe }; }
+  async chatMembers() { return { ok: true, known: this.memberKnown, count: this.memberCount }; }
   async sendText() { return { ok: true, message_id: "om_sent" }; }
   async search() { return { ok: true, items: [] }; }
   async searchChats() { return { ok: true, items: [] }; }
@@ -801,4 +809,146 @@ test("heartbeat skips a platform whose auth is gone", async () => {
   poller.identity.feishu = { ok: true, self_id: "ou_me" };
   assert.equal(await poller.maybeWarm(), true);
   assert.equal(turns.warmCalls, 1);
+});
+
+
+test("duty baseline queues only groups added after the baseline", async () => {
+  const { state, poller, adapter } = setup();
+  adapter.chats = [{ chat_id: "oc_old", name: "已有群", kind: "group" }];
+  await poller.refreshChatlist(["feishu"]);
+  assert.ok(state.data.desk.baseline_at > 0);
+  const old = state.getChat("feishu", "oc_old");
+  assert.equal(old.duty.state, "none");
+
+  adapter.chats.push({ chat_id: "oc_new", name: "新群", kind: "group" });
+  await poller.refreshChatlist(["feishu"]);
+  const fresh = state.getChat("feishu", "oc_new");
+  assert.equal(fresh.duty.state, "queued");
+  assert.equal(fresh.duty.trigger, "added");
+  assert.equal(old.duty.state, "none");
+});
+
+test("feishu sweep uses one at-me search and ignores existing groups/@all", async () => {
+  const { state, poller, adapter } = setup();
+  const now = Date.now() / 1000;
+  state.data.desk.baseline_at = now - 100;
+  const old = state.ensureChat("feishu", "oc_old", { name: "已有群", kind: "group" });
+  old.added_at = now - 200;
+  const fresh = state.ensureChat("feishu", "oc_new", { name: "新群", kind: "group" });
+  fresh.added_at = now - 10;
+  adapter.atMe = [
+    { msg_id: "om_1", sender_id: "ou_x", sender_name: "同事", content: "排期",
+      ts_epoch: now - 5, mentions: [{ id: "ou_me" }], chat_id: "oc_new", chat_name: "新群" },
+    { msg_id: "om_2", sender_id: "ou_x", sender_name: "同事", content: "@all 通知",
+      ts_epoch: now - 5, mentions: [], chat_id: "oc_old", chat_name: "已有群" },
+  ];
+  await poller.maybeSweep();
+  assert.equal(adapter.atMeCalls, 1);
+  assert.equal(fresh.duty.state, "queued");
+  assert.equal(fresh.duty.trigger, "sweep");
+  assert.equal(old.duty.state, "none");
+});
+
+test("probe stores member count and the desk facts include it", async () => {
+  const { state, poller, adapter } = setup();
+  const chat = state.ensureChat("feishu", "oc_g", { name: "项目群", kind: "group" });
+  adapter.memberCount = 11;
+  const msgs = [msg("m1", 1010, { mentions: [{ id: "ou_me" }] })];
+  adapter.messages = msgs;
+  const out = await poller.probeForDuty(chat);
+  assert.equal(out.length, 1);
+  assert.equal(chat.duty.member_count, 11);
+  const facts = poller.dutyFacts(chat);
+  assert.equal(facts.member_count, 11);
+  assert.equal(facts.member_limit, 10);
+  assert.equal(out[0].kind, "mention");
+});
+
+
+function duty_new(chat) {
+  chat.duty = { ...chat.duty, state: "queued", trigger: "added",
+    event_id: "d-" + Math.random().toString(16).slice(2), event_at: Date.now() / 1000,
+    attempts: 0, error: "" };
+}
+
+test("queued duty triage opens the desk and applies a valid decision file", async () => {
+  const { state, poller, adapter } = setup();
+  const now = Date.now() / 1000;
+  const chat = state.ensureChat("feishu", "oc_triage", { name: "新项目群", kind: "group" });
+  chat.added_at = now;
+  adapter.messages = [msg("m1", now - 1, { mentions: [{ id: "ou_me" }] })];
+  duty_new(chat);
+  const opened = [];
+  poller.turns = {
+    hostReady: () => true,
+    deskBusy: () => false,
+    profiles: { ensureMemory() {} },
+    async deskTriage(c, { eventId, onDone }) {
+      const file = path.join(state.dir, "duty", "decisions", `${eventId}.json`);
+      fs.mkdirSync(path.dirname(file), { recursive: true });
+      fs.writeFileSync(file, JSON.stringify({
+        version: 1, decision_id: eventId, platform: "feishu", chat_id: "oc_triage",
+        action: "watch", reason: "项目群，@ 你排期", confidence: 0.8,
+      }));
+      await onDone({ ok: true });
+      return { ok: true, started: true };
+    },
+    async open(c, opts) { opened.push(opts); return { ok: true }; },
+    cancel() {},
+  };
+  await poller.maybeTriage();
+  assert.equal(chat.watching, true);
+  assert.equal(chat.timer, 1);
+  assert.equal(chat.duty.state, "watch");
+  assert.equal(chat.duty.trigger, "mentioned");
+  assert.equal(opened.length, 1);
+  assert.equal(fs.existsSync(path.join(state.dir, "duty", "decisions", `${chat.duty.event_id}.json`)), false);
+});
+
+test("sweep probe is read-only: no recent/watermark changes, only sweep_epoch", async () => {
+  const { state, poller, adapter } = setup();
+  const chat = state.ensureChat("feishu", "oc_sweep", { name: "新群", kind: "group" });
+  chat.last_epoch = 100;
+  chat.last_msg_id = "m0";
+  chat.recent = [{ msg_id: "m0", kind: "fyi", state: "ignored", content: "" }];
+  adapter.messages = [msg("m2", 200, { mentions: [{ id: "ou_me" }] })];
+  await poller.probeForDuty(chat, { readOnly: true });
+  assert.equal(chat.last_epoch, 100);
+  assert.equal(chat.last_msg_id, "m0");
+  assert.deepEqual(chat.recent.map((m) => m.msg_id), ["m0"]);
+  assert.equal(chat.duty.sweep_epoch, 200);
+});
+
+test("trial review runs once and applies ignore; attempts are reset on success", async () => {
+  const { state, poller, adapter } = setup();
+  const chat = state.ensureChat("feishu", "oc_review", { name: "试用群", kind: "group" });
+  chat.watching = true;
+  chat.timer = 1;
+  chat.wake_mode = "mention";
+  chat.duty.state = "trial";
+  chat.duty.review_at = Date.now() / 1000 - 5;
+  chat.duty.attempts = 0;
+  chat.duty.member_count = 8;
+  adapter.messages = [msg("m1", Date.now() / 1000 - 10)];
+  poller.turns = {
+    hostReady: () => true,
+    deskBusy: () => false,
+    profiles: { ensureMemory() {} },
+    async deskTriage(c, { eventId, onDone }) {
+      const file = path.join(state.dir, "duty", "decisions", `${eventId}.json`);
+      fs.mkdirSync(path.dirname(file), { recursive: true });
+      fs.writeFileSync(file, JSON.stringify({
+        version: 1, decision_id: eventId, platform: "feishu", chat_id: "oc_review",
+        action: "ignore", reason: "试用期没有工作信号", confidence: 0.8,
+      }));
+      await onDone({ ok: true });
+      return { ok: true, started: true };
+    },
+    cancel() {},
+  };
+  await poller.maybeReview();
+  assert.equal(chat.watching, false);
+  assert.equal(chat.duty.state, "ignore");
+  assert.equal(chat.duty.attempts, 0);
+  assert.equal(chat.duty.review_at, 0);
 });

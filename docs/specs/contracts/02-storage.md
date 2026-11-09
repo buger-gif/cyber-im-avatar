@@ -15,6 +15,7 @@
 | config | object | 见契约 03 |
 | paused | bool | 暂停定时轮询（不影响在飞 turn） |
 | runtime | object | `cycles` / `last_cycle_at` / `last_cycle_ms` / `last_result`；给体检页显示，丢了不影响值守 |
+| desk | object | 值守台的全局状态；见「desk 对象」 |
 | chats | object | `"<platform>:<chat_id>"` → 会话对象 |
 
 ## chats 里的会话对象
@@ -45,11 +46,45 @@
 | last_turn | object | `ok` / `reason` / `at`；重启时未完成的 turn 记为 `restarted` |
 | wake | object | `at` / `failed` / `turn_id` / `active`；失败的下一轮重试，成功但未回复不重喊 |
 | added_at | number | 入库时刻 |
+| duty | object | 值守分诊记录；见「duty 对象」 |
 | recent | array | 最近消息指针，最多 10 条，最新在前；字段见下 |
 | prompt_session | string | 已消费过唤醒载荷的 DSH session id；用于判断首轮是否带完整上下文（`/cyber-im-avatar`、chat_id、运行形态、画像路径），之后只追加消息行 |
 | last_warm_at | number | 最近一次保温轮的墙钟时刻（epoch 秒）；每段连续闲置最多写一次，失败也写，`0` = 没跑过或刚换过会话。不推进闲置时钟 |
 | last_warm_ok | bool/null | 最近一次保温轮结果；null = 没跑过或刚换过会话，失败不覆盖 `last_error` |
 | last_reset | object | `at` / `reason`；reason = `idle`（保温一次后第二个周期仍无新消息）/ `manual` / `workspace` / `missing`；`at=0` 表示没重开过 |
+
+## duty 对象
+
+| 键 | 类型 | 说明 |
+| --- | --- | --- |
+| state | string | `none` / `queued` / `triaging` / `watch` / `trial` / `reviewing` / `ignore` / `failed` |
+| trigger | string | `added` / `mentioned` / `manual` / `review` / `sweep`；空=没进过事件 |
+| event_id | string | 当前事件 ID；决策文件用 |
+| event_at | number | 事件入队时刻 |
+| triaged_at | number | 最近一次非复核分诊开始时刻；配额按今天计数；复核不写 |
+| decided_at | number | 最近一次判断完成时刻 |
+| by | string | `agent` / `user` / `system` |
+| reason | string | 单行理由，≤160 字 |
+| confidence | number | 0–1 |
+| review_at | number | trial 到期复核时刻；0=非试用 |
+| attempts | number | 自动启动次数；≥2 记 failed |
+| error | string | 最近失败原因（`no_decision` / `invalid` / `group_too_large` / `member_unknown` …） |
+| sweep_epoch | number | @ 清查水位；清理记录时保留 |
+| member_count | number | 群成员数（只数人）；0=未知；清理记录时保留 |
+
+## desk 对象
+
+| 键 | 类型 | 说明 |
+| --- | --- | --- |
+| workspace | string | 固定 `<state.dir>/duty/`；私有工作区，不注册到 DSH |
+| dsh_session | string | 值守台会话 id；空=还没开 |
+| session_bound_at | number | 当前值守台会话绑定时刻 |
+| session_turns | number | 当前值守台会话累计的插件 turn 数 |
+| prompt_session | string | 已消费过值守台载荷的 session id（预留） |
+| last_turn | object | `ok` / `reason` / `at` |
+| last_error | string | 最近一次值守台启动/判断错误 |
+| baseline_at | number | 第一次成功刷会话列表的时刻；之前已在的群=存量，不分诊/不清查 |
+| last_sweep_at | number | 上一次 @ 清查时刻 |
 
 ## recent 里的一条消息
 

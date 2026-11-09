@@ -14,6 +14,7 @@
 ├── persona.md            本人语气（学风格产出，只含风格不含事实）
 ├── profiles/people/<platform>/<person_id>.md  人物档案（跨会话，键＝消息发送者 ID；单聊只有这一份）
 ├── profiles/<platform>/<chat_id>.md           会话工作本（仅群：本群成立的规矩与上下文）
+├── duty/                 私有值守台：policy.md（初始版本）+ decisions/<event_id>.json
 ├── digest/               每日关注摘要（一个日期一份，agent 写、插件只读）
 ├── media/                唤醒时取回的媒体（7 天 / 单会话 200MB 清理）
 ├── states/*.pos          监听水位（skill 形态）
@@ -26,12 +27,14 @@
 `logs/turns.jsonl` 只记事件名、平台 / 会话 ID、turn ID、耗时与原因，**不记正文、发送者与聊天名**；
 512 KiB 轮转为 `turns.1.jsonl`，写失败只降级，不影响值守。它是排障流水，不是消息历史。
 
-## 一个文件，三层
+## 一个文件，几层记录
 
 | 层 | 一行是什么 | 关键字段 |
 | --- | --- | --- |
 | `config` | 插件配置，改动即时生效 | `poll.*`、`platforms`、`dsh.timeout`、`dsh.full_access`、`dsh.warm_min` |
 | `chats` | 一个会话（一个人或一个群） | `watching`、`timer`、`wake_mode`、`blocked`、`last_msg_id`、`last_epoch`、`dsh_session`、`prompt_session`、`last_warm_at`、`last_reset` |
+| `desk` | 全局值守台（一个会话） | `workspace`、`dsh_session`、`baseline_at`、`last_sweep_at`、`session_turns` |
+| `chats[].duty` | 一个会话的分诊记录 | `state`、`trigger`、`event_id`、`member_count`、`sweep_epoch`、`review_at` |
 | `chats[].recent` | 最近 10 条消息**指针** | `kind`(dm/mention/fyi/out)、`state`(new/opened/replied/ignored)、`msg_id`、`msg_type`、`app_link`、`media_id`、`media_paths` |
 
 `recent` 不是聊天记录库：最多 10 条、最新在前，`content` 只在 `new`/`opened` 的私聊与 @我 上保留；
@@ -100,6 +103,22 @@ Markdown，都不在 `state.json` 里。**群两层，单聊一份**：
 
 插件壳支持 `feishu` / `wecom` / `dingtalk`，`config.platforms` 是启用开关（默认前两个）。
 没启用的平台不跑 `whoami`、不轮询；存量 `dingtalk` 会话保留在 state，启用后照常拉取。
+
+## 值守分诊：一次发现，@ 才重判
+
+- 第一次成功刷会话列表只建 `desk.baseline_at`；那一刻已在的群是**存量**，之后不读、不分诊、
+  不清查。基线之后新出现的群才进 `chats[].duty`，第一次判一次；之后不再定时判，只有**新的
+  个人 @** 才判第二次；没有 @ 不跑模型。已经在值守的群 @ 直接进群会话。
+- 飞书用 `im +messages-search --is-at-me --chat-type group` 直接拉跨群 @我，一条搜索取代
+  逐群扫；`--is-at-me` 会带 @all/@everyone，插件必须再用 `isMention` 过滤。钉钉没有 @我
+  搜索，退回逐新群；企微没有 mentions，不扫。细节与缺口见 `references/feishu.md`。
+- 判定不放在群会话：一个全局值守台会话，cwd 固定 `<state.dir>/duty/`，只写
+  `decisions/<event_id>.json`；插件校验后执行。`policy.md` 在插件安装/启动时写入初始版本
+  （缺/空才补，已有内容不覆盖），agent 可自行维护。值守台按闲置 `2 × dsh.warm_min` 或
+  `duty.session_max_turns` 轮换，旧会话不删。群会话仍在原工作区。
+- 自动开监听一律 `mention`；`duty.max_group_members`（默认 10，只数人）是硬门：超过或
+  人数未知只能 `ignore`，手动可强制。已经在值班的群后来变大不自动停。常见原因：
+  DingTalk/WeCom 没有成员列表，自动只能忽略；飞书 `truncations[]` 也按未知。
 
 ## 拉取节奏：快慢两条车道，三条按需路径
 

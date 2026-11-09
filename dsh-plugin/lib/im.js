@@ -74,6 +74,15 @@ export const ADAPTERS = {
     cmd_search: ["contact", "+search-user", "--query", "{q}", "--as", "user"],
     cmd_chat_search: ["im", "+chat-search", "--as", "user", "--query", "{q}",
       "--page-size", "{limit}"],
+    cmd_at_me: ["im", "+messages-search", "--is-at-me", "--chat-type", "group",
+      "--start", "{start}", "--end", "{end}", "--page-all", "--page-limit", "20",
+      "--no-reactions", "--format", "json"],
+    cmd_chat_members: ["im", "+chat-members-list", "--chat-id", "{chat_id}",
+      "--member-types", "user", "--page-all", "--format", "json"],
+    f_at_messages: [["data", "messages"]],
+    f_at_chat_name: [["chat_name"], ["chat", "name"]],
+    f_at_members: [["data", "users"], ["data", "items"], ["users"], ["items"]],
+    f_at_truncations: [["data", "truncations"], ["truncations"]],
     f_items: [["data", "messages"], ["data", "items"], ["messages"], ["items"]],
     f_chats: [["data", "chats"], ["chats"]],
     f_msg_id: [["message_id"]],
@@ -202,6 +211,16 @@ export function parseTs(value) {
 /** 钉钉会话 ID 形如 cidr…=（单聊 / 群都可能是它）；其它一律当 userId 走 --user。 */
 export function dingtalkIsConversation(chatId) {
   return /^cidr/i.test(String(chatId || ""));
+}
+
+function isoWithOffset(d) {
+  const p = (n) => String(n).padStart(2, "0");
+  const off = -d.getTimezoneOffset();
+  const sign = off >= 0 ? "+" : "-";
+  const abs = Math.abs(off);
+  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}T` +
+    `${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}` +
+    `${sign}${p(Math.floor(abs / 60))}:${p(abs % 60)}`;
 }
 
 function timeWindow(lookbackMin) {
@@ -609,6 +628,69 @@ export class Adapter {
     const m = pat && raw ? pat.exec(raw) : null;
     if (m) return { ok: true, self_id: m[1], name, detail: "text-mode" };
     return { ok: false, self_id: selfId || null, name, detail: redact(raw || "未登录", 300) };
+  }
+
+  /** 该平台是否支持直接拉「@我」消息：目前只有飞书 `+messages-search --is-at-me`。 */
+  get supportsAtMe() {
+    return !!this.ad.cmd_at_me;
+  }
+
+  /** 该平台是否能拿到群成员数：目前只有飞书 `+chat-members-list`。 */
+  get supportsMembers() {
+    return !!this.ad.cmd_chat_members;
+  }
+
+  /**
+   * 直接拉 @我 的消息（跨群）。飞书的 `--is-at-me` 也会带 @all，
+   * 调用方必须再用 isMention 过滤。没有该能力的平台返回 unsupported。
+   */
+  async searchAtMe({ start, end } = {}) {
+    if (!this.ad.cmd_at_me) {
+      return { ok: false, unsupported: true, items: [], error: "at_me_unavailable" };
+    }
+    const now = new Date();
+    const from = start ? new Date(start) : new Date(now.getTime() - 24 * 3600 * 1000);
+    const to = end ? new Date(end) : now;
+    const kw = { start: isoWithOffset(from), end: isoWithOffset(to) };
+    const { rc, json, raw } = await this.run(this.argv(this.ad.cmd_at_me, kw), 60);
+    if (rc !== 0 || !json) {
+      return { ok: false, items: [], error: redact(raw || `rc=${rc}`, 300) };
+    }
+    const rows = dig(json, this.ad.f_at_messages);
+    if (rows === undefined || rows === null) {
+      return { ok: false, items: [], error: "SCHEMA_MISMATCH " + redact(JSON.stringify(outline(json)), 300) };
+    }
+    const items = [];
+    for (const it of (Array.isArray(rows) ? rows : [])) {
+      const m = this.norm(it);
+      if (!m) continue;
+      m.chat_id = String(it.chat_id || "");
+      m.chat_name = String(dig(it, this.ad.f_at_chat_name) || m.chat_id);
+      if (m.chat_id) items.push(m);
+    }
+    return { ok: true, items, error: "" };
+  }
+
+  /**
+   * 群成员数（只数人）。飞书 `truncations[]` 非空表示服务端截断，
+   * 人数不可信，known=false；调用方据此关闭自动 watch。
+   */
+  async chatMembers(chatId) {
+    if (!this.ad.cmd_chat_members) {
+      return { ok: false, known: false, count: 0, error: "members_unavailable" };
+    }
+    const { rc, json, raw } = await this.run(
+      this.argv(this.ad.cmd_chat_members, { chat_id: String(chatId || "") }), 60);
+    if (rc !== 0 || !json) {
+      return { ok: false, known: false, count: 0, error: redact(raw || `rc=${rc}`, 300) };
+    }
+    const users = dig(json, this.ad.f_at_members);
+    if (!Array.isArray(users)) {
+      return { ok: false, known: false, count: 0, error: "SCHEMA_MISMATCH users" };
+    }
+    const trunc = dig(json, this.ad.f_at_truncations);
+    const known = !(Array.isArray(trunc) && trunc.length);
+    return { ok: true, known, count: users.length, error: known ? "" : "truncated" };
   }
 
   async fetchMessages(chatId, { limit = 10, lookbackMin } = {}) {

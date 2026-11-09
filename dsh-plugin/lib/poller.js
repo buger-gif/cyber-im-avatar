@@ -15,6 +15,7 @@ import { fileURLToPath } from "node:url";
 
 import { isMention, PLATFORM_META } from "./im.js";
 import { chatKey, RECENT_LIMIT, SUPPORTED_PLATFORMS } from "./state.js";
+import * as duty from "./duty.js";
 
 
 function nowSec() {
@@ -53,6 +54,9 @@ export class Poller {
     this.lastFast = {};
     // 本人 @ 自己的唤醒时间：只用于防回环熔断，不落 state。
     this.cmdWakes = new Map();
+    this.dutyLock = false;
+    this.dutyLastCleanup = 0;
+    this.lastSweep = { at: 0, ok: null, scanned: 0, queued: 0, error: "" };
   }
 
   get cfg() {
@@ -126,6 +130,11 @@ export class Poller {
     } catch (e) {
       this.logError(null, null, (full ? "cycle: " : "fast cycle: ") +
         (e && e.message ? e.message : e));
+    }
+    try {
+      await this.maybeDuty();
+    } catch (e) {
+      this.logError(null, null, "duty: " + (e && e.message ? e.message : e));
     }
     try {
       await this.maybeWarm();
@@ -349,6 +358,9 @@ export class Poller {
   async refreshChatlist(platforms) {
     // 飞书 +chat-list 的 --page-size 实测上限 100；配置允许 200 只是面板口径。
     const limit = Math.max(20, Math.min(Number(this.cfg.poll?.dm_recent) || 20, 100));
+    const baselineBefore = Number(this.state.data.desk?.baseline_at) || 0;
+    let anyOk = false;
+    let queued = 0;
     for (const p of platforms) {
       let r;
       try {
@@ -363,10 +375,27 @@ export class Poller {
         }
         continue;
       }
+      anyOk = true;
       for (const c of r.items) {
-        this.state.ensureChat(p, c.chat_id, { name: c.name, kind: c.kind });
+        const existed = !!this.state.getChat(p, c.chat_id);
+        const chat = this.state.ensureChat(p, c.chat_id, { name: c.name, kind: c.kind });
+        if (!baselineBefore || !this.cfg.duty?.enabled) continue;
+        if (chat.kind !== "group" || chat.blocked || chat.watching) continue;
+        if (chat.duty?.state && chat.duty.state !== "none") continue;
+        // 基线之前就在 state 里的群是存量；基线之后才首次见到的群一律算新群。
+        if (existed && Number(chat.added_at) <= baselineBefore) continue;
+        if (!existed || chat.duty?.state === "none") {
+          duty.newEvent(chat, "added");
+          queued += 1;
+        }
       }
     }
+    if (anyOk && !baselineBefore) {
+      this.state.data.desk = this.state.data.desk || {};
+      this.state.data.desk.baseline_at = nowSec();
+      this.logger.info?.(`[im-standin] duty baseline at ${this.state.data.desk.baseline_at}`);
+    }
+    if (queued || (!baselineBefore && anyOk)) this.state.save();
   }
 
   candidates(platforms = this.cfg.platforms || []) {
@@ -770,6 +799,400 @@ export class Poller {
     };
   }
 
+  // ---- 值守分诊（spec 0040） ------------------------------------------------
+  dutyCfg() {
+    return this.cfg.duty || {};
+  }
+
+  async memberCountFor(chat) {
+    let r;
+    try {
+      r = await this.im.adapter(chat.platform).chatMembers(chat.chat_id);
+    } catch (e) {
+      r = { ok: false, known: false, count: 0, error: String(e?.message || e) };
+    }
+    chat.duty = chat.duty || {};
+    chat.duty.member_count = r.ok && r.known && Number(r.count) > 0 ? Number(r.count) : 0;
+    return chat.duty.member_count;
+  }
+
+  /**
+   * 一次性探针：拉 10 条、消费水位、查人数。review 只读、不消费。
+   * 返回原始消息（未清正文）；失败抛错，由 startTriage 记账。
+   */
+  async probeForDuty(chat, { review = false, readOnly = false } = {}) {
+    await this.whoami(chat.platform);
+    const ident = this.identity[chat.platform];
+    if (!ident?.ok || !ident.self_id) throw new Error("identity_unavailable");
+    const r = await this.im.adapter(chat.platform).fetchMessages(chat.chat_id, { limit: 10 });
+    if (!r.ok) throw new Error(String(r.error || "fetch failed").slice(0, 200));
+    const messages = r.messages.slice(0, 10).map((m) => ({
+      ...m, platform: chat.platform, chat_id: chat.chat_id,
+      is_self: !!ident.self_id && m.sender_id === ident.self_id,
+    }));
+    const baseline = !chat.last_epoch && !chat.last_msg_id;
+    const names0 = this.selfNames(chat.platform);
+    const anyMention = messages.some((m) => !m.is_self && isMention(m, ident.self_id, names0));
+    for (const m of messages) {
+      m.kind = m.is_self ? "out" : (isMention(m, ident.self_id, names0) ? "mention" : "fyi");
+    }
+    if (!review && !readOnly) {
+      this.process(chat, messages, { baseline, platform: chat.platform, advance: true });
+      if (anyMention && chat.duty?.trigger === "added") chat.duty.trigger = "mentioned";
+      const newest = Math.max(Number(chat.last_epoch) || 0,
+        ...messages.map((m) => Number(m.ts_epoch) || 0));
+      chat.duty = chat.duty || {};
+      chat.duty.sweep_epoch = Math.max(Number(chat.duty.sweep_epoch) || 0, newest);
+    } else if (!review) {
+      // sweep 只更新自己的水位；不写 recent / last_sync / 正常水位。
+      const newest = Math.max(Number(chat.duty?.sweep_epoch) || 0,
+        ...messages.map((m) => Number(m.ts_epoch) || 0));
+      chat.duty = chat.duty || {};
+      chat.duty.sweep_epoch = newest;
+    }
+    await this.memberCountFor(chat);
+    if (!review && !readOnly) chat.last_sync = nowSec();
+    this.state.save();
+    return messages;
+  }
+
+  dutyFacts(chat) {
+    const d = chat.duty || {};
+    const cfg = this.dutyCfg();
+    const recent = this.state.listChats()
+      .filter((c) => c !== chat && c.duty?.decided_at > 0)
+      .sort((a, b) => (b.duty.decided_at - a.duty.decided_at))
+      .slice(0, 5)
+      .map((c) => ({
+        name: c.name || c.chat_id,
+        action: c.duty.state,
+        reason: c.duty.reason || "",
+      }));
+    return {
+      platform: chat.platform,
+      label: PLATFORM_META[chat.platform]?.label || chat.platform,
+      name: chat.name || chat.chat_id,
+      chat_id: chat.chat_id,
+      trigger: d.trigger || "manual",
+      member_count: Number(d.member_count) || 0,
+      member_limit: Number(cfg.max_group_members) || 0,
+      watch_groups: duty.watchGroups(this.state),
+      watch_max: Number(cfg.max_groups) || 0,
+      quota_used: duty.quotaUsed(this.state),
+      quota_max: Number(cfg.max_per_day) || 0,
+      recent,
+      policy_path: path.join(duty.dutyDir(this.state), "policy.md"),
+      decision_path: duty.decisionPath(this.state, d.event_id),
+      trial_hours: Number(cfg.trial_hours) || 0,
+      review_at: Number(d.review_at) || 0,
+    };
+  }
+
+  async startTriage(chat, { review = false } = {}) {
+    const d = chat.duty;
+    if (!d || !d.event_id) return { ok: false, reason: "no_event" };
+    if (!this.turns?.hostReady?.()) return { ok: false, reason: "host_unavailable" };
+    // 决策文件已经写好（上一轮回调丢了 / 进程重启）：先应用，不重复起 turn。
+    const early = await duty.consumeDecision({
+      state: this.state, chat, turns: this.turns, profiles: this.turns?.profiles || null, im: this.im,
+    });
+    if (early.ok) return { ok: true, applied: true };
+    if (early.error && early.error !== "no_decision") {
+      if (review) {
+        d.attempts = Math.max(1, Number(d.attempts) || 0) + 1;
+        this.state.save();
+      }
+      return { ok: false, reason: early.error };
+    }
+    d.state = "triaging";
+    d.attempts = Math.max(0, Number(d.attempts) || 0) + 1;
+    if (!review) d.triaged_at = nowSec();
+    d.error = "";
+    this.state.save();
+    let messages;
+    try {
+      messages = await this.probeForDuty(chat, { review, readOnly: review || d.trigger === "sweep" });
+    } catch (e) {
+      const reason = String(e?.message || e).slice(0, 160);
+      d.state = review ? "trial" : ((d.attempts >= 2) ? "failed" : "queued");
+      d.error = reason;
+      this.state.save();
+      return { ok: false, reason };
+    }
+    const facts = this.dutyFacts(chat);
+    const r = await this.turns.deskTriage(chat, {
+      eventId: d.event_id, trigger: d.trigger, review, messages, facts,
+      onDone: () => this.finishTriage(chat, { review, messages }),
+    });
+    if (!r.ok) {
+      d.state = review ? "trial" : ((d.attempts >= 2) ? "failed" : "queued");
+      d.error = String(r.reason || "desk_unavailable").slice(0, 160);
+      this.state.save();
+    }
+    return r;
+  }
+
+  async finishTriage(chat, { review = false, messages = [] } = {}) {
+    const current = this.state.getChat(chat.platform, chat.chat_id);
+    if (!current) return;
+    const d = current.duty;
+    if (!d) return;
+    const r = await duty.consumeDecision({
+      state: this.state, chat: current, turns: this.turns, profiles: this.turns?.profiles || null, im: this.im,
+      contextMessages: messages,
+    });
+    if (r.ok) {
+      d.error = "";
+      this.state.save();
+      return;
+    }
+    if (r.error === "no_decision") {
+      const stale = review && d.review_at && nowSec() > d.review_at + 3600;
+      if (review && stale) {
+        current.watching = false;
+        current.timer = -1;
+        d.state = "ignore";
+        d.by = "system";
+        d.decided_at = nowSec();
+        d.reason = "试用期满未复核";
+        d.review_at = 0;
+        d.error = "";
+        this.state.save();
+        return;
+      }
+      d.state = (d.attempts >= 2) ? "failed" : (review ? "trial" : "queued");
+      d.error = d.attempts >= 2 ? "no_decision" : "no_decision_retry";
+      this.state.save();
+      return;
+    }
+    if (!["no_decision", "no_decision_retry"].includes(r.error)) {
+      d.state = review ? "trial" : "failed";
+      d.error = r.error;
+      this.state.save();
+    }
+  }
+
+  async maybeTriage() {
+    if (this.turns?.deskBusy?.()) return false;
+    const queued = this.state.listChats()
+      .filter((c) => c.duty?.state === "queued")
+      .sort((a, b) => (a.duty.event_at - b.duty.event_at));
+    if (!queued.length) return false;
+    const cfg = this.dutyCfg();
+    if (!cfg.enabled && queued.every((c) => c.duty.trigger !== "manual")) return false;
+    if (Number(cfg.max_per_day) > 0 && duty.quotaUsed(this.state) >= Number(cfg.max_per_day)) {
+      const manual = queued.find((c) => c.duty.trigger === "manual");
+      if (!manual) return false;
+      await this.startTriage(manual);
+      return true;
+    }
+    const chat = queued.find((c) => c.duty.trigger === "manual") || queued[0];
+    if (chat.blocked) {
+      chat.duty.state = "failed";
+      chat.duty.error = "blocked";
+      this.state.save();
+      return true;
+    }
+    if (chat.duty.trigger !== "manual" && !cfg.enabled) return false;
+    await this.startTriage(chat);
+    return true;
+  }
+
+  async maybeReview() {
+    if (this.turns?.deskBusy?.()) return false;
+    const due = this.state.listChats()
+      .filter((c) => c.duty?.state === "trial" && c.duty.review_at > 0 &&
+        c.duty.review_at <= nowSec())
+      .sort((a, b) => a.duty.review_at - b.duty.review_at);
+    if (!due.length) return false;
+    const chat = due[0];
+    if (Number(chat.duty.review_at) > 0 && nowSec() > Number(chat.duty.review_at) + 3600) {
+      chat.watching = false;
+      chat.timer = -1;
+      chat.duty.state = "ignore";
+      chat.duty.by = "system";
+      chat.duty.decided_at = nowSec();
+      chat.duty.reason = "试用到期未完成复核";
+      chat.duty.review_at = 0;
+      chat.duty.error = "";
+      this.state.save();
+      return true;
+    }
+    if (Number(chat.duty.attempts) >= 2) {
+      chat.watching = false;
+      chat.timer = -1;
+      chat.duty.state = "ignore";
+      chat.duty.by = "system";
+      chat.duty.decided_at = nowSec();
+      chat.duty.reason = "试用复核两次失败";
+      chat.duty.review_at = 0;
+      chat.duty.error = "";
+      this.state.save();
+      return true;
+    }
+    if (!this.dutyCfg().enabled) {
+      chat.watching = false;
+      chat.timer = -1;
+      chat.duty.state = "ignore";
+      chat.duty.by = "system";
+      chat.duty.decided_at = nowSec();
+      chat.duty.reason = "试用到期，自动分诊已关闭";
+      chat.duty.review_at = 0;
+      this.state.save();
+      return true;
+    }
+    duty.newReviewEvent(chat);
+    this.state.save();
+    await this.startTriage(chat, { review: true });
+    return true;
+  }
+
+  async maybeSweep() {
+    const cfg = this.dutyCfg();
+    const desk = this.state.data.desk || {};
+    const every = Number(cfg.sweep_min) || 0;
+    if (!cfg.enabled || every <= 0) return false;
+    if (!desk.baseline_at) return false;
+    const last = Number(desk.last_sweep_at) || 0;
+    if (last && nowSec() - last < every * 60) return false;
+    desk.last_sweep_at = nowSec();
+    this.state.save();
+    const lookback = Math.max(1, Number(cfg.sweep_lookback_hours) || 24);
+    const floor = nowSec() - lookback * 3600;
+    const baseline = Number(desk.baseline_at) || 0;
+    let scanned = 0;
+    let queued = 0;
+    let error = "";
+    const platforms = this.cfg.platforms || [];
+    try {
+      if (platforms.includes("feishu")) {
+        const adapter = this.im.adapter("feishu");
+        if (adapter.supportsAtMe) {
+          const r = await adapter.searchAtMe({ start: new Date(floor * 1000), end: new Date() });
+          if (!r.ok) {
+            error = String(r.error || "at_me_failed").slice(0, 200);
+          } else {
+            const ident = this.identity.feishu || await this.whoami("feishu");
+            const names = this.selfNames("feishu");
+            const byChat = new Map();
+            for (const m of r.items) {
+              scanned += 1;
+              if (!isMention(m, ident.self_id, names)) continue;
+              if ((Number(m.ts_epoch) || 0) < floor) continue;
+              const chat = this.state.getChat("feishu", m.chat_id);
+              if (!chat || chat.kind !== "group") continue;
+              if (!baseline || Number(chat.added_at) <= baseline) continue;
+              if (chat.blocked || chat.watching) continue;
+              if (!["none", "ignore", "failed"].includes(chat.duty?.state || "none")) continue;
+              if ((Number(m.ts_epoch) || 0) <= (Number(chat.duty?.sweep_epoch) || 0)) continue;
+              if (!byChat.has(m.chat_id)) byChat.set(m.chat_id, { chat, newest: 0 });
+              byChat.get(m.chat_id).newest = Math.max(byChat.get(m.chat_id).newest,
+                Number(m.ts_epoch) || 0);
+            }
+            for (const { chat, newest } of byChat.values()) {
+              duty.newEvent(chat, "sweep");
+              chat.duty.sweep_epoch = Math.max(Number(chat.duty.sweep_epoch) || 0, newest);
+              queued += 1;
+            }
+          }
+        }
+      }
+      if (platforms.includes("dingtalk")) {
+        // 钉钉没有跨群 @我 搜索：退回逐新群；成员数未知，后续自动只能 ignore。
+        for (const chat of this.state.listChats()) {
+          if (chat.platform !== "dingtalk" || chat.kind !== "group" || chat.blocked || chat.watching) continue;
+          if (!baseline || Number(chat.added_at) <= baseline) continue;
+          if (!["none", "ignore", "failed"].includes(chat.duty?.state || "none")) continue;
+          let r;
+          try {
+            r = await this.im.adapter("dingtalk").fetchMessages(chat.chat_id, { limit: 10 });
+          } catch { continue; }
+          if (!r.ok) continue;
+          const ident = this.identity.dingtalk || await this.whoami("dingtalk");
+          const names = this.selfNames("dingtalk");
+          let newest = 0;
+          for (const m of r.messages) {
+            scanned += 1;
+            const ts = Number(m.ts_epoch) || 0;
+            if (!isMention(m, ident.self_id, names) || ts < floor) continue;
+            if (ts <= (Number(chat.duty?.sweep_epoch) || 0)) continue;
+            newest = Math.max(newest, ts);
+          }
+          if (newest) {
+            duty.newEvent(chat, "sweep");
+            chat.duty.sweep_epoch = Math.max(Number(chat.duty.sweep_epoch) || 0, newest);
+            queued += 1;
+          }
+        }
+      }
+    } catch (e) {
+      error = String(e?.message || e).slice(0, 200);
+      this.logError(null, null, "sweep: " + error);
+    }
+    if (queued) this.state.save();
+    this.lastSweep = { at: desk.last_sweep_at, ok: !error, scanned, queued, error };
+    return true;
+  }
+
+  async maybeDuty() {
+    if (this.dutyLock || !this.turns) return;
+    this.dutyLock = true;
+    try {
+      const now = nowSec();
+      if (!this.dutyLastCleanup || now - this.dutyLastCleanup > 86400) {
+        this.dutyLastCleanup = now;
+        try {
+          duty.ensureDutyDir(this.state);
+          duty.cleanupDecisions(this.state, 7);
+          duty.cleanupRecords(this.state, this.dutyCfg());
+        } catch (e) {
+          this.logError(null, null, "duty cleanup: " + (e?.message || e));
+        }
+      }
+      await this.maybeReview();
+      await this.maybeSweep();
+      await this.maybeTriage();
+    } finally {
+      this.dutyLock = false;
+    }
+  }
+
+  dutyInfo() {
+    const cfg = this.dutyCfg();
+    const counts = duty.dutyCounts(this.state);
+    const desk = this.state.data.desk || {};
+    const items = this.state.listChats()
+      .filter((c) => (c.duty?.state || "none") !== "none")
+      .sort((a, b) => (Number(b.duty.decided_at || b.duty.event_at) || 0) -
+        (Number(a.duty.decided_at || a.duty.event_at) || 0))
+      .slice(0, 100)
+      .map((c) => ({
+        platform: c.platform, chat_id: c.chat_id, name: c.name, kind: c.kind,
+        watching: !!c.watching, pending: this.state.pendingCount(c),
+        duty: { ...c.duty },
+      }));
+    return {
+      ok: true, enabled: !!cfg.enabled,
+      counts: {
+        ...counts,
+        quota_max: Number(cfg.max_per_day) || 0,
+        watch_max: Number(cfg.max_groups) || 0,
+      },
+      desk: {
+        session_id: String(desk.dsh_session || ""),
+        workspace: path.join(duty.dutyDir(this.state)),
+        session_turns: Number(desk.session_turns) || 0,
+        session_max_turns: Number(cfg.session_max_turns) || 0,
+        last_turn: desk.last_turn || { ok: null, reason: "", at: 0 },
+        last_error: String(desk.last_error || ""),
+        baseline_at: Number(desk.baseline_at) || 0,
+        last_sweep_at: Number(desk.last_sweep_at) || 0,
+      },
+      last_sweep: this.lastSweep,
+      items,
+    };
+  }
+
   async doctor() {
     const checks = [];
     const enabled = this.cfg.platforms || ["feishu", "wecom"];
@@ -832,6 +1255,14 @@ export class Poller {
         detail: `找不到 ${sp}；agent 能回但拿不到平台细节`,
       });
     }
+    const di = this.dutyInfo();
+    checks.push({
+      platform: "duty", label: "值守分诊", level: "ok", name: "候选与值守台",
+      detail: `${di.counts.queued} 排队 / ${di.counts.trial} 试用 / ${di.counts.watch} 值守 · ` +
+        `今日 ${di.counts.quota_used}/${di.counts.quota_max || "不限"} · ` +
+        `值守台 ${di.desk.session_turns}/${di.desk.session_max_turns || "不限"} 轮 · ` +
+        `上次 @ 清查 ${di.desk.last_sweep_at ? new Date(di.desk.last_sweep_at * 1000).toLocaleString() : "未跑"}`,
+    });
     const due = this.candidates(this.cfg.platforms || []);
     const dmCount = due.filter((c) => (c.kind || "p2p") === "p2p").length;
     checks.push({

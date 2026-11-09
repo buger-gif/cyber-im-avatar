@@ -27,6 +27,15 @@
 | `dsh.turn_cap_sec` | `3600` | 0–86400 秒 | 单轮总时长兜底（从 turn 开始算，不随活动重置）；超时按失败处理并取消，`last_turn.reason` 记 `turn_cap`；`0` = 不设上限 |
 | `dsh.full_access` | `false` | true / false | 为 true 时把值守会话切到 DSH 内置 `danger-full-access`，agent 可直接写 `~/.im-standin/profiles`（人物档案；群还有会话工作本）；默认关闭，开启后 agent 能写整个 home |
 | `dsh.warm_min` | `55` | 0–1440 分钟 | 会话寿命的唯一时钟：闲置达到这么久先跑**一次**保温轮（续上下文缓存 + 按 skill 归并载荷列出的记忆文件：单聊一份人物档案，群工作本与人物档案）；再过一个同样长的周期仍没有真实消息，下一条消息换新会话。真实消息会重新计时；`0` = 关闭保温，同时关闭自动换会话 |
+| `duty.enabled` | `true` | true / false | 自动分诊总开关；关闭后不发现新群、不自动复核；手动仍可 |
+| `duty.trial_hours` | `0` | 0–168 小时 | 试用时长；0=关闭（严格两段式），只能 watch/ignore；>0 才允许 trial |
+| `duty.max_groups` | `20` | 0–200 | 自动开监听的值守群上限；0=不限；手动不受限 |
+| `duty.max_per_day` | `20` | 0–200 | 每天自动分诊 turn 上限；0=不限；复核与手动不占 |
+| `duty.session_max_turns` | `20` | 0–200 | 值守台会话累计 turn 上限；达到后下个事件换新；0=不限 |
+| `duty.record_keep_days` | `30` | 0–365 天 | ignore/failed 记录保留；0=永不清；watch/trial 不清 |
+| `duty.sweep_min` | `10` | 0 或 10–1440 分钟 | @ 清查间隔；0=关；>0 时最小 10 |
+| `duty.sweep_lookback_hours` | `24` | 1–168 小时 | 清查回看窗口；更早不自动补 |
+| `duty.max_group_members` | `10` | 0–1000 人 | 自动开监听的群成员上限（只数人）；超过/未知只能 ignore；0=不限；手动不受限 |
 | `dsh.ack_reaction` | `true` | true / false | 命中回执：本轮载荷已送进 DSH 会话后，用 `lark-cli` 给本批 @ 你的消息点一个 `Get` 表情（表情回复，不是新消息）；只认群的 `mention` 与私聊「只认 @」模式下的 `dm`，`cmd` / `out` / `fyi` 不点。仅飞书；企微 / 钉钉没有反应命令，静默跳过。关闭后不调用 CLI |
 
 > 退役：`llm.*`、`reply.*`、`reply_guard`、`ui.*`、`seed_targets`、`dsh.profile`、
@@ -49,6 +58,14 @@
 | `dsh.timeout` | 120 | 3600 |
 | `dsh.turn_cap_sec` | 0 | 86400 |
 | `dsh.warm_min` | 0 | 1440 |
+| `duty.trial_hours` | 0 | 168 |
+| `duty.max_groups` | 0 | 200 |
+| `duty.max_per_day` | 0 | 200 |
+| `duty.session_max_turns` | 0 | 200 |
+| `duty.record_keep_days` | 0 | 365 |
+| `duty.sweep_min` | 0 | 1440 |
+| `duty.sweep_lookback_hours` | 1 | 168 |
+| `duty.max_group_members` | 0 | 1000 |
 
 ## 老键迁移
 

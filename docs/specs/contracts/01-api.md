@@ -16,7 +16,8 @@
 | GET | `/api/inbox` | `filter`、`limit`、`group` | 待回聚合；默认按会话聚合，`group=msg` 逐条；只从每会话最近 10 条派生（面板自 spec 0032 起不再展示） |
 | GET | `/api/inbox/cleanup` | — | 把未值守会话的待回批量标成 ignored |
 | GET | `/api/thread` | `platform`、`chat_id`、`fetch`、`limit` | 会话正文：默认在线拉 30 条；`fetch=1` 先补拉分类（**只读，不唤醒**；冷却中直接用本地指针）；失败回退本地 10 条并带 `offline` / `error` |
-| GET | `/api/chats` | — | 会话清单，含 `blocked` / `timer` / `timed` / `watching` / `wake_mode` / `mentionable` / `dsh_session` / `session_turns` / `turn_state`；`mentionable=false` 表示该平台判不了 @（面板置灰「只盯 @我」）。工作区字段见下 |
+| GET | `/api/chats` | — | 会话清单，含 `blocked` / `timer` / `timed` / `watching` / `wake_mode` / `mentionable` / `dsh_session` / `session_turns` / `turn_state` / `duty`；`mentionable=false` 表示该平台判不了 @（面板置灰「只盯 @我」）。工作区字段见下 |
+| GET | `/api/duty` | — | 值守候选：`enabled`、`counts`（排队/判断中/试用/失败/忽略/值守/复核 + 配额与上限）、`desk`（session_id/workspace/session_turns/session_max_turns/last_turn/last_error/baseline_at/last_sweep_at）、`last_sweep`、`items`（每个非 none 的会话 + duty） |
 | GET | `/api/send` | `platform`、`chat_id`、`text`、`msg_id` | 以本人身份发出；不写发送历史 |
 | GET | `/api/state` | `platform`、`msg_id`、`state`、`chat_id` | 改最近 10 条里的一条：new / opened / replied / ignored；更早的返回 `not_cached` |
 | GET | `/api/watch` | `platform`、`chat_id`、`watching`、`name`、`kind`、`workspace` | 加入 / 移出值守；`workspace` 非空时一并绑定，空串不改变已有绑定。加入时把 `timer` 拉回 1（去掉「不盯」留下的 `-1`，否则看着在盯其实不拉），`wake_mode` 沿用上次设置；群首次加入默认 `wake_mode=mention`（只盯 @我），私聊默认 `all`（每条都唤醒）；要改得显式调 `/api/chat/mode`。**加入即开会话**（新加入或绑定会话缺了才开；已经盯上且有会话不重复开场）：补拉一次（`wake=false, force=true`，不推进水位）后起一轮开场 turn；失败不影响值守，只在返回的 `open: {ok, reason, skipped}` 里说明（真的在飞时 `skipped="running"`；已取消正在收尾的旧轮不算） |
@@ -63,6 +64,7 @@
 | POST | `/api/persons/profile` | 覆盖写人物档案；入参 `platform`、`person_id`、`name`、`text`（≤12KB）、`base_mtime`（可选）；mtime 更新过则回 `{ok:false, reason:"stale"}` 不写 |
 | POST | `/api/chat/session/reset` | 重开会话：可带 `workspace` 先落工作区；打断在飞 turn、清空 `dsh_session`；值守中（未屏蔽）立刻在新会话里跑一轮开场，返回 `open: {ok, reason, skipped}`；未值守 / 屏蔽只解绑 |
 | POST | `/api/chat/wake` | 手动唤醒：可带 `workspace` 先落工作区；把该会话最近待回交给 agent，不等新消息；`running` / `blocked` / 未值守时拒绝 |
+| POST | `/api/duty/triage` | 手动让值守台判断：入参 `platform`、`chat_id`、`force`；只接受未值守、未屏蔽、非 queued/triaging；写 `trigger=manual` 的新事件，下一次 tick 起分诊 turn；`force` 可重排 ignore/failed，关闭自动分诊时也允许手动 |
 
 ## 删除接口（DELETE）
 
@@ -70,6 +72,23 @@
 | --- | --- | --- |
 | DELETE | `/api/forget` | 删除该会话的状态与旧版会话工作本；人物档案跨会话保留（p2p 的记忆就是它，不删）；不删线上消息，也不删 DSH 会话文件 |
 | DELETE | `/api/persons` | 删除一份人物档案（显式操作）；入参 `platform`、`person_id` |
+
+## 值守决策文件协议
+
+agent 只写 `<state.dir>/duty/decisions/<event_id>.json`，插件读、校验、应用、删除；不解析 agent 的自然语言。
+
+| 字段 | 必填 | 说明 |
+| --- | --- | --- |
+| `version` | 否 | 缺省 1；不是 1 拒绝 |
+| `decision_id` | 是 | 必须等于本次事件的 `event_id` |
+| `platform` / `chat_id` | 是 | 必须与候选一致 |
+| `action` | 是 | `watch` / `trial` / `ignore`；复核只允许 `watch` / `ignore` |
+| `reason` | 是 | 单行 1–160 字；插件去控制字符 |
+| `confidence` | 否 | 0–1，缺省 0.5 |
+| `review_at` | 否 | trial 可给 epoch 秒，夹到 `[now+1h, now+trial_hours]` |
+| `mode` | 否 | 只允许缺省或 `mention`；`all` 一律拒绝（`all_disabled`） |
+
+硬门：平台判不了个人 @ → 只能 ignore；群成员数 > `duty.max_group_members` 或未知 → 只能 ignore；达 `duty.max_groups` → 只能 ignore；`trial_hours=0` → 拒绝 trial。用户手动入口不受这些自动硬门限制。坏 JSON / 错 id / 错 chat / 未知 action → 不应用，记 `failed` + `error`，不抛异常。
 
 ## 约定
 

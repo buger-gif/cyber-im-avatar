@@ -149,6 +149,8 @@ python3 scripts/feishu_listen_cli.py --chat-id oc_xxx --sender ou_yyy --until "$
 | 返回顺序 | 倒序 | **正序** | 倒序 |
 | 单聊 chat_id | `oc_` 会话 ID | **对方 userid** | `userId` |
 | 找人 | `contact +search-user` | `contact users search` | `contact user search` |
+| 直接拉 @我 | ✅ `+messages-search --is-at-me`（也带 @all，需过滤） | ❌ | ❌ |
+| 群成员数 | ✅ `+chat-members-list`（users，truncations=未知） | ❌ | ❌ |
 
 细节和坑位见 `references/`。
 

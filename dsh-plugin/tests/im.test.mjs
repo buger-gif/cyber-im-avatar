@@ -219,3 +219,52 @@ test("feishu reactions use lark-cli as the user; other platforms skip without sp
   assert.equal(bad.ok, false);
   assert.match(bad.error, /permission denied/);
 });
+
+test("feishu at-me search normalizes chat/sender/content and returns messages", async () => {
+  const a = new Adapter("feishu", { dir: "/nonexistent-im-test" });
+  let seen = null;
+  a.run = async (args) => {
+    seen = args;
+    return { rc: 0, raw: "", json: { data: { messages: [{
+      chat_id: "oc_g", chat_name: "项目群",
+      message_id: "om_1", msg_type: "text", content: "@我 排期",
+      create_time: "2026-11-09 12:00", mentions: [],
+      sender: { id: "ou_x", name: "同事" },
+    }] } } };
+  };
+  const r = await a.searchAtMe();
+  assert.equal(r.ok, true);
+  assert.equal(r.items[0].chat_id, "oc_g");
+  assert.equal(r.items[0].chat_name, "项目群");
+  assert.equal(r.items[0].sender_id, "ou_x");
+  assert.equal(r.items[0].content, "@我 排期");
+  assert.ok(r.items[0].ts_epoch > 0);
+  assert.ok(seen.includes("--is-at-me"));
+  assert.ok(seen.includes("--chat-type"));
+  assert.ok(seen.includes("group"));
+});
+
+test("feishu chatMembers counts users and reports truncation/unsupported", async () => {
+  const a = new Adapter("feishu", { dir: "/nonexistent-im-test" });
+  a.run = async () => ({
+    rc: 0, raw: "",
+    json: { data: { users: [{ id: "ou_1" }, { id: "ou_2" }], bots: [], truncations: [] } },
+  });
+  let r = await a.chatMembers("oc_g");
+  assert.equal(r.ok, true);
+  assert.equal(r.known, true);
+  assert.equal(r.count, 2);
+
+  a.run = async () => ({ rc: 0, raw: "", json: { data: { users: [{ id: "ou_1" }], truncations: [{}] } } });
+  r = await a.chatMembers("oc_g");
+  assert.equal(r.ok, true);
+  assert.equal(r.known, false);
+  assert.equal(r.count, 1);
+
+  const d = new Adapter("dingtalk", { dir: "/nonexistent-im-test" });
+  assert.equal(d.supportsAtMe, false);
+  assert.equal(d.supportsMembers, false);
+  r = await d.chatMembers("cid");
+  assert.equal(r.ok, false);
+  assert.equal(r.known, false);
+});

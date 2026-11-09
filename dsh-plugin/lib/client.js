@@ -661,6 +661,23 @@ window.__ModuleLoader__.load({
         if (S.tab === "service") paintBody();
       });
     }
+    function loadDuty() {
+      return api("/api/duty").then(function (d) {
+        if (S.dead) return;
+        if (!d || d.error) {
+          setConnError("duty", d || "值守候选为空", loadDuty);
+          return;
+        }
+        S.duty = d;
+        clearConnError("duty");
+        if (S.tab === "service") paintBody();
+      }).catch(function (e) {
+        if (S.dead) return;
+        setConnError("duty", e, loadDuty);
+        if (S.tab === "service") paintBody();
+      });
+    }
+
     function loadTargets() {
       return api("/api/targets").then(function (d) {
         if (S.dead) return;
@@ -1560,6 +1577,7 @@ window.__ModuleLoader__.load({
       var watched = all.filter(function (c) { return c.watching && !c.blocked; });
 
       scroll.appendChild(searchCard());
+      scroll.appendChild(dutyCard());
 
       scroll.appendChild(h("div", { class: "ims-card" },
         h("div", { class: "ims-card-h" },
@@ -2574,6 +2592,98 @@ window.__ModuleLoader__.load({
       return scroll;
     }
 
+    function dutyCard() {
+      var d = S.duty || {};
+      var counts = d.counts || {};
+      var items = (d.items || []).filter(function (x) {
+        var st = x.duty && x.duty.state;
+        return st === "queued" || st === "triaging" || st === "failed" ||
+          (st === "trial" && x.duty && x.duty.review_at);
+      }).slice(0, 6);
+      var desk = d.desk || {};
+      var card = h("div", { class: "ims-card" },
+        h("div", { class: "ims-card-h" },
+          h("span", { class: "ims-ico", html: icon("spark", 15) }),
+          "值守候选" + (counts.queued ? " · " + counts.queued + " 排队" : ""),
+          h("span", { class: "ims-grow" }),
+          h("span", { class: "ims-tag", style: "color:" + (d.enabled ? "var(--ok)" : "var(--fg3)"),
+            text: d.enabled ? "自动分诊开" : "自动分诊关" })),
+        h("div", { class: "ims-hint", text: "新群判一次；之后只在新的个人 @ 时再判。飞书直接拉 @我，" +
+          "钉钉逐新群回退，企微没有 mentions。群成员超过 10 人或人数未知，自动只能不盯；手动可开。" }),
+        h("div", { class: "ims-kv" },
+          h("span", { text: "值守台" }),
+          h("span", { text: (desk.session_turns || 0) + " / " + (desk.session_max_turns || "不限") +
+            " 轮 · " + (desk.last_sweep_at ? "上次清查 " + new Date(desk.last_sweep_at * 1000).toLocaleString() : "尚未清查") })));
+      if (!items.length) {
+        card.appendChild(h("div", { class: "ims-empty", text: "没有待判断的新群。" }));
+      }
+      items.forEach(function (x) {
+        var duty = x.duty || {};
+        var label = { queued: "排队中", triaging: "判断中", failed: "判断失败", trial: "试用复核" }[duty.state] || duty.state;
+        var member = Number(duty.member_count) || 0;
+        card.appendChild(h("div", { class: "ims-rowline" },
+          h("span", { class: "ims-name", text: x.name || x.chat_id }),
+          h("span", { class: "ims-tag", style: "color:var(--fg3)", text: label }),
+          h("span", { class: "ims-tag", style: "color:" + (member > 10 || !member ? "var(--warn)" : "var(--fg3)"),
+            text: member ? member + " 人" : "人数未知" }),
+          h("span", { class: "ims-grow" }),
+          h("button", { class: "ims-btn mini", type: "button",
+            onclick: function () { openThread(x.platform, x.chat_id); } }, "看消息"),
+          h("button", { class: "ims-btn mini", type: "button",
+            onclick: function () {
+              api("/api/duty/triage", { method: "POST", body: {
+                platform: x.platform, chat_id: x.chat_id, force: true,
+              } }).then(function (r) {
+                say(r && r.ok ? "已重新排队" : ((r && r.reason) || "排队失败"));
+                loadDuty(); loadChats(); paint();
+              });
+            } }, "让分身判断")));
+      });
+      return card;
+    }
+
+    function dutySettingsCard(cfg) {
+      var d = (cfg && cfg.duty) || {};
+      var card = h("div", { class: "ims-card" },
+        h("div", { class: "ims-card-h" }, h("span", { class: "ims-ico", html: icon("bell", 15) }), "值守分诊"),
+        h("div", { class: "ims-hint", text: "判定在独立值守台工作区，不碰项目。分诊轮不发消息；" +
+          "新群一律只盯 @我；群成员超过上限或人数未知时自动不盯，手动可开。" }));
+      function num(key, label, min, max) {
+        return h("div", { class: "ims-rowline" },
+          h("span", { text: label }),
+          h("span", { class: "ims-grow" }),
+          h("input", { class: "ims-inp", type: "number", "data-duty": key,
+            min: String(min), max: String(max), value: String(Number(d[key]) || 0),
+            style: "max-width:96px" }));
+      }
+      card.appendChild(num("trial_hours", "试用小时（0=关）", 0, 168));
+      card.appendChild(num("max_groups", "值守群上限", 0, 200));
+      card.appendChild(num("max_per_day", "每日分诊上限", 0, 200));
+      card.appendChild(num("max_group_members", "群成员上限（只数人）", 0, 1000));
+      card.appendChild(num("session_max_turns", "值守台轮数上限", 0, 200));
+      card.appendChild(num("record_keep_days", "记录保留天数", 0, 365));
+      card.appendChild(num("sweep_min", "@ 清查间隔（分钟，0=关）", 0, 1440));
+      card.appendChild(num("sweep_lookback_hours", "@ 清查回看小时", 1, 168));
+      card.appendChild(h("div", { class: "ims-rowline" },
+        h("span", { text: "自动分诊" }),
+        h("span", { class: "ims-grow" }),
+        h("input", { type: "checkbox", "data-duty": "enabled", checked: d.enabled !== false })));
+      card.appendChild(h("div", { class: "ims-rowline" },
+        h("span", { class: "ims-hint", text: "飞书可查成员数；钉钉/企微没有成员列表，自动只能不盯，手动仍可。" }),
+        h("span", { class: "ims-grow" }),
+        h("button", { class: "ims-btn primary", type: "button", onclick: function () {
+          var next = {};
+          card.querySelectorAll("[data-duty]").forEach(function (el) {
+            var k = el.getAttribute("data-duty");
+            next[k] = el.type === "checkbox" ? !!el.checked : Number(el.value);
+          });
+          api("/api/config", { body: { duty: next } }).then(function (c) {
+            S.cfg = c; say("值守分诊设置已保存"); paint();
+          }).catch(function (e) { say("保存失败：" + shortReason(e)); });
+        } }, "保存值守设置")));
+      return card;
+    }
+
     // ---- 设置 -----------------------------------------------------------
     function settingsView() {
       var cfg = S.cfg || { ui: {} };
@@ -2814,6 +2924,7 @@ window.__ModuleLoader__.load({
             }
           }, "清理其他会话的待回"))));
 
+      scroll.appendChild(dutySettingsCard(cfg));
       scroll.appendChild(h("div", { class: "ims-card" },
         h("div", { class: "ims-card-h", text: "关于" }),
         h("div", { class: "ims-hint", text: "数据目录 ~/.im-standin：state.json 存会话与待回状态，profiles/ 存群工作本与人物档案（people/ 下；单聊只有人物档案），env.json 只读。" }),
@@ -2826,7 +2937,7 @@ window.__ModuleLoader__.load({
       if (S.dead) return;
       // 体检页是低频动作：不跟 60 秒轮询刷新，只在切页签或点按钮时取一次。
       if (S.tab !== "status") loadStatus();
-      if (S.tab === "service") loadChats();
+      if (S.tab === "service") { loadChats(); loadDuty(); }
       if (!S.detail && S.tab === "attention") refreshDigest();
     }
     S.timer = setInterval(tick, 60000);
@@ -2852,6 +2963,7 @@ window.__ModuleLoader__.load({
     loadStatus();
     loadLogs();
     loadChats();
+    loadDuty();
     loadTargets();
     loadPersons();
     // 预热当天日报：点「关注」时直接同步渲染，不等接口。
@@ -2863,7 +2975,7 @@ window.__ModuleLoader__.load({
       S.tab = ["attention", "service", "targets", "status", "settings"].indexOf(want) >= 0
         ? want : "service";
       paint();
-      if (S.tab === "service") loadChats();
+      if (S.tab === "service") { loadChats(); loadDuty(); }
       if (S.tab === "targets") { loadTargets(); loadPersons(); }
       if (S.tab === "attention") loadDigest();
       if (S.tab === "status") loadLogs();

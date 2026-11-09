@@ -46,19 +46,22 @@ for (const [k, v] of Object.entries(DEFAULT_CONFIG)) {
 }
 const RANGE_KEYS = ["poll.interval_min", "poll.fast_sec", "poll.dm_recent", "poll.per_chat_limit",
   "poll.backfill_hours", "poll.cooldown_sec", "poll.group_wake_sec", "dsh.timeout",
-  "dsh.turn_cap_sec", "dsh.warm_min"];
+  "dsh.turn_cap_sec", "dsh.warm_min", "duty.trial_hours", "duty.max_groups",
+  "duty.max_per_day", "duty.session_max_turns", "duty.record_keep_days", "duty.sweep_min",
+  "duty.sweep_lookback_hours", "duty.max_group_members"];
 function extreme(value) {
-  const cfg = { poll: {}, dsh: {} };
+  const cfg = { poll: {}, dsh: {}, duty: {} };
   for (const key of RANGE_KEYS) {
     const parts = key.split(".");
-    const node = parts[0] === "dsh" ? cfg.dsh : cfg.poll;
+    const node = parts[0] === "dsh" ? cfg.dsh : (parts[0] === "duty" ? cfg.duty : cfg.poll);
     node[parts[1]] = value;
   }
   const out = normalizeConfig(cfg);
   const got = {};
   for (const key of RANGE_KEYS) {
     const parts = key.split(".");
-    got[key] = parts[0] === "dsh" ? out.dsh[parts[1]] : out.poll[parts[1]];
+    got[key] = parts[0] === "dsh" ? out.dsh[parts[1]]
+      : (parts[0] === "duty" ? out.duty[parts[1]] : out.poll[parts[1]]);
   }
   return got;
 }

@@ -100,3 +100,14 @@ python3 scripts/bootstrap.py --selftest dingtalk <userId>
 dws 自带 `dws event +listen-im --kind ...`（常驻事件流）。本 skill 不用它，
 原因是：常驻进程不返回、无法"命中即退出 → agent 处理 → 重挂"，
 与单发唤醒模型冲突。需要秒级实时性时再单独评估。
+
+## 值守分诊的能力缺口（spec 0040）
+
+- **没有跨群 @我 搜索**：`dws` 当前只有逐会话 `+chat-messages`，没有飞书
+  `+messages-search --is-at-me` 的等价命令。插件 @ 清查只能退回逐新群拉 10 条；
+  群多时成本随群数增长。
+- **没有群成员列表命令**：本仓库实测基线里没有 `+chat-members`；插件把人数按「未知」处理，
+  `duty.max_group_members` 硬门下自动只能 `ignore`，要值守只能用户在面板手动开。
+  不要因为「看起来能读消息」就假设能拿到人数。
+- **事件流不是分诊替代**：`dws event +listen-im` 是常驻事件流，和单发唤醒模型冲突；
+  本插件不用它，也不拿它假装实时 @ 搜索。

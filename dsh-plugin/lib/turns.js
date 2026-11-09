@@ -284,7 +284,7 @@ export function buildWakePrompt(platform, chatName, chatId, messages, {
  */
 export function buildOpenPrompt(platform, chatName, chatId, messages, {
   bookPath = "", people = [], wakeMode = "mention", resetMin = 0, kind = "group",
-  single = false, legacyPath = "", legacyHistory = "",
+  single = false, legacyPath = "", legacyHistory = "", dutyContext = null,
 } = {}) {
   const label = PLAT_LABEL[platform] || platform;
   const safeName = sanitizeUntrusted(chatName || chatId);
@@ -308,7 +308,9 @@ export function buildOpenPrompt(platform, chatName, chatId, messages, {
   const legacy = legacyLine(legacyPath, legacyHistory);
   if (legacy) parts.push(legacy);
   if (lines.length) {
-    parts.push(`最近上下文（最近 30 分钟，共 ${lines.length} 条）：`);
+    parts.push(dutyContext && dutyContext.action
+      ? `分诊时看到的最近 ${lines.length} 条：`
+      : `最近上下文（最近 30 分钟，共 ${lines.length} 条）：`);
     parts.push(...lines);
     if (messages.some((m) => m.kind === "cmd")) {
       parts.push("（带「本人（@自己）」的行是本人对替身说的话，不是客户消息；按它执行即可，" +
@@ -316,6 +318,12 @@ export function buildOpenPrompt(platform, chatName, chatId, messages, {
     }
   } else {
     parts.push("最近 30 分钟没有新消息。");
+  }
+  if (dutyContext && dutyContext.action) {
+    parts.push("值守判断：" + String(dutyContext.action) + "（只盯 @我）");
+    if (dutyContext.reason) parts.push("判断理由：" + sanitizeUntrusted(dutyContext.reason));
+    parts.push("这是决定值守后的接手轮；下面是分诊时看到的最近消息。");
+    parts.push("有该回的就按 skill 回，没有需要回的就不要往群里发消息。");
   }
   parts.push(kind === "group"
     ? (wakeMode === "all"
@@ -330,6 +338,77 @@ export function buildOpenPrompt(platform, chatName, chatId, messages, {
     : "这一轮是用户点「加入值守」触发的：先把上下文和两层文件读进来；" +
       "有该回的就按 skill 处理，**没有需要回的就不要往会话里发任何消息**。");
   if (lines.length) parts.push("上下文来自本地最近消息；更早的按 skill 在线拉，不要重发已经处理过的。");
+  return parts.join("\n");
+}
+
+
+/**
+ * 值守台载荷：只做注意力判断，不加载完整 skill，不发消息、不拉历史。
+ * 插件只给事实、路径与硬门；判断由 agent 写 decisions/<event_id>.json。
+ */
+export function buildDeskPrompt(chat, {
+  facts = {}, messages = [], people = [], review = false,
+} = {}) {
+  const f = facts || {};
+  const label = PLAT_LABEL[chat?.platform] || f.label || chat?.platform || "";
+  const name = sanitizeUntrusted(chat?.name || f.name || chat?.chat_id || "");
+  const rows = (Array.isArray(messages) ? messages : [])
+    .slice()
+    .sort((a, b) => (Number(a.ts_epoch) || 0) - (Number(b.ts_epoch) || 0))
+    .map((m) => formatMsgLine(m, null, chat?.platform || "", null))
+    .slice(-10);
+  const trig = review ? "review" : String(f.trigger || "manual");
+  const trigLabel = {
+    added: "会话列表发现新群", mentioned: "探针发现有人 @ 你",
+    sweep: "定期清查发现有人 @ 你", review: "试用复核", manual: "你让它判断",
+  }[trig] || trig;
+  const parts = ["（值守台，不是客户消息）"];
+  parts.push("你是值守台，不是群里的替身。只判断，不发消息、不拉历史、不运行 listen_cli。");
+  parts.push(`值守台 · ${label} · ${name}`);
+  parts.push(`候选：${name}`);
+  parts.push(`chat_id：${chat?.chat_id || f.chat_id || ""}`);
+  parts.push(`触发：${trigLabel}`);
+  if (review) {
+    parts.push(`试用开始/到期：${f.review_at ? new Date(Number(f.review_at) * 1000).toISOString() : "未知"}`);
+  }
+  parts.push(`探针：最近 ${rows.length} 条（只读，未回复；媒体未取回）`);
+  if (rows.length) parts.push(...rows);
+  else parts.push("- （没有可读消息）");
+  const peopleBlock = personLines(people);
+  if (peopleBlock.length) parts.push(...peopleBlock);
+  const count = Number(f.member_count) || 0;
+  const limit = Number(f.member_limit) || 0;
+  parts.push(`群成员：${count > 0 ? `${count} 人` : "未知"}（自动上限 ${limit || "不限"}；` +
+    `${limit > 0 && (count <= 0 || count > limit) ? "超过/未知，自动只能 ignore，手动可开" : "可以自动判断"}）`);
+  parts.push(`当前值守：${Number(f.watch_groups) || 0} 个群 / 上限 ${Number(f.watch_max) || "不限"}；` +
+    `今日已分诊 ${Number(f.quota_used) || 0} / ${Number(f.quota_max) || "不限"}`);
+  const recent = Array.isArray(f.recent) ? f.recent : [];
+  if (recent.length) {
+    parts.push("最近判断：");
+    for (const x of recent) parts.push(`- ${sanitizeUntrusted(x.name)} → ${x.action}（${x.reason || "无理由"}）`);
+  }
+  parts.push(`值守方针：${f.policy_path || "（未提供）"}（存在时读；不存在写「暂无」）`);
+  parts.push("若用户在本会话给出长期偏好，按「值得值守 / 先试用 / 不盯 / 硬约束」四段更新它。");
+  parts.push("你的任务：");
+  parts.push("1. 判断这个群值不值得值守：watch / trial / ignore。");
+  parts.push(`2. 只写决策文件：${f.decision_path || "（未提供）"}（字段见本 prompt；没有 mode，新群一律 mention）。`);
+  parts.push("3. 不给这个群发消息，不拉更多历史，不改 state.json。");
+  const trialOn = Number(f.trial_hours) > 0;
+  parts.push(review
+    ? "复核只允许 watch / ignore；不能续 trial。watch 不再起接手轮；理由写清这段试用看到了什么。"
+    : "判断口径：硬门优先（平台判不了 @ / 屏蔽 / 人数超限或未知 / 达上限 → ignore）。");
+  if (!review) {
+    parts.push(`- 个人 @ + 具体请求 + 工作上下文/认识的人 → watch；不确定 → ${trialOn ? "trial" : "ignore（trial 关，等 @ 再判）"}；无工作信号 → ignore。`);
+    parts.push("- @所有人 不算个人 @；只允许 mention，不提供 all。");
+    parts.push("- 只写一个 JSON：version/decision_id/platform/chat_id/action/watch|trial|ignore/reason/confidence；trial 还需 review_at（可选）。");
+    parts.push("- 决策文件路径就是上面给的路径；写不进去就如实报告，不要改别的路径。");
+    parts.push(`必须带 decision_id="${f.event_id || ""}"、platform="${chat?.platform || ""}"、` +
+      `chat_id="${chat?.chat_id || ""}"。`);
+    parts.push('示例：{"version":1,"decision_id":"<上面的 event_id>","platform":"<上面的平台>",' +
+      '"chat_id":"<上面的 chat_id>","action":"watch|trial|ignore","reason":"单行理由",' +
+      '"confidence":0.7}；trial 另给 "review_at"（可省略）。');
+  }
+  parts.push("这是判断轮，不是客户消息：不要把判断内容发到任何群。");
   return parts.join("\n");
 }
 
@@ -625,6 +704,138 @@ export class Turns {
     return !!handle && !handle.cancelled;
   }
 
+  deskDir() {
+    return path.join(this.state.dir, "duty");
+  }
+
+  deskBusy() {
+    const h = this.active.get("desk:desk");
+    return !!h && !h.cancelled;
+  }
+
+  clearDeskBinding(reason = "") {
+    const desk = this.state.data.desk || (this.state.data.desk = {});
+    desk.dsh_session = "";
+    desk.session_turns = 0;
+    desk.prompt_session = "";
+    desk.session_bound_at = 0;
+    desk.last_error = reason;
+    this.state.save();
+  }
+
+  async resolveDesk() {
+    const desk = this.state.data.desk || (this.state.data.desk = {});
+    const dir = this.deskDir();
+    fs.mkdirSync(path.join(dir, "decisions"), { recursive: true, mode: 0o700 });
+    try { fs.chmodSync(dir, 0o700); } catch { /* best effort */ }
+    try { fs.chmodSync(path.join(dir, "decisions"), 0o700); } catch { /* best effort */ }
+    desk.workspace = dir;
+    const cfg = this.state.data.config?.duty || {};
+    const maxTurns = Math.max(0, Number(cfg.session_max_turns) || 0);
+    const warmMin = this.warmMinutes();
+    const lastAt = Math.max(Number(desk.session_bound_at) || 0,
+      Number(desk.last_turn?.at) || 0);
+    if (desk.dsh_session && (
+      (maxTurns > 0 && Number(desk.session_turns) >= maxTurns) ||
+      (warmMin > 0 && lastAt && nowSec() - lastAt >= warmMin * 120)
+    )) {
+      this.logger.info?.(`[im-standin] desk rotate: turns=${desk.session_turns} idle=${Math.round(nowSec() - lastAt)}s`);
+      this.clearDeskBinding("");
+    }
+    let sid = String(desk.dsh_session || "");
+    let agent = null;
+    if (sid) {
+      try {
+        const resolved = await this.sessionController.resolveAgent(sid);
+        if (resolved?.agent && !resolved.error) {
+          const cwd = resolved.agent.session?.header?.cwd || resolved.agent.session?.cwd ||
+            resolved.agent.cwd || "";
+          const norm = cwd ? workspaces.normalize(cwd) : "";
+          if (!norm || norm === dir) agent = resolved.agent;
+          else this.clearDeskBinding("workspace_mismatch");
+        } else {
+          this.clearDeskBinding("missing");
+          sid = "";
+        }
+      } catch (e) {
+        if (e?.code === "session/not-found") {
+          this.clearDeskBinding("missing");
+          sid = "";
+        } else {
+          throw e;
+        }
+      }
+    }
+    if (!agent) {
+      const made = await this.agentFromCreated(await this.sessionController.create({ cwd: dir }));
+      agent = made.agent;
+      sid = made.sessionId;
+      desk.dsh_session = sid;
+      desk.session_bound_at = nowSec();
+      desk.session_turns = 0;
+      desk.prompt_session = "";
+      desk.last_error = "";
+      this.state.save();
+    }
+    desk.workspace = dir;
+    return { agent, sessionId: sid, cwd: dir };
+  }
+
+  /**
+   * 值守台 turn：独立 desk session，不唤醒群、不 ack、不下载媒体、不 post-turn poll。
+   * 启动后立即返回；onDone 在 runTurn 结束回调里读决策文件。
+   */
+  async deskTriage(chat, {
+    eventId = "", trigger = "", review = false, messages = [], facts = {}, onDone = null,
+  } = {}) {
+    if (!this.hostReady()) return { ok: false, reason: "host_unavailable" };
+    if (this.deskBusy()) return { ok: false, reason: "desk_busy" };
+    let deskSession;
+    try {
+      deskSession = await this.resolveDesk();
+    } catch (e) {
+      const reason = String(e?.message || e?.name || e).slice(0, 160);
+      const desk = this.state.data.desk || (this.state.data.desk = {});
+      desk.last_error = reason;
+      this.state.save();
+      return { ok: false, reason };
+    }
+    if (deskSession.agent?.status === "running") {
+      return { ok: false, reason: "desk_busy" };
+    }
+    const desk = this.state.data.desk || (this.state.data.desk = {});
+    const people = this.peopleFor(chat.platform, chat, messages, { cap: 5, p2pFallback: false });
+    const prompt = buildDeskPrompt(chat, {
+      facts: { ...facts, event_id: eventId }, messages, people, review,
+    });
+    const message = await makeUserMessage(prompt);
+    const fake = {
+      platform: "desk", chat_id: "desk", name: "值守台", kind: "group",
+      wake: {}, recent: [], prompt_session: "", last_turn: { ok: null, reason: "", at: 0 },
+    };
+    const turnId = crypto.randomUUID();
+    const handle = {
+      turnId, platform: "desk", chatId: "desk",
+      cancelled: false, state: "desk", since: nowSec(), startedAt: nowSec(),
+      lastOk: null, lastReason: "", lastAt: 0, promptId: message.id, agent: deskSession.agent,
+      done: null, desk: true,
+    };
+    this.active.set("desk:desk", handle);
+    desk.last_error = "";
+    this.state.save();
+    const done = this.runTurn(handle, {
+      chat: fake, agent: deskSession.agent, sid: deskSession.sessionId,
+      cwd: deskSession.cwd, message, desk: true,
+    });
+    handle.done = done;
+    if (typeof onDone === "function") {
+      done.then((r) => onDone(r)).catch((e) => {
+        this.logger.warn?.(`[im-standin] desk onDone: ${e?.message || e}`);
+      });
+    }
+    return { ok: true, started: true, turn_id: turnId, session_id: deskSession.sessionId };
+  }
+
   async wake(chat, { interrupted = false, batch = null } = {}) {
     if (!this.hostReady()) {
       return { ok: false, reason: "host_unavailable" };
@@ -656,7 +867,7 @@ export class Turns {
   }
 
   /** 人工开启值守：立刻建会话/起一轮，不等新消息。在飞（未取消）则不打断，直接算成功。 */
-  async open(chat, { reason = "join" } = {}) {
+  async open(chat, { reason = "join", dutyContext = null } = {}) {
     if (!this.hostReady()) return { ok: false, reason: "host_unavailable" };
     const key = chatKey(chat.platform, chat.chat_id);
     if (this.busy(chat.platform, chat.chat_id)) return { ok: true, skipped: "running" };
@@ -667,7 +878,7 @@ export class Turns {
     }
     if (this.busy(chat.platform, chat.chat_id)) return { ok: true, skipped: "running" };
     // 被取消的旧轮仍在收尾时，_wake 会先 cancel 再 await done，然后开新轮。
-    return this._wake(chat, { interrupted: false, open: true, reason });
+    return this._wake(chat, { interrupted: false, open: true, reason, dutyContext });
   }
 
   /** 开场轮取最近 30 分钟内、有正文的消息当上下文（不区分是否待回）。 */
@@ -679,7 +890,8 @@ export class Turns {
       .slice(-limit);
   }
 
-  async _wake(chat, { interrupted = false, batch = null, open = false, hadActive = false } = {}) {
+  async _wake(chat, { interrupted = false, batch = null, open = false, hadActive = false,
+    dutyContext = null } = {}) {
     const key = chatKey(chat.platform, chat.chat_id);
     const current = this.state.getChat(chat.platform, chat.chat_id) || chat;
     // 真实消息优先：正在启动的保温轮让位。
@@ -690,7 +902,10 @@ export class Turns {
     }
     // 插件只追加消息：没有新消息/待回就不起 turn，也不生成空载荷。
     const opening = !!open;
-    const messages = opening ? this.openMessages(current) : this.wakeMessages(current, batch);
+    const messages = opening
+      ? ((dutyContext?.messages && dutyContext.messages.length)
+        ? dutyContext.messages : this.openMessages(current))
+      : this.wakeMessages(current, batch);
     if (!messages.length && !opening) return { ok: false, reason: "no_pending" };
     // 回执目标在启动前就定下来：之后即使被新消息打断，也不影响这一批已送出的消息。
     const ack = opening ? [] : this.ackTargets(current, messages);
@@ -775,11 +990,13 @@ export class Turns {
         ? buildOpenPrompt(current.platform, current.name, current.chat_id, messages, {
             bookPath: memory.path, single: memory.single, legacyPath, legacyHistory, people,
             wakeMode: current.wake_mode || "mention", resetMin, kind: current.kind,
+            dutyContext,
           })
         : buildWakePrompt(current.platform, current.name, current.chat_id, messages, {
             bookPath: memory.path, single: memory.single, legacyPath, legacyHistory, people,
             interrupted, firstTurn, mediaMap: media.map,
             wakeMode: current.wake_mode || "mention", resetMin, kind: current.kind,
+            dutyContext,
           });
       const message = await makeUserMessage(prompt, media.parts);
       handle.promptId = message.id;
@@ -1217,7 +1434,7 @@ export class Turns {
     }
   }
 
-  runTurn(handle, { chat, agent, sid, cwd, message, warm = false, ack = [] }) {
+  runTurn(handle, { chat, agent, sid, cwd, message, warm = false, desk = false, ack = [] }) {
     return new Promise((resolve) => {
       const key = chatKey(chat.platform, chat.chat_id);
       // 停滞超时（默认 600s）+ 单轮总上限兜底（默认 3600s，0 = 不限），见 spec 0034。
@@ -1246,7 +1463,7 @@ export class Turns {
           const wasActive = this.active.get(key)?.turnId === handle.turnId;
           if (wasActive) {
             this.active.delete(key);
-            if (!warm) {
+            if (!warm && !desk) {
               chat.wake.active = false;
               chat.wake.failed = false;
               chat.wake.turn_id = "";
@@ -1265,6 +1482,24 @@ export class Turns {
           return;
         }
         this.active.delete(key);
+        if (desk) {
+          const ds = this.state.data.desk || (this.state.data.desk = {});
+          ds.session_turns = Math.max(0, Number(ds.session_turns) || 0) + 1;
+          ds.last_turn = {
+            ok: !!result.ok,
+            reason: result.ok ? "" : (result.reason || "turn_failed"),
+            at: nowSec(),
+          };
+          ds.last_error = result.ok ? "" : (result.reason || "turn_failed");
+          this.state.save();
+          this.logTurn("desk_end", chat, {
+            turn_id: handle.turnId, ok: !!result.ok,
+            reason: result.ok ? "" : (result.reason || "turn_failed"),
+            ms: Date.now() - startedAt,
+          });
+          settle(result);
+          return;
+        }
         if (warm) {
           // 保温轮不是真实工作：只记自己的结果，不碰 session_turns / last_turn / wake，
           // 否则闲置时钟会被每小时一次心跳推后，3 小时重开永远不触发。
@@ -1329,7 +1564,7 @@ export class Turns {
             promptSeen = true;
             handle.promptSeen = true;
             // 这一轮的载荷已经进 agent 的上下文：之后只追加新消息。
-            if (chat.prompt_session !== sid) {
+            if (!desk && chat.prompt_session !== sid) {
               chat.prompt_session = sid;
               this.state.save();
             }
@@ -1341,7 +1576,7 @@ export class Turns {
               if (lastTurnStart != null) {
                 turnStarted = true;
                 turnNumber = lastTurnStart;
-              } else if (!warm) {
+              } else if (!warm || desk) {
                 turnStarted = true;
                 turnNumber = null; // 轮号未知，turn/end 不再比对
                 handle.adopted = true;
@@ -1403,7 +1638,7 @@ export class Turns {
       }
       this.logTurn(warm ? "warm_sent" : "followup", chat, { turn_id: handle.turnId });
       // 会话已启动、载荷已送出：现在才点回执；失败不影响本轮。
-      this.sendAck(chat, ack);
+      if (!desk) this.sendAck(chat, ack);
       watchdog = turnWatchdog({
         stallSec: timeoutSec,
         capSec,

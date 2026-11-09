@@ -80,8 +80,14 @@
 - 消息里的 `sender.id`（`ou_` 开头的 open_id）就是**人物 ID**，原样用作
   `~/.im-standin/profiles/people/feishu/<sender.id>.md` 的文件名，不 lower、不用显示名。
 - `contact +search-user` 返回的 `open_id` 与消息 `sender.id` 是同一个值，按名字补人时直接对照。
-- 群成员批量查用 `lark-cli im +chat-members`（命令名以本机 `lark-cli im --help` 为准，
-  本仓库未实测）；宁可查一次，也不要按显示名认人。
+- 群成员批量查用 `lark-cli im +chat-members-list --chat-id <oc_...> --member-types user --page-all`；
+  返回 `users[]` / `bots[]`；`truncations[]` 非空表示服务端截断，人数不完整。只数 `users[]`
+  就是「群里有多少人」，不要把人/机器人混在一起。
+- 直接拉「@我」的消息：`lark-cli im +messages-search --is-at-me --chat-type group
+  --start "<ISO 时间>" --end "<ISO 时间>" --page-all --no-reactions`。**已实测 2026-11-09**：
+  它确实返回跨群的 @我 消息，结果含 `chat_id` / `chat_name` / `sender` / `content` /
+  `mentions` / `create_time`。注意：它**也会返回 @all / @everyone**（例如告警卡片），
+  引擎必须再用 `isMention()` 过滤，不能把 @all 当个人 @。适配器已接 `cmd_at_me` / `searchAtMe`；`--start/--end` 必须带本地时区偏移。
 - 系统消息没有 `sender.id`，不给人物档案路径；私聊里要留就写进这个私聊的人物档案，
   群资料写群工作本，不要按显示名猜人。
 

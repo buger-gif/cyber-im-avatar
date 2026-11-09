@@ -9,6 +9,7 @@ import { isMention } from "./im.js";
 import * as workspaces from "./workspaces.js";
 import * as sessions from "./sessions.js";
 import { chatPersonId, excerpt } from "./profiles.js";
+import * as duty from "./duty.js";
 import fs from "node:fs";
 import path from "node:path";
 
@@ -39,6 +40,7 @@ export const ROUTES = {
   "/api/chat/session": "chatSession",
   "/api/logs": "logs",
   "/api/digest": "digest",
+  "/api/duty": "duty",
 };
 
 export const POST_ROUTES = {
@@ -48,6 +50,7 @@ export const POST_ROUTES = {
   "/api/persons/profile": "personProfile",
   "/api/chat/session/reset": "chatSessionReset",
   "/api/chat/wake": "chatWake",
+  "/api/duty/triage": "dutyTriage",
 };
 
 export const DELETE_ROUTES = {
@@ -109,6 +112,17 @@ export class App {
     }
   }
 
+  recordUserDuty(chat, action, reason = "你在面板设置") {
+    if (!chat) return;
+    const d = chat.duty || (chat.duty = {});
+    d.state = action === "ignore" ? "ignore" : "watch";
+    d.by = "user";
+    d.decided_at = Date.now() / 1000;
+    d.reason = String(reason || "你在面板设置").slice(0, 160);
+    d.review_at = 0;
+    d.error = "";
+  }
+
   selfId(platform) {
     return this.poller?.identity?.[platform]?.self_id ||
       this.im?.identity?.[platform]?.self_id || "";
@@ -134,6 +148,7 @@ export class App {
     out.timed = !chat.blocked && !!chat.watching &&
       (chat.kind === "group" ? Number(chat.timer) === 1 : Number(chat.timer) !== -1);
     out.poll_at = chat.last_sync || 0;
+    out.duty = chat.duty ? { ...chat.duty } : null;
     delete out.recent;
     return out;
   }
@@ -412,6 +427,7 @@ export class App {
       }
     }
     if (!watching) this.turns.cancel(platform, chatId, "unwatch");
+    this.recordUserDuty(chat, watching ? "watch" : "ignore");
     this.state.save();
     // 重复加入（已经盯上、会话也在）不重复开场，免得多跑一轮、甚至多回一条；
     // 但会话缺了（重开过/工作区漂移/会话丢失）就补开，别留空窗。
@@ -430,7 +446,9 @@ export class App {
     if (!platform || !chatId) return { ok: false, reason: "bad_request" };
     const chat = this.state.ensureChat(platform, chatId, {});
     chat.watching = false;
+    chat.timer = -1;
     this.turns.cancel(platform, chatId, "unwatch");
+    this.recordUserDuty(chat, "ignore");
     this.state.save();
     return { ok: true };
   }
@@ -513,6 +531,7 @@ export class App {
     } else {
       this.turns.cancel(platform, chatId, "mode_off");
     }
+    this.recordUserDuty(chat, on ? "watch" : "ignore");
     this.state.save();
     // 从「不盯」切回来要立刻起会话；已经在盯但绑定为空（刚重开/会话丢失）也要补上，
     // 否则 @-only 模式下会一直等不到下一轮命中，看着像没生效（spec 0028）。
@@ -559,6 +578,7 @@ export class App {
       }
       this.turns.cancel(platform, chatId, "blocked");
     }
+    if (want) this.recordUserDuty(chat, "ignore", "你在面板屏蔽");
     this.state.save();
     return {
       ok: true, blocked: want, ignored,
@@ -590,6 +610,42 @@ export class App {
     return { ok: true, paused: this.state.data.paused };
   }
 
+  async duty(q) {
+    const info = this.poller.dutyInfo();
+    const items = [];
+    for (const it of info.items) {
+      const chat = this.state.getChat(it.platform, it.chat_id);
+      if (!chat) continue;
+      items.push({ ...this.publicChat(chat), duty: chat.duty ? { ...chat.duty } : null });
+    }
+    return { ...info, items };
+  }
+
+  async dutyTriage(q, body = {}) {
+    const platform = pick(q, body, "platform");
+    const chatId = pick(q, body, "chat_id");
+    if (!platform || !chatId) return { ok: false, reason: "bad_request" };
+    if (!this.supported(platform)) return this.unsupported(platform);
+    const chat = this.state.getChat(platform, chatId);
+    if (!chat) return { ok: false, reason: "chat_not_found" };
+    if (chat.kind !== "group") return { ok: false, reason: "not_group" };
+    if (chat.watching) return { ok: false, reason: "already_watching" };
+    if (chat.blocked) return { ok: false, reason: "blocked" };
+    if (["queued", "triaging"].includes(chat.duty?.state)) {
+      return { ok: false, reason: "already_queued" };
+    }
+    const force = boolValue(pick(q, body, "force"), false);
+    if (!force && ["ignore", "failed"].includes(chat.duty?.state)) {
+      return { ok: false, reason: "already_decided" };
+    }
+    if (!this.poller.dutyCfg().enabled && !force) {
+      return { ok: false, reason: "duty_disabled" };
+    }
+    duty.newEvent(chat, "manual");
+    this.state.save();
+    return { ok: true, chat: this.publicChat(chat) };
+  }
+
   async doctor() {
     return this.poller.doctor();
   }
@@ -600,7 +656,7 @@ export class App {
 
   async setConfig(q, body) {
     const merged = { ...this.state.data.config, ...(body || {}) };
-    for (const k of ["poll", "dsh"]) {
+    for (const k of ["poll", "dsh", "duty"]) {
       if (body?.[k] && typeof body[k] === "object") {
         merged[k] = { ...(this.state.data.config[k] || {}), ...body[k] };
       }

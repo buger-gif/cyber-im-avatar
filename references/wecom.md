@@ -69,3 +69,13 @@ python3 scripts/bootstrap.py --selftest wecom <对方userid>          # 3 秒自
                                         "--begin-time","{begin_time}","--end-time","{end_time}"],
                             "f_items": [["messages"]] } } }
 ```
+
+## 值守分诊的能力缺口（spec 0040）
+
+- **没有 mentions**：企微消息没有结构化 `mentions`，`auth show` 只给 Bot ID、没有本人显示名；
+  插件无法判定「个人 @」。自动分诊的 @ 清查不跑，自动开监听只能 `ignore`，要值守只能手动。
+- **没有会话枚举**：`chat groups list` 只返回最近 7 天有消息的群，且插件不能靠它发现全部新群；
+  新群分诊没有可靠入口。
+- **没有群成员数**：没有成员列表命令，`duty.max_group_members` 按未知处理；自动只能手动开。
+- **没有消息 ID / 时间窗必填 / 正序返回**：这些既有约束不变，分诊探针仍走同一个
+  `chat messages list`，不会绕过 7 天限制。

@@ -64,6 +64,20 @@ function makeApp() {
     turnInfo() { return { state: "idle", since: 0, last_ok: null, last_reason: "", last_at: 0 }; },
     canMention(platform) { return platform !== "wecom"; },
     candidates() { return []; },
+    dutyCfg() { return state.data.config.duty; },
+    dutyInfo() {
+      const items = state.listChats().filter((c) => c.duty && c.duty.state !== "none");
+      return {
+        ok: true, enabled: true,
+        counts: { queued: 0, triaging: 0, trial: 0, failed: 0, ignore: 0, watch: 0,
+          quota_used: 0, quota_max: 20, watch_groups: 0, watch_max: 20 },
+        desk: { session_id: "", workspace: path.join(dir, "duty"), session_turns: 0,
+          session_max_turns: 20, last_turn: { ok: null, reason: "", at: 0 }, last_error: "",
+          baseline_at: 0, last_sweep_at: 0 },
+        items: items.map((c) => ({ platform: c.platform, chat_id: c.chat_id, name: c.name,
+          kind: c.kind, watching: !!c.watching, pending: 0, duty: { ...c.duty } })),
+      };
+    },
     async pollChat(platform, chatId, opts = {}) {
       calls.poll.push({ platform, chatId, opts });
       return { fetched: true, new: 0, woke: false, items: [] };
@@ -861,4 +875,26 @@ test("GET /api/logs exposes turn events and never message bodies", async () => {
   assert.equal(out.body.events[0].owner, "foreign");
   assert.equal(out.body.events[1].event, "wake");
   assert.equal(JSON.stringify(out.body.events).includes("content"), false);
+});
+
+
+test("GET /api/duty exposes candidates and POST /api/duty/triage queues manually", async () => {
+  const { app, state } = makeApp();
+  const chat = state.ensureChat("feishu", "oc_duty", { name: "新项目群", kind: "group" });
+  chat.duty.member_count = 8;
+  let r = await app.handle("/api/duty", "GET");
+  assert.equal(r.status, 200);
+  assert.equal(r.body.ok, true);
+  assert.equal(Array.isArray(r.body.items), true);
+
+  r = await app.handle("/api/duty/triage", "POST", null, {
+    platform: "feishu", chat_id: "oc_duty",
+  });
+  assert.equal(r.status, 200);
+  assert.equal(r.body.ok, true);
+  assert.equal(chat.duty.state, "queued");
+  assert.equal(chat.duty.trigger, "manual");
+
+  r = await app.handle("/api/duty", "GET");
+  assert.equal(r.body.items.some((x) => x.chat_id === "oc_duty"), true);
 });

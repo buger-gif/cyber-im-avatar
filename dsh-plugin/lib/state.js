@@ -41,6 +41,17 @@ export const DEFAULT_CONFIG = {
   },
   platforms: ["feishu", "wecom"],
   dsh: { timeout: 600, turn_cap_sec: 3600, full_access: false, warm_min: 55, ack_reaction: true },
+  duty: {
+    enabled: true,
+    trial_hours: 0,
+    max_groups: 20,
+    max_per_day: 20,
+    session_max_turns: 20,
+    record_keep_days: 30,
+    sweep_min: 10,
+    sweep_lookback_hours: 24,
+    max_group_members: 10,
+  },
 };
 
 /** 退役配置键：旧 panel.json 里有，也不许混进运行配置。 */
@@ -52,6 +63,11 @@ export function defaultState() {
     config: clone(DEFAULT_CONFIG),
     paused: false,
     runtime: { cycles: 0, last_cycle_at: 0, last_cycle_ms: 0, last_result: {} },
+    desk: {
+      workspace: "", dsh_session: "", session_bound_at: 0, session_turns: 0,
+      prompt_session: "", last_turn: { ok: null, reason: "", at: 0 },
+      last_error: "", baseline_at: 0, last_sweep_at: 0,
+    },
     chats: {},
   };
 }
@@ -113,6 +129,18 @@ export function normalizeConfig(input) {
   d.ack_reaction = d.ack_reaction == null ? true
     : !(d.ack_reaction === false || d.ack_reaction === 0 ||
         ["false", "no", "off", "0", ""].includes(String(d.ack_reaction).trim().toLowerCase()));
+  const du = cfg.duty || (cfg.duty = {});
+  du.enabled = du.enabled !== false && du.enabled !== 0 && du.enabled !== "0" &&
+    du.enabled !== "false" && du.enabled !== "off";
+  du.trial_hours = int(du.trial_hours, 0, 168, 0);
+  du.max_groups = int(du.max_groups, 0, 200, 20);
+  du.max_per_day = int(du.max_per_day, 0, 200, 20);
+  du.session_max_turns = int(du.session_max_turns, 0, 200, 20);
+  du.record_keep_days = int(du.record_keep_days, 0, 365, 30);
+  du.sweep_min = int(du.sweep_min, 0, 1440, 10);
+  if (du.sweep_min > 0 && du.sweep_min < 10) du.sweep_min = 10;
+  du.sweep_lookback_hours = int(du.sweep_lookback_hours, 1, 168, 24);
+  du.max_group_members = int(du.max_group_members, 0, 1000, 10);
   // 退役键：0.15 起会话寿命只由 warm_min 推导，老配置里的 idle_reset_min 直接丢弃。
   delete d.idle_reset_min;
   if (!Array.isArray(cfg.platforms) || cfg.platforms.length === 0) cfg.platforms = ["feishu", "wecom"];
@@ -203,6 +231,10 @@ export class State {
       base.config = normalizeConfig(raw.config);
       base.paused = !!raw.paused;
       base.runtime = { ...base.runtime, ...(raw.runtime || {}) };
+      base.desk = { ...base.desk, ...(raw.desk && typeof raw.desk === "object" ? raw.desk : {}) };
+      if (!base.desk.last_turn || typeof base.desk.last_turn !== "object") {
+        base.desk.last_turn = { ok: null, reason: "", at: 0 };
+      }
       base.chats = {};
       for (const [key, chat] of Object.entries(raw.chats || {})) {
         const c = this.normalizeChat(chat);
@@ -289,6 +321,24 @@ export class State {
         ? { at: Number(input.wake.at) || 0, failed: !!input.wake.failed, turn_id: input.wake.turn_id || "", active: !!input.wake.active }
         : { at: 0, failed: false, turn_id: "", active: false },
       added_at: Number(input.added_at) || 0,
+      duty: {
+        state: ["none", "queued", "triaging", "watch", "trial", "reviewing", "ignore", "failed"]
+          .includes(input.duty?.state) ? input.duty.state : "none",
+        trigger: ["added", "mentioned", "manual", "review", "sweep"]
+          .includes(input.duty?.trigger) ? input.duty.trigger : "",
+        event_id: String(input.duty?.event_id || ""),
+        event_at: Number(input.duty?.event_at) || 0,
+        triaged_at: Number(input.duty?.triaged_at) || 0,
+        decided_at: Number(input.duty?.decided_at) || 0,
+        by: String(input.duty?.by || ""),
+        reason: String(input.duty?.reason || "").slice(0, 160),
+        confidence: Math.max(0, Math.min(1, Number(input.duty?.confidence) || 0)),
+        review_at: Number(input.duty?.review_at) || 0,
+        attempts: Math.max(0, Number(input.duty?.attempts) || 0),
+        error: String(input.duty?.error || "").slice(0, 160),
+        sweep_epoch: Number(input.duty?.sweep_epoch) || 0,
+        member_count: Math.max(0, Number(input.duty?.member_count) || 0),
+      },
       recent: [],
       prompt_session: typeof input.prompt_session === "string" ? input.prompt_session : "",
       last_warm_at: Number(input.last_warm_at) || 0,
