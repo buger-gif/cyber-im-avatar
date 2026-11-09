@@ -41,7 +41,7 @@
         "zh-cn": "IM 值守"
       },
       "description": {
-        "en": "Sidebar seat in DSH that watches Feishu / WeCom chats, wakes the agent only on new messages, and lets it draft, research, and reply in your voice.",
+        "en": "Sidebar seat in DSH that watches Feishu / WeCom / DingTalk chats, wakes the agent only on new messages, and lets it draft, research, and reply in your voice.",
         "zh-cn": "在 DSH 侧边栏常驻的 IM 值守席位：命中 @我 或私聊新消息才唤醒 agent，由它按你的语气起草、调研并回复；面板展示值守实例、消息与手动发送。"
       },
       "icon": "data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCA2NCA2NCIgd2lkdGg9IjY0IiBoZWlnaHQ9IjY0Ij4KPHJlY3Qgd2lkdGg9IjY0IiBoZWlnaHQ9IjY0IiByeD0iMTQiIGZpbGw9IiMxZjZmNWMiLz4KPHBhdGggZD0iTTE0IDMyaDEwbDQgN2g4bDQtN2gxMCIgZmlsbD0ibm9uZSIgc3Ryb2tlPSIjZjZmM2VjIiBzdHJva2Utd2lkdGg9IjQiCiAgc3Ryb2tlLWxpbmVjYXA9InJvdW5kIiBzdHJva2UtbGluZWpvaW49InJvdW5kIi8+CjxwYXRoIGQ9Ik0xNCAzNFYyMGE0IDQgMCAwIDEgNC00aDI4YTQgNCAwIDAgMSA0IDR2MTQiIGZpbGw9Im5vbmUiIHN0cm9rZT0iI2Y2ZjNlYyIKICBzdHJva2Utd2lkdGg9IjQiIHN0cm9rZS1saW5lY2FwPSJyb3VuZCIvPgo8cGF0aCBkPSJNMTQgMzR2MTBhNCA0IDAgMCAwIDQgNGgyOGE0IDQgMCAwIDAgNC00VjM0IiBmaWxsPSJub25lIiBzdHJva2U9IiNmNmYzZWMiCiAgc3Ryb2tlLXdpZHRoPSI0IiBzdHJva2UtbGluZWNhcD0icm91bmQiLz4KPC9zdmc+",
@@ -61,6 +61,7 @@
           "feishu",
           "lark",
           "wecom",
+          "dingtalk",
           "customer-service",
           "inbox"
         ],
@@ -72,8 +73,8 @@
       },
       "versions": [
         {
-          "version": "0.16.0",
-          "publishTimestamp": 1793948738,
+          "version": "0.18.0",
+          "publishTimestamp": 1794211267,
           "source": {
             "type": "npm"
           },
