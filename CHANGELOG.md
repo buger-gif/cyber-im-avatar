@@ -1,8 +1,29 @@
 # Changelog
 
-## 未发布
+## 0.18.0 — 2026-11-09
 
-### 未发布：群聊里 @ 自己也算指令（spec 0039）
+### 0.18.0：值守分诊（spec 0040）
+
+- **新群自评价**：第一次成功刷会话列表只建基线，存量群完全不看；基线后新群探针一次，
+  由独立**值守台** agent 判断 `watch` / `trial` / `ignore`，只写
+  `<state.dir>/duty/decisions/<event_id>.json`，插件校验后执行。新监听一律 `mention`；
+  `trial_hours=0` 默认关，严格两段式。
+- **@ 才重判**：之后不再定时判；飞书每 10 分钟一条 `im +messages-search --is-at-me` 直接拉
+  跨群 @我，命中新的个人 @ 才起第二次判断；没有 @ 不跑模型；已经在值守的群 @ 直接进群会话。
+  `--is-at-me` 会带 @all，插件用 `isMention` 过滤。钉钉没有 @我 搜索，退回逐新群；企微不扫。
+- **群成员硬门**：`duty.max_group_members` 默认 10，只数 users；超过或人数未知
+  （DingTalk/WeCom 没有成员列表、飞书 truncations）自动只能 ignore，手动 `/api/watch` 可开；
+  已经在值班的群后来变大不自动停。
+- **初始值守方针**：插件安装/首次启动、或本地 `<state.dir>/duty/policy.md` 缺失/为空时，
+  写入一份四段初始版本（值得值守 / 先试用 / 不盯 / 硬约束）；已有内容不覆盖，agent 可自行改。
+- **配置**：新增 `duty.*` 九键（enabled / trial_hours / max_groups / max_per_day /
+  session_max_turns / record_keep_days / sweep_min / sweep_lookback_hours /
+  max_group_members）；`GET /api/duty`、`POST /api/duty/triage`；面板「分身」候选卡与设置卡。
+- **数据**：`state.json` 新增顶层 `desk` 与 `chats[].duty`（含 `member_count`、`sweep_epoch`）；
+  不升 `STATE_VERSION`，老状态按默认补，不改存量会话行为。值守台 cwd 固定在
+  `<state.dir>/duty/`，不注册 DSH 工作区；旧会话留在历史，不删。
+
+### 0.18.0：群聊里 @ 自己也算指令（spec 0039）
 
 - **群里的自 @ 会唤醒替身**：在在盯的群里发 `@你的显示名 …`，和私聊一样记「本人指令」、
   进唤醒批次；群「只盯 @我」与「全部消息」两种模式都生效。全量模式不等 60 秒合并窗口，
@@ -12,7 +33,7 @@
 - **边界照旧**：默认不拉（`timer=-1`）或没在盯的群仍然看不到；已按 `out` 落盘的老消息
   不回放，重发一条即可。
 
-### 未发布：外来轮次打断与 turn 日志（spec 0038）
+### 0.18.0：外来轮次打断与 turn 日志（spec 0038）
 
 - **在飞 turn 一律打断**：值守会话里正在跑的轮次，不管是插件起的，还是人在 DSH 面板里直接
   发消息、goal / 定时任务起的，真实唤醒到达时都先取消再送载荷；`@` 不再排在别人那一轮后面
