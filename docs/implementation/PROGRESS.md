@@ -5,7 +5,7 @@
 
 ## 更新时间
 
-2026-11-09（spec 0040 值守分诊已验收并归档：私有值守台 + 决策文件 + 两段式 + Feishu @我 搜索 + 群成员 >10 硬门；spec 0039 / 0038 待真机验收；0.18.0 已发布）
+2026-11-09（spec 0040 值守分诊已验收并归档：私有值守台 + 决策文件 + 两段式 + Feishu @我 搜索 + 群成员 >10 硬门；spec 0039 / 0038 待真机验收；0.18.1 已发布）
 
 ## 最近批次
 
@@ -13,6 +13,7 @@
 | --- | --- | --- |
 | 2026-11-09 | 值守分诊（0040 / ADR 0012）：新群基线、探针、私有值守台、决策文件 watch/trial/ignore（只 mention）、可选试用、两段式（新建一次 + 新 @ 再判）、Feishu `--is-at-me` 搜索 / DingTalk 回退、群成员 >10/未知硬门、API/面板/9 键/测试/契约；已验收归档；安装时写入 policy.md 初始版本 | `dsh-plugin/lib/duty.js`、`dsh-plugin/lib/poller.js`、`docs/specs/archive/0040-值守分诊.md` |
 | 2026-11-09 | 0.18.0 发布：值守分诊（0040）进 npm latest 与市场索引；CI Trusted Publishing 成功，`v0.18.0` tag；`market/index.json` 指向 0.18.0 | `CHANGELOG.md`、`dsh-plugin/package.json`、`dsh-plugin/market/index.json`、[run 42582621666](https://github.com/buger-gif/cyber-im-avatar/actions/runs/42582621666) |
+| 2026-11-09 | 0.18.1 修复：飞书完整基线群 ID 快照，第一页之后的旧群不再排 `added`；升级清 queued added；值守台每次新建会话、短 prompt；npm latest 与市场索引指向 0.18.1 | `dsh-plugin/lib/{poller,im,turns,state}.js`、`tests/`、`docs/specs/active/0041-值守分诊基线快照与一次性判断.md`、[run 42593008639](https://github.com/buger-gif/cyber-im-avatar/actions/runs/42593008639) |
 | 2026-11-06 | 群聊里 @ 自己也算指令（spec 0039 / ADR 0011）：`isCmdMsg` 去掉群限制；全量群批次收 `cmd`，指令不等合并窗口；载荷加「群里默认只在本地处理」；契约 02、架构 02、README、CHANGELOG 同步 | `dsh-plugin/lib/{poller,turns,profiles}.js`、`tests/{poller,turns}.test.mjs`、`docs/specs/contracts/02-storage.md`、`docs/architecture/02-data.md`、`dsh-plugin/README.md`、`docs/decisions/implemented/0011-群聊自at也算指令.md` |
 | 2026-11-06 | 外来轮次打断与 turn 事件日志（spec 0038）：`wake` 用 `agent.status` 识别并打断非插件起的在飞轮次；steer 载荷按当前轮收口；看门狗只统计载荷进入会话后的事件；`logs/turns.jsonl` 落盘、体检页「最近事件」、`/api/logs.events` | `dsh-plugin/lib/{turns,app,index,turn-log}.js`、`web/panel.js`、`lib/client.js`、`tests/`、契约 01/02、spec 0038 |
 | 2026-11-06 | 0.16.0 发布：命中回执表情（spec 0037）进 npm latest 与市场索引；CI Trusted Publishing 成功，`v0.16.0` tag 与 `market/index.json` 一致 | `CHANGELOG.md`、`dsh-plugin/package.json`、`dsh-plugin/market/index.json`、[run 42178230488](https://github.com/buger-gif/cyber-im-avatar/actions/runs/42178230488) |
