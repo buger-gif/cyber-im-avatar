@@ -27,6 +27,7 @@ class FakeAdapter {
     this.atMe = [];
     this.memberCount = 8;
     this.memberKnown = true;
+    this.fetchCalls = 0;
     this.self = { ok: true, self_id: "ou_me", name: "我", detail: "" };
     this.supportsAtMe = true;
     this.canMention = true;
@@ -1037,4 +1038,47 @@ test("known baseline group IDs are skipped on normal refresh, new groups still q
   await poller.refreshChatlist(["feishu"]);
   assert.equal(state.getChat("feishu", "oc_very_old"), null);
   assert.equal(state.getChat("feishu", "oc_fresh").duty.state, "queued");
+});
+
+
+test("auto triage over the member cap auto-ignores without a desk turn", async () => {
+  const { state, poller, adapter } = setup();
+  const chat = state.ensureChat("feishu", "oc_big", { name: "大群", kind: "group" });
+  chat.duty = { ...chat.duty, state: "queued", trigger: "added", event_id: "d-big",
+    event_at: Date.now() / 1000, attempts: 0, error: "" };
+  adapter.memberCount = 175;
+  adapter.memberKnown = true;
+  let deskCalls = 0;
+  poller.turns = {
+    hostReady: () => true, deskBusy: () => false,
+    async deskTriage() { deskCalls += 1; return { ok: true }; },
+    cancel() {},
+  };
+  await poller.maybeTriage();
+  assert.equal(chat.duty.state, "ignore");
+  assert.equal(chat.duty.by, "system");
+  assert.match(chat.duty.reason, /175/);
+  assert.equal(chat.duty.member_count, 175);
+  assert.equal(chat.duty.triaged_at, 0);
+  assert.equal(deskCalls, 0);
+  assert.equal(adapter.fetchCalls, 0);
+});
+
+test("auto triage with unknown member count also skips the desk turn", async () => {
+  const { state, poller, adapter } = setup();
+  const chat = state.ensureChat("feishu", "oc_unknown", { name: "未知人数群", kind: "group" });
+  chat.duty = { ...chat.duty, state: "queued", trigger: "added", event_id: "d-unknown",
+    event_at: Date.now() / 1000, attempts: 0, error: "" };
+  adapter.memberKnown = false;
+  adapter.memberCount = 0;
+  let deskCalls = 0;
+  poller.turns = {
+    hostReady: () => true, deskBusy: () => false,
+    async deskTriage() { deskCalls += 1; return { ok: true }; },
+    cancel() {},
+  };
+  await poller.maybeTriage();
+  assert.equal(chat.duty.state, "ignore");
+  assert.match(chat.duty.reason, /未知/);
+  assert.equal(deskCalls, 0);
 });

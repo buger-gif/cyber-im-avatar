@@ -953,6 +953,26 @@ export class Poller {
       }
       return { ok: false, reason: early.error };
     }
+    // 自动路径先在插件侧筛人数：超过上限、或平台根本给不出人数时，agent 只能 ignore，
+    // 没必要为一次注定 ignore 的判断起 turn 花 token。手动事件保留（用户显式要求）。
+    const limit = Number(this.dutyCfg().max_group_members) || 0;
+    if (!review && d.trigger !== "manual") {
+      let count = Number(chat.duty.member_count) || 0;
+      if (!count) count = await this.memberCountFor(chat);
+      if (limit > 0 && (count === 0 || count > limit)) {
+        d.state = "ignore";
+        d.by = "system";
+        d.decided_at = nowSec();
+        d.reason = count > 0
+          ? `群成员 ${count} 超过自动上限 ${limit}`
+          : "群成员数未知，自动只能 ignore";
+        d.review_at = 0;
+        d.error = "";
+        d.attempts = 0;
+        this.state.save();
+        return { ok: true, skipped: count > 0 ? "group_too_large" : "member_unknown", count };
+      }
+    }
     d.state = "triaging";
     d.attempts = Math.max(0, Number(d.attempts) || 0) + 1;
     if (!review) d.triaged_at = nowSec();

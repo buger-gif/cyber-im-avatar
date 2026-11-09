@@ -171,7 +171,8 @@ agent 在这一轮里自己用 `lark-cli` 拉上下文、去绑定工作区核�
 判定在独立的**值守台**：cwd `<state.dir>/duty/`，私有、不注册工作区；插件安装/启动时
 写入初始 `policy.md`（缺/空才补，已有内容不覆盖）。每次判断**新建会话、无历史**，agent 只写
 `decisions/<event_id>.json`，插件校验后执行。`trial_hours=0` 默认关（严格两段式）；
-`session_max_turns` 保留为兼容键但不再生效；`max_group_members=10`（0=不限）只数人，超过/未知时自动只能 ignore，手动可开。
+`session_max_turns` 保留为兼容键但不再生效；`max_group_members=10`（0=不限）只数人；自动路径在起分诊会话前先查人数，超过/未知
+直接 ignore，不花 token；手动可强制。
 `GET /api/duty` 看候选，`POST /api/duty/triage` 手动重判。详细契约见
 `docs/specs/contracts/01-api.md`、`02-storage.md`、`03-config.md`。
 

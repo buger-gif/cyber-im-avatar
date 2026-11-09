@@ -80,7 +80,8 @@ poller 发现新群 / sweep 命中 @
   企微跳过；只处理基线之后、未值守的新群；`@all` 不算；`sweep_epoch` 去重。清查本身
   0 token，命中个人 @ 才起一次分诊。
 - 硬门：`trial_hours=0` 拒绝 trial；`max_group_members` 超过/未知拒绝 watch/trial；
-  `all` 一律拒绝；平台判不了 @ 只能 ignore。用户手动入口不受自动硬门限制。
+  `all` 一律拒绝；平台判不了 @ 只能 ignore。**自动路径在起 desk turn 前就查人数**，
+  超限/未知直接 ignore，不花 token；手动入口不受自动硬门限制。
 
 ## 配置
 

@@ -115,10 +115,11 @@ Markdown，都不在 `state.json` 里。**群两层，单聊一份**：
   搜索，退回逐新群；企微没有 mentions，不扫。细节与缺口见 `references/feishu.md`。
 - 判定不放在群会话：cwd 固定 `<state.dir>/duty/`，每次判断**新建值守台会话**（一次性、无历史），
   只写 `decisions/<event_id>.json`；插件校验后执行。`policy.md` 在插件安装/启动时写入初始版本
-  （缺/空才补，已有内容不覆盖），agent 可自行维护。值守台按闲置 `2 × dsh.warm_min` 或
-  `duty.session_max_turns` 轮换，旧会话不删。群会话仍在原工作区。
+  （缺/空才补，已有内容不覆盖），agent 可自行维护。旧值守台会话留在 DSH 历史，不删。
+  群会话仍在原工作区。
 - 自动开监听一律 `mention`；`duty.max_group_members`（默认 10，只数人）是硬门：超过或
-  人数未知只能 `ignore`，手动可强制。已经在值班的群后来变大不自动停。常见原因：
+  人数未知只能 `ignore`，手动可强制。**自动路径在起值守台会话前先查人数**，超限/未知直接
+  ignore，不拉消息、不花 token。已经在值班的群后来变大不自动停。常见原因：
   DingTalk/WeCom 没有成员列表，自动只能忽略；飞书 `truncations[]` 也按未知。
 
 ## 拉取节奏：快慢两条车道，三条按需路径
