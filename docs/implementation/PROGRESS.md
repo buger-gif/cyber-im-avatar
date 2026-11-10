@@ -5,12 +5,13 @@
 
 ## 更新时间
 
-2026-11-09（spec 0040 值守分诊已验收并归档：私有值守台 + 决策文件 + 两段式 + Feishu @我 搜索 + 群成员 >10 硬门；spec 0039 / 0038 待真机验收；0.18.2 已发布）
+2026-11-10（web 启动审计误报已止损，spec 0042：client 半 `immediately` + 宿主入口懒加载；DSH 上游补丁草稿已落 audit）。\n\n2026-11-09（spec 0040 值守分诊已验收并归档：私有值守台 + 决策文件 + 两段式 + Feishu @我 搜索 + 群成员 >10 硬门；spec 0039 / 0038 待真机验收；0.18.2 已发布）
 
 ## 最近批次
 
 | 日期 | 主题 | 证据 |
 | --- | --- | --- |
+| 2026-11-10 | 启动竞态止损（0042）：`dsh.client.immediately` + 宿主入口只静态依赖 Node 内置（导入 ~12ms→~4ms）；诊断与 DSH 上游补丁草稿见 `docs/audits/2026-11-10-web-boot-audit-race.md` | `dsh-plugin/package.json`、`dsh-plugin/lib/index.js` |
 | 2026-11-09 | 值守分诊（0040 / ADR 0012）：新群基线、探针、私有值守台、决策文件 watch/trial/ignore（只 mention）、可选试用、两段式（新建一次 + 新 @ 再判）、Feishu `--is-at-me` 搜索 / DingTalk 回退、群成员 >10/未知硬门、API/面板/9 键/测试/契约；已验收归档；安装时写入 policy.md 初始版本 | `dsh-plugin/lib/duty.js`、`dsh-plugin/lib/poller.js`、`docs/specs/archive/0040-值守分诊.md` |
 | 2026-11-09 | 0.18.0 发布：值守分诊（0040）进 npm latest 与市场索引；CI Trusted Publishing 成功，`v0.18.0` tag；`market/index.json` 指向 0.18.0 | `CHANGELOG.md`、`dsh-plugin/package.json`、`dsh-plugin/market/index.json`、[run 42582621666](https://github.com/buger-gif/cyber-im-avatar/actions/runs/42582621666) |
 | 2026-11-09 | 0.18.1 修复：飞书完整基线群 ID 快照，第一页之后的旧群不再排 `added`；升级清 queued added；值守台每次新建会话、短 prompt；npm latest 与市场索引指向 0.18.1 | `dsh-plugin/lib/{poller,im,turns,state}.js`、`tests/`、`docs/specs/active/0041-值守分诊基线快照与一次性判断.md`、[run 42593008639](https://github.com/buger-gif/cyber-im-avatar/actions/runs/42593008639) |
@@ -55,6 +56,8 @@
 
 ## 当前断点
 
+- **0042 启动审计误报已实施，待真机**：冷启动不再把本插件报成 `import failed`；重启桌面 app 后看
+  `~/Library/Logs/DeepSeek Harness/` 有没有新的 `crash-*-web-boot.log`，没有即通过。
 - **0040 值守分诊已实施，待真机/全量 gate**：新群/被 @ 后由 agent 判断是否 watch / trial / ignore，插件只做发现、探针、排队、校验与执行；新群一律只盯 @我（分诊不产生 all，企微判不了 @ 只能 ignore）；判断在插件私有的 `<state.dir>/duty/` 工作区，不碰常规项目；值守台全局一个，按闲置/`session_max_turns` 轮换，`ignore`/`failed` 记录按 `record_keep_days` 清理；每 `sweep_min` 只处理基线之后、未值守的新群（存量群完全不扫）：Feishu 一条 `--is-at-me` 搜索直接拉 @我（@all 用 `isMention` 过滤），DingTalk 逐新群回退；新的个人 @ 触发 `trigger=sweep` 分诊（`ignore`/`failed` 可重开）。群成员 >`max_group_members`（默认 10）或未知 → 自动只能 ignore，插件拒绝 watch/trial；手动可强制。分诊轮不发言，决定值守后才起接手轮；成本是事件驱动，0 新群/无 @ 0 模型调用。代码在 `lib/duty.js` + `lib/poller.js` + `lib/turns.js` + `lib/app.js` + `web/panel.js`，契约 01/02/03 已改，Node 测试全绿，全量 gate 已过；真机未做。
 - **0039 已实施，待真机验收**：群里本人 @ 自己现在与私聊同权，记 `kind=cmd` 进批次唤醒
   （「只盯 @我」与「全部消息」都算），不算待回；全量群不等 60 秒合并窗口；载荷要求指令默认

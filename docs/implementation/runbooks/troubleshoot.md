@@ -8,6 +8,8 @@
 1. 插件装在哪个 profile？`dsh plugin --profile web list`。headless 等无 webServer 的 profile
    里插件**故意不做事**（`docs/architecture/01-shape.md §三层转发校验`）。
 2. 宿主没注册成功：DSH 启动日志里搜 `[im-standin]`，没有 `ready` 就看报错。
+3. 启动报告写 `dsh-cyber-im-avatar: import failed`：页面能开、席位在、`~/.dsh/web.log` 有
+   `[im-standin] ready` 就是 DSH 启动审计的时序误报，见 `docs/audits/2026-11-10-web-boot-audit-race.md`。
 
 ## 症状 B：面板 401 / 白屏
 
@@ -27,8 +29,7 @@ lsof -nP -iTCP -sTCP:LISTEN                # 只应有 DSH 的 3080；多出来�
 ```
 
 - **没有 ready**：`lib/index.js` 语法/导入错误，或插件未装进当前 profile；重启 DSH 看日志。
-- **`state.json` 损坏**：`State.load()` 会先读 `state.json.bak`；两份都坏时先从 `.bak` 手工恢复，
-  不要删文件了事。
+- **`state.json` 损坏**：先读 `state.json.bak`；两份都坏时手工恢复，不要删文件了事。
 - **配置写坏**：`node -e "JSON.parse(require('fs').readFileSync(process.env.HOME+'/.im-standin/state.json','utf8'))"`。
 - **两个宿主同时跑**：桌面 app 与 3080 同时开值守会抢会话/互覆 state；只留一个。
 
@@ -65,9 +66,8 @@ lsof -nP -iTCP -sTCP:LISTEN                # 只应有 DSH 的 3080；多出来�
 - 多半是壳内 turn 去跑了 skill 的 `listen_cli` 或 `bootstrap.py`。DSH 的沙箱是
   按会话的 `workspace-write`（边界 = 会话 cwd），`~/.im-standin` 在工作区外，
   chmod / 写水位会被拒。
-- 插件已经负责轮询与水位：首轮唤醒 prompt 带「运行形态：DSH 插件壳」，后续只追加消息行，要求
-  **不要挂监听 / 不重挂**。看会话里 agent 是否无视了这条；必要时在值守会话里再
-  说一句「监听由插件管，不要挂」。独立 skill 形态请在非沙箱终端挂监听。
+- 插件已经负责轮询与水位：首轮 prompt 带「运行形态：DSH 插件壳」，后续只追加消息行，要求
+  **不要挂监听**；agent 无视了就在会话里再说一句。独立 skill 形态请在非沙箱终端挂监听。
 
 ## 还是不行
 

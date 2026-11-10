@@ -15,17 +15,6 @@ import { randomBytes } from "node:crypto";
 import { dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 
-import { State } from "./state.js";
-import { Profiles } from "./profiles.js";
-import { IM } from "./im.js";
-import { MediaStore } from "./media.js";
-import { Poller } from "./poller.js";
-import { Turns } from "./turns.js";
-import { TurnLog } from "./turn-log.js";
-import { App } from "./app.js";
-import { ensureDutyDir } from "./duty.js";
-import { ensureSkill } from "./skill-install.js";
-
 const HERE = dirname(fileURLToPath(import.meta.url));
 const PREFIX = "/plugins/im-standin";
 const TOKEN = randomBytes(24).toString("hex");
@@ -49,6 +38,7 @@ let attachments = null;
 let llm = null;
 let permissionPresets = null;
 let mediaTimer = null;
+let bootPromise = null;
 
 function cleanupMedia() {
   if (!media || !state) return;
@@ -64,8 +54,47 @@ function cleanupMedia() {
 }
 
 // ---- 进程内装配 -----------------------------------------------------------
+/**
+ * 装配宿主半，返回可等待的 memo（见 spec 0042）。
+ *
+ * 入口模块只静态依赖 Node 内置，重模块在 `bootOnce()` 里动态 import：DSH 的
+ * web boot 只等入口模块导入完就建 fiber、发布客户端那一行，静态依赖越薄，
+ * 这一行越早进 boot 快照，服务重启时越不容易被启动审计当成「导入失败」。
+ */
 function boot() {
+  bootPromise ??= bootOnce().catch((e) => {
+    bootPromise = null;
+    console.warn(LOG, "boot failed:", (e && e.stack) || e);
+    throw e;
+  });
+  return bootPromise;
+}
+
+async function bootOnce() {
   if (app) return app;
+  const [
+    { State },
+    { Profiles },
+    { IM },
+    { MediaStore },
+    { Poller },
+    { Turns },
+    { TurnLog },
+    { App },
+    { ensureDutyDir },
+  ] = await Promise.all([
+    import("./state.js"),
+    import("./profiles.js"),
+    import("./im.js"),
+    import("./media.js"),
+    import("./poller.js"),
+    import("./turns.js"),
+    import("./turn-log.js"),
+    import("./app.js"),
+    import("./duty.js"),
+  ]);
+  // 加载期间插件可能已被 dispose：此时不要再起轮询。
+  if (!alive) return null;
   state = new State();
   state.load();
   // 插件安装/首次启动就初始化私有值守台目录与初始 policy.md；本地缺文件也在这里补。
@@ -115,6 +144,7 @@ function shutdown() {
   state = null;
   app = null;
   turnLog = null;
+  bootPromise = null;
   registry = null;
   sessionController = null;
   sessions = null;
@@ -211,7 +241,8 @@ async function handler(req, res) {
     }
   }
 
-  const inst = boot();
+  const inst = await boot();
+  if (!inst) return send(res, 503, { error: "plugin is shutting down" });
   const out = await inst.handle(path, method, url.searchParams, body);
   return send(res, out.status, out.body);
 }
@@ -287,7 +318,7 @@ function mount(ctx) {
         path: PREFIX,
         handler,
       }));
-      boot();
+      boot().catch(() => { /* boot() 已打日志，请求到来时会重试 */ });
     } catch (e) {
       console.warn(LOG, "route registration failed:", e && e.message);
     }
@@ -301,11 +332,14 @@ export function apply(ctx) {
   rootCtx = ctx;
   // 插件驱动的会话靠 `/cyber-im-avatar` 自动注入 skill；首次启动时把 skill 装到
   // DSH 扫描的 ~/.agents/skills/。已有手装副本不覆盖（见 skill-install.js）。
-  try {
-    ensureSkill(console);
-  } catch (e) {
-    console.warn(LOG, "skill install skipped:", e && e.message);
-  }
+  // 动态 import：这一步不该拖慢入口模块，fiber 与客户端那一行都要尽早出现。
+  import("./skill-install.js").then(({ ensureSkill }) => {
+    try {
+      ensureSkill(console);
+    } catch (e) {
+      console.warn(LOG, "skill install skipped:", e && e.message);
+    }
+  }).catch((e) => console.warn(LOG, "skill install unavailable:", e && e.message));
   try {
     mount(ctx);
   } catch (e) {

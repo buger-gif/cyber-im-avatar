@@ -1,5 +1,16 @@
 # Changelog
 
+## 未发布
+
+### 未发布：web 启动审计误报 import failed
+
+- 桌面端冷启动时，DSH 的 web boot 审计可能把本插件报成
+  `dsh-cyber-im-avatar: import failed (see console for the import error)`，但面板与值守实际正常。
+  诊断与 DSH 上游补丁草稿见 `docs/audits/2026-11-10-web-boot-audit-race.md`。
+- 止损：`dsh.client` 增加 `immediately`，页面在启动各 entry 前先预取本插件 bundle；
+  宿主入口只静态 import Node 内置，重模块挪进 `boot()` 动态加载（入口导入约 12ms → 4ms），
+  客户端那一行更早进 boot 快照。接口、`state.json` 字段、配置键与面板行为均不变。
+
 ## 0.18.2 — 2026-11-09
 
 ### 0.18.2：人数超限不进值守台
