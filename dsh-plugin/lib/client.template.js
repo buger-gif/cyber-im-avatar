@@ -180,7 +180,58 @@ window.__ModuleLoader__.load({
 		 * immediately. The right-sidebar services are requested dynamically; if
 		 * they never arrive the plugin stays as a seat that reports unavailable.
 		 */
+		/**
+		 * 启动诊断（临时）：把客户端半看到的这次启动写回宿主 `logs/client-boot.jsonl`。
+		 * 只回答一个问题——本插件那一行是否在页面拿到的 boot 图里，导入有没有报错。
+		 */
+		function reportBoot(ctx) {
+			try {
+				const boot = window.__DSH_BOOT__ || {};
+				const rows = Array.isArray(boot.entries) ? boot.entries : [];
+				const row = rows.find((r) => r.id === "dsh-cyber-im-avatar") || null;
+				let entries = null;
+				try {
+					const loader = ctx && ctx.loader;
+					entries = loader ? [...loader.entries()].map((e) => ({
+						name: e.options.name,
+						fiber: !!e.fiber,
+						state: e.fiber ? e.fiber.state : null,
+					})) : null;
+				} catch (e) { entries = "unreadable"; }
+				let importError = null;
+				try {
+					const modules = ctx && ctx.modules;
+					const ie = modules && typeof modules.importError === "function"
+						? modules.importError("dsh-cyber-im-avatar") : null;
+					importError = ie ? String(ie.message || ie) : null;
+				} catch (e) { importError = "unreadable"; }
+				const api = window.IM_STANDIN_API || "/plugins/im-standin";
+				const token = window.IM_STANDIN_TOKEN || "";
+				fetch(api + "/api/debug/boot", {
+					method: "POST",
+					headers: { "content-type": "application/json", "x-im-token": token },
+					body: JSON.stringify({
+						t: Math.round(performance.now()),
+						ready: document.readyState,
+						hasBoot: !!boot.entries,
+						bootRows: rows.length,
+						hasRow: !!row,
+						row: row && {
+							url: row.url,
+							rev: row.rev,
+							immediately: row.immediately === true,
+							inject: row.inject || []
+						},
+						importError,
+						entries
+					}),
+					keepalive: true
+				}).catch(() => {});
+			} catch (e) { /* 诊断失败不影响主流程 */ }
+		}
+
 		function apply(ctx) {
+			reportBoot(ctx);
 			if (window.IMStandinPanel) window.IMStandinPanel.openSession = makeJump(ctx);
 
 			mountSeatUI(ctx);

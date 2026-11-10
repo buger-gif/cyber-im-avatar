@@ -12,7 +12,9 @@
  * 没有 webServer 的 profile（比如 headless）里不挂路由，也不启动轮询。
  */
 import { randomBytes } from "node:crypto";
-import { dirname } from "node:path";
+import { appendFileSync, mkdirSync } from "node:fs";
+import { homedir } from "node:os";
+import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
@@ -20,6 +22,35 @@ const PREFIX = "/plugins/im-standin";
 const TOKEN = randomBytes(24).toString("hex");
 const LOG = "[im-standin]";
 const MAX_BODY = 1 << 20; // 1 MiB：传的都是 JSON 参数
+
+// ---- 启动诊断（临时；定位完撤掉）-------------------------------------------
+const BOOT_LOG = "boot-inject.jsonl";
+const CLIENT_BOOT_LOG = "client-boot.jsonl";
+
+function bootLog(file, record) {
+  try {
+    const dir = join(process.env.IM_STANDIN_DIR || join(homedir(), ".im-standin"), "logs");
+    mkdirSync(dir, { recursive: true, mode: 0o700 });
+    appendFileSync(join(dir, file), `${JSON.stringify(record)}\n`);
+  } catch { /* 诊断失败不影响主流程 */ }
+}
+
+/** 从 index 注入表里取出桌面端真正发给页面的 boot 图，只看本插件那一行。 */
+function bootRowSnapshot(table) {
+  const boot = table.find((row) => row.kind === "global" && row.name === "__DSH_BOOT__")?.value;
+  if (!boot || !Array.isArray(boot.entries)) return { hasBoot: false };
+  const row = boot.entries.find((r) => r.id === "dsh-cyber-im-avatar") || null;
+  const batches = Array.isArray(boot.batches) ? boot.batches : [];
+  const batch = batches.find((b) => Array.isArray(b.entries) && b.entries.includes("dsh-cyber-im-avatar")) || null;
+  return {
+    hasBoot: true,
+    rev: boot.rev,
+    rows: boot.entries.length,
+    hasRow: !!row,
+    row: row && { url: row.url, rev: row.rev, immediately: row.immediately === true, inject: row.inject || [] },
+    batch: batch && { phase: batch.phase, n: batch.entries.length },
+  };
+}
 
 let state = null;
 let profiles = null;
@@ -241,6 +272,12 @@ async function handler(req, res) {
     }
   }
 
+  // 启动诊断：客户端半把「自己看到的那次启动」写回来（临时，定位完撤掉）。
+  if (path === "/api/debug/boot") {
+    bootLog(CLIENT_BOOT_LOG, { at: new Date().toISOString(), event: "client-apply", ...body });
+    return send(res, 200, { ok: true });
+  }
+
   const inst = await boot();
   if (!inst) return send(res, 503, { error: "plugin is shutting down" });
   const out = await inst.handle(path, method, url.searchParams, body);
@@ -312,6 +349,12 @@ function mount(ctx) {
       webCtx.on("webserver/index-inject", (table) => {
         table.push({ kind: "global", name: "IM_STANDIN_API", value: PREFIX });
         table.push({ kind: "global", name: "IM_STANDIN_TOKEN", value: TOKEN });
+        // 微任务里再读：此时本轮 index-inject 的所有监听器都已把行写进 table。
+        queueMicrotask(() => bootLog(BOOT_LOG, {
+          at: new Date().toISOString(),
+          event: "inject",
+          ...bootRowSnapshot(table),
+        }));
       });
       webCtx.effect(() => webCtx.webServer.register({
         kind: "prefix",
@@ -330,6 +373,7 @@ export const name = "dsh-cyber-im-avatar";
 export function apply(ctx) {
   alive = true;
   rootCtx = ctx;
+  bootLog(BOOT_LOG, { at: new Date().toISOString(), event: "host-apply" });
   // 插件驱动的会话靠 `/cyber-im-avatar` 自动注入 skill；首次启动时把 skill 装到
   // DSH 扫描的 ~/.agents/skills/。已有手装副本不覆盖（见 skill-install.js）。
   // 动态 import：这一步不该拖慢入口模块，fiber 与客户端那一行都要尽早出现。
