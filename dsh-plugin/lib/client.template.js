@@ -182,29 +182,38 @@ window.__ModuleLoader__.load({
 		 */
 		/**
 		 * 启动诊断（临时）：把客户端半看到的这次启动写回宿主 `logs/client-boot.jsonl`。
-		 * 只回答一个问题——本插件那一行是否在页面拿到的 boot 图里，导入有没有报错。
+		 * 回答三件事：本插件那一行在不在页面拿到的 boot 图里、模块系统记了什么导入错误、
+		 * Loader 里各 entry 的 fiber 状态。
 		 */
 		function reportBoot(ctx) {
+			const ID = "dsh-cyber-im-avatar";
+			const read = (fn, fallback) => { try { return fn(); } catch (e) { return fallback; } };
 			try {
 				const boot = window.__DSH_BOOT__ || {};
 				const rows = Array.isArray(boot.entries) ? boot.entries : [];
-				const row = rows.find((r) => r.id === "dsh-cyber-im-avatar") || null;
-				let entries = null;
-				try {
-					const loader = ctx && ctx.loader;
-					entries = loader ? [...loader.entries()].map((e) => ({
+				const row = rows.find((r) => r.id === ID) || null;
+				const loader = read(() => ctx && ctx.loader, null)
+					|| read(() => ctx && ctx.root && ctx.root.loader, null)
+					|| read(() => ctx && typeof ctx.get === "function" ? ctx.get("loader") : null, null)
+					|| read(() => ctx && ctx.root && typeof ctx.root.get === "function" ? ctx.root.get("loader") : null, null);
+			const modules = read(() => (loader && loader.internal)
+				|| (ctx && (ctx.modules || (ctx.root && ctx.root.modules)))
+				|| null, null);
+				const entries = read(() => ctx && ctx.loader
+					? [...ctx.loader.entries()].map((e) => ({
 						name: e.options.name,
 						fiber: !!e.fiber,
-						state: e.fiber ? e.fiber.state : null,
-					})) : null;
-				} catch (e) { entries = "unreadable"; }
-				let importError = null;
-				try {
-					const modules = ctx && ctx.modules;
-					const ie = modules && typeof modules.importError === "function"
-						? modules.importError("dsh-cyber-im-avatar") : null;
-					importError = ie ? String(ie.message || ie) : null;
-				} catch (e) { importError = "unreadable"; }
+						state: e.fiber ? e.fiber.state : null
+					}))
+					: null, "unreadable");
+				const snapshot = read(() => modules && modules.entries && modules.entries.state
+					? modules.entries.state.getSnapshot() : null, "unreadable");
+				const importError = read(() => {
+					if (!modules || typeof modules.importError !== "function") return "no-api";
+					const err = modules.importError(ID);
+					return err ? String(err.message || err) : null;
+				}, "unreadable");
+				const has = (map) => read(() => !!(map && typeof map.has === "function" && map.has(ID)), "unreadable");
 				const api = window.IM_STANDIN_API || "/plugins/im-standin";
 				const token = window.IM_STANDIN_TOKEN || "";
 				fetch(api + "/api/debug/boot", {
@@ -214,6 +223,7 @@ window.__ModuleLoader__.load({
 						t: Math.round(performance.now()),
 						ready: document.readyState,
 						hasBoot: !!boot.entries,
+						bootRev: boot.rev,
 						bootRows: rows.length,
 						hasRow: !!row,
 						row: row && {
@@ -222,8 +232,18 @@ window.__ModuleLoader__.load({
 							immediately: row.immediately === true,
 							inject: row.inject || []
 						},
-						importError,
-						entries
+						modules: {
+							hasLoader: !!loader,
+							hasInternal: !!(loader && loader.internal),
+							hasModules: !!modules,
+							importError,
+							hasFactory: has(modules && modules.factories),
+							hasLoadCache: has(modules && modules.loadCache),
+							graphRow: has(modules && modules.graphRows),
+							entryFailures: snapshot && Array.isArray(snapshot.failures)
+								? snapshot.failures.filter((f) => f && f.id === ID) : snapshot
+						},
+						entries: entries
 					}),
 					keepalive: true
 				}).catch(() => {});
