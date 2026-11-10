@@ -1,8 +1,8 @@
 # Changelog
 
-## 未发布
+## 0.18.3 — 2026-11-10
 
-### 未发布：web 启动审计误报 import failed
+### 0.18.3：web 启动审计误报 import failed
 
 - 桌面端冷启动时，DSH 的 web boot 审计可能把本插件报成
   `dsh-cyber-im-avatar: import failed (see console for the import error)`，但面板与值守实际正常。
