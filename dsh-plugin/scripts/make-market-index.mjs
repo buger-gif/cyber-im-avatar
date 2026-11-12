@@ -66,8 +66,8 @@ const index = {
   format: 1,
   title: { en: "cyber-im-avatar", "zh-cn": "赛博办公 IM 分身" },
   description: {
-    en: "Plugins from the cyber-im-avatar project: keep an IM stand-in seat inside DSH.",
-    "zh-cn": "cyber-im-avatar 的插件：在 DSH 里挂一个替你值守 IM 的常驻席位。",
+    en: "Open-source cyber office IM stand-in for DSH: watch Feishu / WeCom / DingTalk, wake the agent only when needed, and handle chats as you. Message bodies stay local.",
+    "zh-cn": "开源赛博办公 IM 分身：在 DSH 里替你值守飞书 / 企业微信 / 钉钉，需要你时才唤醒 agent 并以本人身份处理；消息正文只留本机。",
   },
   metadata: {
     categories: {
@@ -84,9 +84,9 @@ const index = {
       name: pkg.name,
       title: { en: "IM Stand-in", "zh-cn": "IM 值守" },
       description: {
-        en: "Sidebar seat in DSH that watches Feishu / WeCom / DingTalk chats, wakes the agent only on new messages, and lets it draft, research, and reply in your voice.",
+        en: "Sidebar stand-in for Feishu / WeCom / DingTalk: wakes the agent only when a chat needs attention, then lets it research and reply in your voice. Watch-level control, automatic triage for new groups, per-seat draft/auto send mode, and local-first message bodies.",
         "zh-cn":
-          "在 DSH 侧边栏常驻的 IM 值守席位：命中 @我 或私聊新消息才唤醒 agent，由它按你的语气起草、调研并回复；面板展示值守实例、消息与手动发送。",
+          "在 DSH 侧边栏常驻的赛博办公 IM 分身：盯飞书 / 企业微信 / 钉钉的私聊与群聊，命中 @我 或新消息才唤醒 agent，由它按你的语气起草、调研并回复；支持关注程度三态、新群自动分诊、按值班单点切换草稿审批 / 全自动发送。消息正文只在本机，复用本机 IM CLI 登录态。",
       },
       icon,
       author: pkg.author,
