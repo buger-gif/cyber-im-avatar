@@ -113,22 +113,29 @@ test("open prompt for a DM reads the one file", () => {
   assert.match(p, /先把上下文和这份人物档案读进来/);
 });
 
-test("later wakes send only the new message lines plus the current send mode", () => {
+test("later wakes only append the new messages when the session already knows the policy", () => {
+  const announced = { send_mode: "draft", wake_mode: "mention", cmd: false };
   const prompt = buildWakePrompt("feishu", "示例对象 A", "oc_abc", recent(2), {
-    firstTurn: false, interrupted: true,
+    firstTurn: false, announced,
   });
   const lines = prompt.split("\n");
-  assert.equal(lines.length, 3, "两条消息 + 一行发送方式");
+  assert.equal(lines.length, 2, "两条消息；发送方式没变就不再复读");
   assert.match(prompt, /^- \[t0\] 客户: 消息 0$/m);
   assert.match(prompt, /^- \[t1\] 客户: 消息 1$/m);
-  assert.match(lines[2], /^发送方式：草稿审批/);
+  assert.doesNotMatch(prompt, /发送方式：|全量模式|只认 @ 模式|【本人指令】/);
   assert.doesNotMatch(prompt,
     /\/cyber-im-avatar|值守命中|chat_id：|运行形态：|会话工作本：|人物档案：/);
   assert.doesNotMatch(prompt, /本次只追加|上一轮被新消息打断|媒体说明/);
   assert.doesNotMatch(prompt, /当前画像|最近 10 条|im-profile-update|按 skill 处理/);
+
+  // 没有「已声明」记录（旧调用 / 进程重启后的首轮）时照旧声明一次，作为安全兜底。
+  const fallback = buildWakePrompt("feishu", "示例对象 A", "oc_abc", recent(2), {
+    firstTurn: false, interrupted: true,
+  });
+  assert.match(fallback.split("\n").at(-1), /^发送方式：草稿审批/);
 });
 
-test("wake and open prompts declare the current send mode on every turn", () => {
+test("wake and open prompts declare the send mode on first turn and after a switch", () => {
   const draft = buildWakePrompt("feishu", "示例对象 A", "oc_dm", recent(1), {
     firstTurn: true, kind: "p2p", sendMode: "draft",
   });
@@ -146,15 +153,25 @@ test("wake and open prompts declare the current send mode on every turn", () => 
   assert.match(auto, /不许自动发/);
   assert.doesNotMatch(auto, /发送方式：草稿审批/);
 
+  // 同一会话、没变化：后续轮不再复读。
   const later = buildWakePrompt("feishu", "示例对象 A", "oc_dm", recent(1), {
     firstTurn: false, kind: "p2p", sendMode: "auto",
+    announced: { send_mode: "auto", wake_mode: "mention", cmd: false },
   });
-  assert.match(later, /发送方式：全自动/);
+  assert.doesNotMatch(later, /发送方式：/);
+
+  // 切换后的第一轮要说清新值从哪一档切过来；再下一轮又安静。
+  const changed = buildWakePrompt("feishu", "示例对象 A", "oc_dm", recent(1), {
+    firstTurn: false, kind: "p2p", sendMode: "auto",
+    announced: { send_mode: "draft", wake_mode: "mention", cmd: false },
+  });
+  assert.match(changed, /发送方式：全自动（已从草稿审批切换/);
+  assert.match(changed, /不要征求确认/);
 
   const open = buildOpenPrompt("feishu", "示例对象 A", "oc_dm", [], {
     kind: "p2p", sendMode: "auto",
   });
-  assert.match(open, /发送方式：全自动/);
+  assert.match(open, /发送方式：全自动/, "开场载荷照旧全带");
 
   const fallback = buildWakePrompt("feishu", "示例对象 A", "oc_dm", recent(1), {
     firstTurn: false, kind: "p2p", sendMode: "unknown",
@@ -199,12 +216,13 @@ test("later wakes with stickers send only the message line, no media boilerplate
   };
   const prompt = buildWakePrompt("feishu", "示例对象 A", "oc_abc", [row], {
     firstTurn: false, mediaMap: new Map([["s1", { sticker: true }]]),
+    announced: { send_mode: "draft", wake_mode: "mention", cmd: false },
   });
   const lines = prompt.split("\n");
+  assert.equal(lines.length, 1);
   assert.equal(lines[0], "- [t1] 客户 ／lark-doc: [表情]");
-  assert.match(lines[1], /^发送方式：草稿审批/);
   assert.doesNotMatch(prompt,
-    /值守命中|chat_id：|运行形态：|会话工作本：|人物档案：|媒体说明|本次只追加/);
+    /值守命中|chat_id：|运行形态：|会话工作本：|人物档案：|媒体说明|本次只追加|发送方式：/);
 });
 
 test("untrusted chat text cannot inject a DSH skill gesture or HTML comment", () => {
@@ -510,6 +528,169 @@ test("a batched wake after the first turn only appends the new messages, without
     /\/cyber-im-avatar|值守命中|chat_id：|运行形态：|会话工作本：|本次只追加/);
 });
 
+test("an unchanged wake does not repeat the send mode; a switch declares it once", async () => {
+  const { state, chat, host, turns } = setup({ reply: "第一轮" });
+  chat.kind = "p2p";
+  chat.send_mode = "auto";
+  state.save();
+
+  const row = (id, text, epoch) => ({
+    msg_id: id, sender_id: "ou_other", sender_name: "客户",
+    content: text, ts: `t-${id}`, ts_epoch: epoch, kind: "dm", state: "new",
+  });
+  await turns.wake(chat);
+  await new Promise((r) => setTimeout(r, 5));
+  assert.match(host.followups[0].content[0].text, /发送方式：全自动/,
+    "首轮要声明当前发送方式");
+  assert.equal(chat.prompt_session, "session-1");
+
+  host.reply = "第二轮";
+  await turns.wake(chat, { batch: [row("m9", "第二条", 109)] });
+  await new Promise((r) => setTimeout(r, 5));
+  const second = host.followups[1].content[0].text;
+  assert.doesNotMatch(second, /发送方式：/, "发送方式没变就不再复读");
+  assert.match(second, /^- \[t-m9\] 客户: 第二条$/m);
+
+  chat.send_mode = "draft";
+  state.save();
+  host.reply = "第三轮";
+  await turns.wake(chat, { batch: [row("m10", "第三条", 110)] });
+  await new Promise((r) => setTimeout(r, 5));
+  const third = host.followups[2].content[0].text;
+  assert.match(third, /发送方式：草稿审批（已从全自动切换/, "切换后的第一轮要声明新值");
+  assert.match(third, /「草稿待确认」/);
+
+  host.reply = "第四轮";
+  await turns.wake(chat, { batch: [row("m11", "第四条", 111)] });
+  assert.doesNotMatch(host.followups[3].content[0].text, /发送方式：/, "没再变就不重复");
+});
+
+test("the owner-command rule is stated once per session, not on every command round", async () => {
+  const { chat, host, turns } = setup({ reply: "好的" });
+  chat.kind = "p2p";
+  const cmdRow = (id, text, epoch) => ({
+    msg_id: id, sender_id: "ou_me", sender_name: "我",
+    content: `@我 ${text}`, ts: `t-${id}`, ts_epoch: epoch, kind: "cmd", state: "new",
+  });
+  await turns.wake(chat);
+  await new Promise((r) => setTimeout(r, 5));
+  assert.doesNotMatch(host.followups[0].content[0].text, /【本人指令】/);
+
+  await turns.wake(chat, { batch: [cmdRow("c1", "帮我看下", 101)] });
+  await new Promise((r) => setTimeout(r, 5));
+  assert.match(host.followups[1].content[0].text, /【本人指令】/,
+    "会话里第一条本人指令要带完整规则");
+  assert.match(host.followups[1].content[0].text, /不要 @ 本人自己/);
+
+  await turns.wake(chat, { batch: [cmdRow("c2", "再看一下", 102)] });
+  const third = host.followups[2].content[0].text;
+  assert.doesNotMatch(third, /【本人指令】/, "规则没变，不再复读");
+  assert.match(third, /本人（@自己）/, "指令身份仍标在消息行上");
+  assert.equal(third.split("\n").length, 1);
+});
+
+test("a compacted session re-declares the policy once on the next wake", async () => {
+  const { chat, host, turns } = setup({ reply: "第一轮" });
+  chat.kind = "p2p";
+  chat.wake_mode = "mention";
+  const row = (id, text, epoch) => ({
+    msg_id: id, sender_id: "ou_other", sender_name: "客户",
+    content: text, ts: `t-${id}`, ts_epoch: epoch, kind: "dm", state: "new",
+  });
+  await turns.wake(chat);
+  await new Promise((r) => setTimeout(r, 5));
+  assert.match(host.followups[0].content[0].text, /发送方式：草稿审批/);
+  assert.match(host.followups[0].content[0].text, /只认 @ 模式/);
+
+  host.reply = "第二轮";
+  await turns.wake(chat, { batch: [row("m9", "第二条", 109)] });
+  await new Promise((r) => setTimeout(r, 5));
+  assert.doesNotMatch(host.followups[1].content[0].text, /发送方式：/, "没变不重复");
+
+  // DSH 压缩替换了会话上下文：下一轮要把口径完整重带一次。
+  host.emit({ type: "compaction/summary", data: { compactionId: "c1" } });
+  host.reply = "第三轮";
+  await turns.wake(chat, { batch: [row("m10", "第三条", 110)] });
+  await new Promise((r) => setTimeout(r, 5));
+  const third = host.followups[2].content[0].text;
+  assert.match(third, /发送方式：草稿审批/, "压缩后补声明一次");
+  assert.match(third, /只认 @ 模式/, "关注程度也一起补");
+
+  host.reply = "第四轮";
+  await turns.wake(chat, { batch: [row("m11", "第四条", 111)] });
+  assert.doesNotMatch(host.followups[3].content[0].text, /发送方式：/, "补一次后又安静");
+});
+
+test("a compacted session re-adds the batch sender's profile pointer", async () => {
+  const { chat, host, turns } = setup({ reply: "第一轮", kind: "group" });
+  turns.poller = {
+    identity: { feishu: { self_id: "ou_self" } },
+    pollChat: async () => {}, // 真实宿主里 post-turn 补拉；测试里不需要真拉
+  };
+  await turns.wake(chat);
+  await new Promise((r) => setTimeout(r, 5));
+  assert.match(host.followups[0].content[0].text, /人物档案：/);
+
+  const row = (id, epoch) => ({
+    msg_id: id, sender_id: "ou_other", sender_name: "客户",
+    content: "又来一条", ts: `t-${id}`, ts_epoch: epoch, kind: "mention", state: "new",
+  });
+  await turns.wake(chat, { batch: [row("m9", 109)] });
+  await new Promise((r) => setTimeout(r, 5));
+  assert.doesNotMatch(host.followups[1].content[0].text, /人物档案：/,
+    "同一会话已经给过路径，后续轮不重复");
+
+  host.emit({ type: "compaction/summary", data: { compactionId: "c1" } });
+  await turns.wake(chat, { batch: [row("m10", 110)] });
+  assert.match(host.followups[2].content[0].text, /人物档案：\n- 客户 · ou_other → /,
+    "压缩后路径补一次");
+});
+
+test("a failed compaction does not re-declare the policy", async () => {
+  const { chat, host, turns } = setup({ reply: "第一轮" });
+  chat.kind = "p2p";
+  const row = (id, text, epoch) => ({
+    msg_id: id, sender_id: "ou_other", sender_name: "客户",
+    content: text, ts: `t-${id}`, ts_epoch: epoch, kind: "dm", state: "new",
+  });
+  await turns.wake(chat);
+  await new Promise((r) => setTimeout(r, 5));
+  host.reply = "第二轮";
+  await turns.wake(chat, { batch: [row("m9", "第二条", 109)] });
+  await new Promise((r) => setTimeout(r, 5));
+  assert.doesNotMatch(host.followups[1].content[0].text, /发送方式：/);
+
+  // 压缩失败（end 带 error）没有替换上下文，不重带。
+  host.emit({ type: "compaction/end", data: { compactionId: "c2", error: "summarize failed" } });
+  host.reply = "第三轮";
+  await turns.wake(chat, { batch: [row("m10", "第三条", 110)] });
+  await new Promise((r) => setTimeout(r, 5));
+  assert.doesNotMatch(host.followups[2].content[0].text, /发送方式：/);
+
+  // 成功的 compaction/end 同样触发重带（手动压缩/系统压缩都会落这个事件）。
+  host.emit({ type: "compaction/end", data: { compactionId: "c3" } });
+  host.reply = "第四轮";
+  await turns.wake(chat, { batch: [row("m11", "第四条", 111)] });
+  assert.match(host.followups[3].content[0].text, /发送方式：草稿审批/);
+});
+
+test("the opening payload declares the send mode; the next wake does not repeat it", async () => {
+  const { chat, host, turns } = setup({ reply: "好的" });
+  chat.kind = "p2p";
+  chat.send_mode = "draft";
+  await turns.open(chat);
+  await new Promise((r) => setTimeout(r, 5));
+  assert.match(host.followups[0].content[0].text, /发送方式：草稿审批/, "开场照旧声明");
+
+  await turns.wake(chat, { batch: [{
+    msg_id: "m9", sender_id: "ou_other", sender_name: "客户",
+    content: "开场后的新消息", ts: "t9", ts_epoch: 109, kind: "dm", state: "new",
+  }] });
+  const second = host.followups[1].content[0].text;
+  assert.doesNotMatch(second, /发送方式：/, "开场已经声明过，后续轮不重复");
+  assert.doesNotMatch(second, /只认 @ 模式|非点名的群消息/);
+});
+
 test("later wakes only add people this session has not seen before", async () => {
   const { dir, chat, host, turns } = setup({ reply: "第一轮", kind: "group" });
   await turns.wake(chat);
@@ -734,7 +915,7 @@ test("the agent's im-profile-update-like text is never parsed or written by the 
   assert.equal(host.followups.length, 1);
 });
 
-test("after a restart the next wake only appends new messages", async () => {
+test("after a restart the next wake re-declares the policy once, then stops", async () => {
   const { dir, state, chat, host, turns } = setup({ reply: "第一轮" });
   await turns.wake(chat);
   await new Promise((r) => setTimeout(r, 5));
@@ -758,10 +939,19 @@ test("after a restart the next wake only appends new messages", async () => {
   const second = host2.followups[0].content[0].text;
   const lines = second.split("\n");
   assert.equal(lines[0], "- [t9] 客户: 重启后的新消息");
-  assert.match(lines[1], /^发送方式：草稿审批/);
+  assert.match(lines[1], /^发送方式：草稿审批/, "内存口径重启后为空，补声明一次");
   assert.equal(lines.length, 2, "单聊没有人物档案块可重复；记忆文件路径已在会话历史里");
   assert.doesNotMatch(second,
     /\/cyber-im-avatar|值守命中|会话工作本：|人物档案：|基础消息|当前画像|最近 10 条|im-profile-update/);
+
+  await new Promise((r) => setTimeout(r, 5));
+  host2.reply = "第三轮";
+  await turns2.wake(chat2, { batch: [{
+    msg_id: "m10", sender_id: "ou_other", sender_name: "客户",
+    content: "重启后的又一条", ts: "t10", ts_epoch: 110, kind: "dm", state: "new",
+  }] });
+  assert.doesNotMatch(host2.followups[1].content[0].text, /发送方式：/,
+    "补声明过一次后恢复安静");
 });
 
 test("full_access switches the bound session to danger-full-access before followup", async () => {
@@ -1000,13 +1190,24 @@ test("all-mode prompt marks mentions and keeps the reply rule explicit", () => {
     { msg_id: "a2", sender_id: "ou_y", sender_name: "客户", content: "@我 这个什么时候好",
       ts: "t2", ts_epoch: 101, kind: "mention", state: "new" },
   ];
-  const prompt = buildWakePrompt("feishu", "示例群", "oc_grp", rows, {
+  // 从「只盯 @我」切到「全部消息」：切换后的第一轮带说明。
+  const switched = buildWakePrompt("feishu", "示例群", "oc_grp", rows, {
     firstTurn: false, wakeMode: "all",
+    announced: { send_mode: "draft", wake_mode: "mention", cmd: false },
   });
-  assert.match(prompt, /- \[t2\] 客户（@你）: @我 这个什么时候好/);
-  assert.match(prompt, /- \[t1\] 同事: 进度怎么样/);
-  assert.match(prompt, /非点名的群消息只看不回/);
-  assert.match(prompt, /照常处理，该回就回/);
+  assert.match(switched, /- \[t2\] 客户（@你）: @我 这个什么时候好/);
+  assert.match(switched, /- \[t1\] 同事: 进度怎么样/);
+  assert.match(switched, /关注程度已切换为「全部消息」/);
+  assert.match(switched, /非点名的群消息只看不回/);
+  assert.match(switched, /照常处理，该回就回/);
+
+  // 关注程度没变：不再复读说明，只追加消息行。
+  const steady = buildWakePrompt("feishu", "示例群", "oc_grp", rows, {
+    firstTurn: false, wakeMode: "all",
+    announced: { send_mode: "draft", wake_mode: "all", cmd: false },
+  });
+  assert.doesNotMatch(steady, /关注程度|非点名的群消息|照常处理/);
+  assert.match(steady, /- \[t1\] 同事: 进度怎么样/);
 });
 
 test("DM prompts never claim the group rule and spell out the @-only mode", () => {
@@ -1031,6 +1232,19 @@ test("DM prompts never claim the group rule and spell out the @-only mode", () =
   });
   assert.match(open, /关注程度：只认 @/);
   assert.doesNotMatch(open, /群消息/);
+
+  // 私聊「只盯 @我」：未变不复读，从「全部消息」切过来时带一次说明。
+  const steady = buildWakePrompt("feishu", "示例对象 A", "oc_dm", rows, {
+    firstTurn: false, wakeMode: "mention", kind: "p2p",
+    announced: { send_mode: "draft", wake_mode: "mention", cmd: false },
+  });
+  assert.doesNotMatch(steady, /只认 @ 模式|关注程度/);
+  const switched = buildWakePrompt("feishu", "示例对象 A", "oc_dm", rows, {
+    firstTurn: false, wakeMode: "mention", kind: "p2p",
+    announced: { send_mode: "draft", wake_mode: "all", cmd: false },
+  });
+  assert.match(switched, /关注程度已切换为「只盯 @我」/);
+  assert.match(switched, /只有对方 @ 你/);
 });
 
 test("open prompt works with no messages and tells the agent not to send anything", () => {
@@ -1258,12 +1472,23 @@ test("self-@ command lines are marked as the owner talking to the stand-in", () 
   assert.match(groupPrompt, /【本人指令】/);
   assert.match(groupPrompt, /群聊里你的发言全群可见/);
 
-  // 后续轮（无首轮头）也要带指令规则。
-  const next = buildWakePrompt("feishu", "示例对象 A", "oc_dm", [rows[0]], {
+  // 后续轮：会话里第一次出现指令，带完整规则。
+  const firstCmd = buildWakePrompt("feishu", "示例对象 A", "oc_dm", [rows[0]], {
     wakeMode: "mention", kind: "p2p", firstTurn: false,
+    announced: { send_mode: "draft", wake_mode: "mention", cmd: false },
   });
-  assert.match(next, /【本人指令】/);
-  assert.match(next, /本人（@自己）/);
+  assert.match(firstCmd, /【本人指令】/);
+  assert.match(firstCmd, /本人（@自己）/);
+  assert.match(firstCmd, /不要 @ 本人自己/);
+
+  // 同一会话再下指令：规则没变，不再复读；身份仍标在消息行上。
+  const nextCmd = buildWakePrompt("feishu", "示例对象 A", "oc_dm", [rows[0]], {
+    wakeMode: "mention", kind: "p2p", firstTurn: false,
+    announced: { send_mode: "draft", wake_mode: "mention", cmd: true },
+  });
+  assert.doesNotMatch(nextCmd, /【本人指令】/);
+  assert.match(nextCmd, /本人（@自己）/);
+  assert.equal(nextCmd.split("\n").length, 1);
 
   // 普通消息不带指令规则；开场上下文含指令时有轻量说明。
   const plain = buildWakePrompt("feishu", "示例对象 A", "oc_dm", [rows[1]], {

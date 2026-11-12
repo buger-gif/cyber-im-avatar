@@ -26,8 +26,8 @@ poller 判定命中
        ├─ 闲置超阈值先解绑旧会话：这一轮进新会话
        ├─ resolveAgent(dsh_session) 或 create({workspaceId|cwd})
        ├─ 每次唤醒只追加本次新消息（首轮带入口与记忆文件路径：单聊一份人物档案，
-       │  群工作本 + 人物档案；之后只发消息行 / 群里还没给过的人的档案行；每轮带
-       │  当前发送方式：草稿审批 / 全自动）
+       │  群工作本 + 人物档案；之后只发消息行 / 群里还没给过的人的档案行；发送方式与
+       │  关注程度只在首轮 / 开场与切档后的第一轮声明）
        ├─ 只对本批待回消息下载媒体：图片 → attachments image block，
        │  文件/音视频 → 本地路径；未适配/失败只留标记
        ├─ agent.followup(createUserMessage(prompt, imageParts))
@@ -50,9 +50,12 @@ poller 判定命中
   之后同一 `dsh_session` 只发本次新消息行，不再重复这些说明。`chats.prompt_session == dsh_session`
   时判定为后续轮；换会话/重置会清空，下一次重新带完整上下文。
 - 发送方式由该值班的 `chats[].send_mode` 决定（`draft` / `auto`）；新值班首次加入时从
-  `config.send_mode_default` 固化，之后改默认不覆盖它。每次唤醒与开场都带一行声明，
-  以此为准覆盖会话历史里的旧约定。插件只声明策略，不做正文解析、不代发、不做审批队列；
-  实际发送仍由 agent 按 skill 调平台 CLI。心跳轮与值守台不注入发送方式，边界是「不要发」。
+  `config.send_mode_default` 固化，之后改默认不覆盖它。首轮 / 开场与切档后的第一轮带一行
+  声明，以此为准覆盖会话历史里的旧约定；同一会话后续轮次不重复（spec 0045）。插件只声明
+  策略，不做正文解析、不代发、不做审批队列；实际发送仍由 agent 按 skill 调平台 CLI。
+  心跳轮与值守台不注入发送方式，边界是「不要发」。DSH 压缩会话
+  （`compaction/summary` / 成功的 `compaction/end`）后清掉该会话的口径与人物档案指针，
+  下一轮补一次。
 - 画像只给路径：单聊 `~/.im-standin/profiles/people/<platform>/<person_id>.md` 一份；
   群另有 `~/.im-standin/profiles/<platform>/<chat_id>.md`。都由 agent 自己读、自己改；
   插件不解析回复、不代写。`dsh.full_access=true` 时插件在 followup 前把会话切到

@@ -203,23 +203,50 @@ function payloadNote(count) {
   return `本次只追加这 ${Math.max(1, Number(count) || 0)} 条新消息；更早上下文按 skill 在线拉。`;
 }
 
+const SEND_MODE_LABEL = { draft: "草稿审批", auto: "全自动" };
+
 /**
- * 发送方式由插件配置声明，每轮都带：模式可能在会话中途切换，旧会话里的口头约定不可信。
+ * 发送方式：只在首轮 / 开场 / 取值变化时出现（spec 0045）。
+ * `from` 是这条 DSH 会话上次声明的值；非空且与当前值不同 = 刚切换，括号里标出来。
  * 插件只声明策略，不解析回复、不代发；内容风险仍由 skill 铁律判断。
  */
-function sendModeNote(mode) {
+function sendModeNote(mode, { from = "" } = {}) {
+  const label = SEND_MODE_LABEL[mode] || SEND_MODE_LABEL.draft;
+  const prev = SEND_MODE_LABEL[from] || "";
+  const head = (prev && prev !== label)
+    ? `发送方式：${label}（已从${prev}切换；只由面板开关决定，口头约定不改模式，要改请用户点面板「发送方式」）。`
+    : `发送方式：${label}（插件当前设置；只由面板开关决定，口头约定不改模式，要改请用户点面板「发送方式」）。`;
   if (mode === "auto") {
-    return "发送方式：全自动（插件当前设置；只由面板开关决定，口头约定不改模式，要改请用户点面板「发送方式」）。" +
+    return head +
       "本轮该回的，按 skill 以本人身份直接发出，不要征求确认，也不要问「要不要发」；" +
       "发完在本会话里只回一行「已发送」或失败原因，不复述全文，也不要把执行结果再发到 IM；" +
       "用户当轮说「先别发」时以当轮指令为准。只改变发送动作，不改变唤醒范围。" +
       "涉及钱、合同、承诺、权限/凭据或外部群，不许自动发：把正文与风险点留给用户确认。";
   }
-  return "发送方式：草稿审批（插件当前设置；只由面板开关决定，口头约定不改模式，要改请用户点面板「发送方式」）。" +
+  return head +
     "把要发的回复正文留在本会话，末尾另起一行「草稿待确认」；不要自己发，也不要反问" +
     "「要不要发」，用户说「发」再发；用户当轮说「先别发」时以当轮指令为准。" +
     "只改变发送动作，不改变唤醒范围。涉及钱、合同、承诺、权限/凭据或外部群，" +
     "一律停下等确认。";
+}
+
+/**
+ * 关注程度注记：只有群「全部消息」与私聊「只盯 @我」两种形态需要说明。
+ * 只在首轮 / 取值变化时出现（spec 0045）；`from` 非空且不同 = 刚切过来。
+ */
+function wakeModeNote(wakeMode, kind, from = "") {
+  const switched = !!from && from !== wakeMode;
+  if (wakeMode === "all" && kind === "group") {
+    return (switched ? "（关注程度已切换为「全部消息」：" : "（全量模式：") +
+      "非点名的群消息只看不回，要本人表态的写进当日日报等用户拍板；" +
+      "标了「（@你）」的消息照常处理，该回就回。）";
+  }
+  if (wakeMode === "mention" && kind !== "group") {
+    return (switched ? "（关注程度已切换为「只盯 @我」：" : "（只认 @ 模式：") +
+      "这通私聊只有对方 @ 你（或正文写 @你的名字）才唤醒；其它消息没有转给你，" +
+      "需要上下文时按 skill 在线拉。）";
+  }
+  return "";
 }
 
 /**
@@ -229,11 +256,15 @@ function sendModeNote(mode) {
  * 这批发言人的档案行与还没并完的旧私聊工作本，不重复这些上下文——
  * 它们已经在同一 session 的历史里。文件正文由 agent 自己按路径读，
  * 插件不注入、不解析、不回写。
+ *
+ * 发送方式 / 关注程度 / 本人指令规则只在首轮或取值变化时声明（spec 0045）：
+ * `announced` 是这条 DSH 会话上次声明的值，未变的轮次不再复读；缺省视为
+ * 没声明过，照旧全带，作为旧调用与重启后首轮的安全兜底。
  */
 export function buildWakePrompt(platform, chatName, chatId, messages, {
   bookPath = "", people = [], interrupted = false, firstTurn = false, mediaMap = null,
   wakeMode = "mention", resetMin = 0, kind = "group", single = false,
-  sendMode = "draft", legacyPath = "", legacyHistory = "",
+  sendMode = "draft", legacyPath = "", legacyHistory = "", announced = null,
 } = {}) {
   const label = PLAT_LABEL[platform] || platform;
   const safeName = sanitizeUntrusted(chatName || chatId);
@@ -246,27 +277,28 @@ export function buildWakePrompt(platform, chatName, chatId, messages, {
   const legacy = legacyLine(legacyPath, legacyHistory);
 
   // 本人指令：本人 @ 自己留给替身的话，不是客户消息，也不是已回复对面。
-  const cmdNote = messages.some((m) => m.kind === "cmd")
+  const hasCmd = messages.some((m) => m.kind === "cmd");
+  const cmdNote = hasCmd
     ? "【本人指令】带「本人（@自己）」的行是本人（你要替的人）在会话里 @ 自己留给你的话，" +
       "不是客户消息：按它执行或回答；除非指令明确要求对外回复、或按 skill 判断确有必要，" +
       "否则不要往会话里发消息。你的回复里不要 @ 本人自己——那会再次触发唤醒，形成回环。" +
       (kind === "group" ? "群聊里你的发言全群可见：指令默认只在本地处理，别为「收到」在群里发言。" : "")
     : "";
-  // 口径每轮都带一行：模式可以在会话中途切换，不能只靠首轮记住。
-  // 全量提示只对群成立；私聊的 mention 是「只有 @ 才叫醒我」，得让 agent 知道缺上下文。
-  const modeNote = (wakeMode === "all" && kind === "group")
-    ? "（全量模式：非点名的群消息只看不回，要本人表态的写进当日日报等用户拍板；" +
-      "标了「（@你）」的消息照常处理，该回就回。）"
-    : ((wakeMode === "mention" && kind !== "group")
-        ? "（只认 @ 模式：这通私聊只有对方 @ 你（或正文写 @你的名字）才唤醒；" +
-          "其它消息没有转给你，需要上下文时按 skill 在线拉。）"
-        : "");
-  const sendNote = sendModeNote(sendMode);
+  // 口径只在首次或变化时出现：模式可以在会话中途切换，切换后的第一轮就带新值；
+  // 没变的轮次不复读，历史里已经有同样的说明。
+  const prevSend = String(announced?.send_mode || "");
+  const prevMode = String(announced?.wake_mode || "");
+  const fresh = firstTurn || !announced;
+  const sendNote = (fresh || prevSend !== sendMode)
+    ? sendModeNote(sendMode, { from: prevSend }) : "";
+  const modeNote = (fresh || prevMode !== wakeMode)
+    ? wakeModeNote(wakeMode, kind, prevMode) : "";
+  const cmdBlock = (fresh || !announced?.cmd) ? cmdNote : "";
+
   // 已有会话：只列本次新消息 + 这批发言人的档案路径。chat_id / 运行形态 /
   // 记忆文件行都已在本会话里，不再每一轮重复；旧私聊工作本待并入行除外（文件消失即停）。
-  // 发送方式每轮都带：用户可能中途切模式，不能只靠首轮或历史约定。
   if (!firstTurn) {
-    return [lines.join("\n"), legacy, ...peopleBlock, cmdNote, modeNote, sendNote]
+    return [lines.join("\n"), legacy, ...peopleBlock, cmdBlock, modeNote, sendNote]
       .filter(Boolean).join("\n");
   }
 
@@ -287,7 +319,7 @@ export function buildWakePrompt(platform, chatName, chatId, messages, {
   if (peopleBlock.length) parts.push(...peopleBlock);
   if (legacy) parts.push(legacy);
   parts.push(...lines);
-  if (cmdNote) parts.push(cmdNote);
+  if (cmdBlock) parts.push(cmdBlock);
   if (modeNote) parts.push(modeNote);
   if (mediaSize(mediaMap)) parts.push(MEDIA_HINT);
   parts.push(payloadNote(messages.length));
@@ -296,7 +328,7 @@ export function buildWakePrompt(platform, chatName, chatId, messages, {
       "不要写 state.json / env.json / media。"
     : "按 skill 处理这通会话；记忆只改上面给出的会话工作本与人物档案，" +
       "不要写 state.json / env.json / media。");
-  parts.push(sendNote);
+  if (sendNote) parts.push(sendNote);
   return parts.join("\n");
 }
 
@@ -540,6 +572,11 @@ export class Turns {
     // 同一条 DSH 会话里已经下发过的人物档案：同一人不再每轮重复一份路径。
     // 换会话 / 重开 / 进程重启后从零开始（最多重复一次，不影响正确性）。
     this.seenPeople = new Map();
+    // 同一条 DSH 会话里已经声明过的口径（发送方式 / 关注程度 / 本人指令规则）：
+    // 只在首次或取值变化时再声明一次，未变的轮次只追加消息（spec 0045）。
+    this.announcedPolicy = new Map();
+    // DSH 压缩会话后模型可能看不到已声明的口径：清空记录，下一轮补一次。
+    this.compactionWatcher = null;
   }
 
   setHost(hostCtx, rootCtx = null) {
@@ -549,6 +586,7 @@ export class Turns {
     this.llm = hostCtx.llm || hostCtx.get?.("llm") || null;
     this.permissionPresets = hostCtx.permissionPresets || hostCtx.get?.("permissionPresets") || null;
     this.ctx = rootCtx || hostCtx;
+    this.watchCompaction(this.ctx);
   }
 
   /**
@@ -641,12 +679,6 @@ export class Turns {
       this.im?.identity?.[platform]?.self_id || "";
   }
 
-  /**
-   * 这批消息对应的人物档案指针（确定性推导，不读正文、不建文件）：
-   * 去重、跳过本人与 out、@我/待回优先，最多 cap 个；路径由 personPathFor 拼。
-   * 私聊一条可判定的发言人都不剩时，用会话对端 ID 兜底（chatPersonId 决定平台形态）；
-   * 两者都拿不到就只给会话工作本，不猜。
-   */
   /** 本条绑定会话已经给过的人物 ID 集合；会话换了就是新集合。 */
   peopleSeenFor(platform, chatId, sid) {
     const key = `${platform}:${chatId}:${sid}`;
@@ -660,6 +692,65 @@ export class Turns {
       }
     }
     return set;
+  }
+
+  /**
+   * 这条 DSH 会话已经声明过的口径（发送方式 / 关注程度 / 本人指令规则）。
+   * 会话换了就是新记录；换会话 / 重开后从零开始，最多补声明一次（spec 0045）。
+   */
+  announcedFor(platform, chatId, sid) {
+    const key = `${platform}:${chatId}:${sid}`;
+    let rec = this.announcedPolicy.get(key);
+    if (!rec) {
+      rec = { send_mode: "", wake_mode: "", cmd: false };
+      this.announcedPolicy.set(key, rec);
+      if (this.announcedPolicy.size > 64) {
+        const oldest = this.announcedPolicy.keys().next().value;
+        this.announcedPolicy.delete(oldest);
+      }
+    }
+    return rec;
+  }
+
+  /**
+   * 监听会话压缩：DSH 压缩会 replace 掉一段历史（compaction/summary + 成功的
+   * compaction/end），模型上下文里的口径说明可能一起消失。清掉这条会话的记录，
+   * 让下一轮把口径完整重带一次（spec 0045）。失败的压缩（end 带 error）没有替换
+   * 上下文，不触发重带。
+   */
+  watchCompaction(ctx) {
+    if (this.compactionWatcher || !ctx?.on) return;
+    try {
+      this.compactionWatcher = ctx.on("session/event", (session, event) => {
+        const type = event?.type;
+        if (type === "compaction/summary") {
+          this.noteCompacted(session?.id);
+        } else if (type === "compaction/end" && !event?.data?.error) {
+          this.noteCompacted(session?.id);
+        }
+      });
+    } catch (e) {
+      this.logger.warn?.(`[im-standin] compaction watcher unavailable: ${e?.message || e}`);
+    }
+  }
+
+  /**
+   * 这条会话压缩过了：清掉已声明口径与已给过的人物档案指针，下一轮重新追加一次。
+   * 压缩会 replace 掉一段历史，模型上下文里可能已经看不到这些说明。
+   */
+  noteCompacted(sessionId) {
+    const sid = String(sessionId || "");
+    if (!sid) return;
+    const suffix = `:${sid}`;
+    for (const [key, rec] of this.announcedPolicy) {
+      if (!key.endsWith(suffix)) continue;
+      rec.send_mode = "";
+      rec.wake_mode = "";
+      rec.cmd = false;
+    }
+    for (const key of [...this.seenPeople.keys()]) {
+      if (key.endsWith(suffix)) this.seenPeople.delete(key);
+    }
   }
 
   /**
@@ -962,24 +1053,34 @@ export class Turns {
       });
       // 值班单点优先；还没固化（未值守/老数据）时跟随新建默认。
       const sendMode = current.send_mode || this.state.data.config.send_mode_default || "draft";
+      const wakeMode = current.wake_mode || "mention";
+      // 这条会话已经声明过的口径：未变的轮次不再复读（spec 0045）。
+      // 只有 followup 成功后才写回（runTurn 的 onSent），载荷没送出去不算声明过。
+      const announced = this.announcedFor(current.platform, current.chat_id, sid);
+      const hasCmd = messages.some((m) => m.kind === "cmd");
+      const rememberAnnounced = () => {
+        announced.send_mode = sendMode;
+        announced.wake_mode = wakeMode;
+        if (hasCmd) announced.cmd = true;
+      };
       const prompt = opening
         ? buildOpenPrompt(current.platform, current.name, current.chat_id, messages, {
             bookPath: memory.path, single: memory.single, legacyPath, legacyHistory, people,
-            wakeMode: current.wake_mode || "mention", resetMin, kind: current.kind,
+            wakeMode, resetMin, kind: current.kind,
             sendMode, dutyContext,
           })
         : buildWakePrompt(current.platform, current.name, current.chat_id, messages, {
             bookPath: memory.path, single: memory.single, legacyPath, legacyHistory, people,
             interrupted, firstTurn, mediaMap: media.map,
-            wakeMode: current.wake_mode || "mention", resetMin, kind: current.kind,
-            sendMode, dutyContext,
+            wakeMode, resetMin, kind: current.kind,
+            sendMode, dutyContext, announced,
           });
       const message = await makeUserMessage(prompt, media.parts);
       handle.promptId = message.id;
       const effective = session.cwd || "";
       this.active.set(key, handle);
       handle.done = this.runTurn(handle, {
-        chat: current, agent, sid, cwd: effective, message, ack,
+        chat: current, agent, sid, cwd: effective, message, ack, onSent: rememberAnnounced,
       });
       this.state.save();
       return { ok: true, started: true, turn_id: turnId, state: "running" };
@@ -1410,7 +1511,7 @@ export class Turns {
     }
   }
 
-  runTurn(handle, { chat, agent, sid, cwd, message, warm = false, desk = false, ack = [] }) {
+  runTurn(handle, { chat, agent, sid, cwd, message, warm = false, desk = false, ack = [], onSent = null }) {
     return new Promise((resolve) => {
       const key = chatKey(chat.platform, chat.chat_id);
       // 停滞超时（默认 600s）+ 单轮总上限兜底（默认 3600s，0 = 不限），见 spec 0034。
@@ -1613,6 +1714,10 @@ export class Turns {
         return;
       }
       this.logTurn(warm ? "warm_sent" : "followup", chat, { turn_id: handle.turnId });
+      // 载荷确实送进会话后才记账（口径按 DSH 会话记住，spec 0045）；记账失败不拖垮本轮。
+      if (onSent) {
+        try { onSent(); } catch { /* 记账失败下一轮再补声明一次 */ }
+      }
       // 会话已启动、载荷已送出：现在才点回执；失败不影响本轮。
       if (!desk) this.sendAck(chat, ack);
       watchdog = turnWatchdog({
