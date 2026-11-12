@@ -110,6 +110,55 @@ test("GET /api/status exposes panel fields and clamps config", async () => {
   assert.equal(out.body.config.ui, undefined);
 });
 
+test("send_mode_default is exposed in status and writable through POST /api/config", async () => {
+  const { app } = makeApp();
+  let out = await app.handle("/api/status", "GET");
+  assert.equal(out.body.config.send_mode_default, "draft");
+
+  out = await app.handle("/api/config", "POST", null, { send_mode_default: "auto" });
+  assert.equal(out.status, 200);
+  assert.equal(out.body.send_mode_default, "auto");
+
+  out = await app.handle("/api/status", "GET");
+  assert.equal(out.body.config.send_mode_default, "auto");
+
+  out = await app.handle("/api/config", "POST", null, { send_mode_default: "nonsense" });
+  assert.equal(out.body.send_mode_default, "draft", "非法值回默认，不让配置加载失败");
+});
+
+test("per-watch send mode is fixed on first watch and survives default changes", async () => {
+  const { app, state } = makeApp();
+  await app.handle("/api/config", "POST", null, { send_mode_default: "auto" });
+
+  let out = await app.handle("/api/watch", "POST", null, {
+    platform: "feishu", chat_id: "oc_send_a", name: "示例对象 A", kind: "p2p", watching: true,
+  });
+  assert.equal(out.body.ok, true);
+  const chat = state.getChat("feishu", "oc_send_a");
+  assert.equal(chat.send_mode, "auto", "首次加入值守固化为当时的默认值");
+
+  out = await app.handle("/api/chat/send-mode", "POST", null, {
+    platform: "feishu", chat_id: "oc_send_a", mode: "draft",
+  });
+  assert.equal(out.status, 200);
+  assert.equal(out.body.ok, true);
+  assert.equal(out.body.send_mode, "draft");
+  assert.equal(out.body.chat.send_mode, "draft");
+  assert.equal(chat.send_mode, "draft");
+
+  await app.handle("/api/config", "POST", null, { send_mode_default: "auto" });
+  assert.equal(chat.send_mode, "draft", "改全局默认不覆盖已有值班");
+
+  out = await app.handle("/api/chats", "GET");
+  assert.equal(out.body.items.find((x) => x.chat_id === "oc_send_a").send_mode, "draft");
+
+  out = await app.handle("/api/chat/send-mode", "POST", null, {
+    platform: "feishu", chat_id: "oc_send_a", mode: "nonsense",
+  });
+  assert.equal(out.body.ok, false);
+  assert.equal(chat.send_mode, "draft");
+});
+
 test("watch creates target + profile; unwatch cancels without deleting the target", async () => {
   const { app, state, profiles, calls } = makeApp();
   let out = await app.handle("/api/watch", "POST", null, {

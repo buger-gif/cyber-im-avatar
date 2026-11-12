@@ -16,11 +16,11 @@
 | GET | `/api/inbox` | `filter`、`limit`、`group` | 待回聚合；默认按会话聚合，`group=msg` 逐条；只从每会话最近 10 条派生（面板自 spec 0032 起不再展示） |
 | GET | `/api/inbox/cleanup` | — | 把未值守会话的待回批量标成 ignored |
 | GET | `/api/thread` | `platform`、`chat_id`、`fetch`、`limit` | 会话正文：默认在线拉 30 条；`fetch=1` 先补拉分类（**只读，不唤醒**；冷却中直接用本地指针）；失败回退本地 10 条并带 `offline` / `error` |
-| GET | `/api/chats` | — | 会话清单，含 `blocked` / `timer` / `timed` / `watching` / `wake_mode` / `mentionable` / `dsh_session` / `session_turns` / `turn_state` / `duty`；`mentionable=false` 表示该平台判不了 @（面板置灰「只盯 @我」）。工作区字段见下 |
+| GET | `/api/chats` | — | 会话清单，含 `blocked` / `timer` / `timed` / `watching` / `wake_mode` / `send_mode` / `mentionable` / `dsh_session` / `session_turns` / `turn_state` / `duty`；`send_mode` 是该值班实际生效的 `draft` / `auto`；`mentionable=false` 表示该平台判不了 @（面板置灰「只盯 @我」）。工作区字段见下 |
 | GET | `/api/duty` | — | 值守候选：`enabled`、`counts`（排队/判断中/试用/失败/忽略/值守/复核 + 配额与上限）、`desk`（session_id/workspace/session_turns/session_max_turns/last_turn/last_error/baseline_at/full_baseline_at/last_sweep_at）、`last_sweep`、`items`（每个非 none 的会话 + duty） |
 | GET | `/api/send` | `platform`、`chat_id`、`text`、`msg_id` | 以本人身份发出；不写发送历史 |
 | GET | `/api/state` | `platform`、`msg_id`、`state`、`chat_id` | 改最近 10 条里的一条：new / opened / replied / ignored；更早的返回 `not_cached` |
-| GET | `/api/watch` | `platform`、`chat_id`、`watching`、`name`、`kind`、`workspace` | 加入 / 移出值守；`workspace` 非空时一并绑定，空串不改变已有绑定。加入时把 `timer` 拉回 1（去掉「不盯」留下的 `-1`，否则看着在盯其实不拉），`wake_mode` 沿用上次设置；群首次加入默认 `wake_mode=mention`（只盯 @我），私聊默认 `all`（每条都唤醒）；要改得显式调 `/api/chat/mode`。**加入即开会话**（新加入或绑定会话缺了才开；已经盯上且有会话不重复开场）：补拉一次（`wake=false, force=true`，不推进水位）后起一轮开场 turn；失败不影响值守，只在返回的 `open: {ok, reason, skipped}` 里说明（真的在飞时 `skipped="running"`；已取消正在收尾的旧轮不算） |
+| GET | `/api/watch` | `platform`、`chat_id`、`watching`、`name`、`kind`、`workspace` | 加入 / 移出值守；`workspace` 非空时一并绑定，空串不改变已有绑定。加入时把 `timer` 拉回 1（去掉「不盯」留下的 `-1`，否则看着在盯其实不拉），`wake_mode` 沿用上次设置；群首次加入默认 `wake_mode=mention`（只盯 @我），私聊默认 `all`（每条都唤醒）；会话还没有显式发送方式时，把 `send_mode` 固化为当前的 `send_mode_default`。要改关注程度得显式调 `/api/chat/mode`，改发送方式调 `/api/chat/send-mode`。**加入即开会话**（新加入或绑定会话缺了才开；已经盯上且有会话不重复开场）：补拉一次（`wake=false, force=true`，不推进水位）后起一轮开场 turn；失败不影响值守，只在返回的 `open: {ok, reason, skipped}` 里说明（真的在飞时 `skipped="running"`；已取消正在收尾的旧轮不算） |
 | GET | `/api/unwatch` | `platform`、`chat_id` | 移出值守（保留目标与最近指针） |
 | GET | `/api/search` | `platform`、`q` | 在线搜人；每条含 `id`、`chat_id`（可空，飞书为 `p2p_chat_id`）、`name`（仅可读名称）、`department` |
 | GET | `/api/search/chats` | `platform`、`q` | 按名字搜会话（找群用）；`name` 为空时表示没有可读群名，不回退 `chat_id` |
@@ -58,13 +58,14 @@
 
 | 方法 | 路径 | 说明 |
 | --- | --- | --- |
-| POST | `/api/config` | 写配置；`poll.interval_min` 夹到 ≥10 |
+| POST | `/api/config` | 写配置；`poll.interval_min` 夹到 ≥10；`send_mode_default` 只接受 `draft` / `auto`，非法值回 `draft`（只影响之后新加入值守的会话） |
 | POST | `/api/platforms` | 启用 / 停用平台：入参 `platform`、`enabled`；只接受 `feishu` / `wecom` / `dingtalk`，写回 `config.platforms`（按固定顺序去重） |
 | POST | `/api/targets/profile` | 覆盖写该会话的记忆文件：p2p 写人物档案（同一份，不另存工作本），群写会话工作本；入参 `platform`、`chat_id`（优先）/`name`（兼容旧面板）、`text`（≤12KB，超限拒绝不截断） |
 | POST | `/api/persons/profile` | 覆盖写人物档案；入参 `platform`、`person_id`、`name`、`text`（≤12KB）、`base_mtime`（可选）；mtime 更新过则回 `{ok:false, reason:"stale"}` 不写 |
 | POST | `/api/chat/session/reset` | 重开会话：可带 `workspace` 先落工作区；打断在飞 turn、清空 `dsh_session`；值守中（未屏蔽）立刻在新会话里跑一轮开场，返回 `open: {ok, reason, skipped}`；未值守 / 屏蔽只解绑 |
 | POST | `/api/chat/wake` | 手动唤醒：可带 `workspace` 先落工作区；把该会话最近待回交给 agent，不等新消息；`running` / `blocked` / 未值守时拒绝 |
 | POST | `/api/duty/triage` | 手动让值守台判断：入参 `platform`、`chat_id`、`force`；只接受未值守、未屏蔽、非 queued/triaging；写 `trigger=manual` 的新事件，下一次 tick 起分诊 turn；`force` 可重排 ignore/failed，关闭自动分诊时也允许手动 |
+| POST | `/api/chat/send-mode` | 值班单点发送方式：入参 `platform`、`chat_id`、`mode`（`draft` / `auto`）；写 `chats[].send_mode`，返回 `{ok, send_mode, chat}`；会话不存在回 `not_found`。这个值不会被之后改 `send_mode_default` 覆盖 |
 
 ## 删除接口（DELETE）
 

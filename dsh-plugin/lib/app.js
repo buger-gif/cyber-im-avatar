@@ -4,7 +4,7 @@
  * 这里不再有 Python 进程/SQLite；所有读写在 state.json + profiles/*.md，
  * 在线正文走平台 CLI。
  */
-import { publicConfig, normalizeConfig, SUPPORTED_PLATFORMS } from "./state.js";
+import { publicConfig, normalizeConfig, SUPPORTED_PLATFORMS, SEND_MODES } from "./state.js";
 import { isMention } from "./im.js";
 import * as workspaces from "./workspaces.js";
 import * as sessions from "./sessions.js";
@@ -50,6 +50,7 @@ export const POST_ROUTES = {
   "/api/persons/profile": "personProfile",
   "/api/chat/session/reset": "chatSessionReset",
   "/api/chat/wake": "chatWake",
+  "/api/chat/send-mode": "chatSendMode",
   "/api/duty/triage": "dutyTriage",
 };
 
@@ -128,6 +129,17 @@ export class App {
       this.im?.identity?.[platform]?.self_id || "";
   }
 
+  /** 新建值守的默认发送方式；单点值存在 chats[].send_mode。 */
+  defaultSendMode() {
+    const v = this.state.data.config.send_mode_default;
+    return SEND_MODES.includes(v) ? v : "draft";
+  }
+
+  /** 首次成为值守时把默认值固化成显式值；之后改默认不会覆盖它。 */
+  applySendDefault(chat) {
+    if (chat && !chat.send_mode) chat.send_mode = this.defaultSendMode();
+  }
+
   publicChat(chat) {
     if (!chat) return null;
     const out = { ...chat };
@@ -140,6 +152,8 @@ export class App {
     out.last_wake_at = Number(chat.last_wake_at) || 0;
     out.blocked = !!chat.blocked;
     out.watching = !!chat.watching;
+    // 面板看的是实际生效值：未值守或老数据没有单点值时跟随新建默认。
+    out.send_mode = chat.send_mode || this.defaultSendMode();
     out.pending = this.state.pendingCount(chat);
     out.turn_state = ti.state;
     out.last_ok = ti.last_ok;
@@ -375,6 +389,7 @@ export class App {
       ? this.turns.busy(platform, chatId)
       : !!(typeof this.turns.isActive === "function" && this.turns.isActive(platform, chatId));
     if (busy) return { ok: true, skipped: "running" };
+    this.applySendDefault(chat);
     try {
       await this.poller.pollChat(platform, chatId, {
         name: chat.name, kind: chat.kind, force: true, wake: false,
@@ -417,6 +432,7 @@ export class App {
     if (watching) {
       if (Number(chat.timer) !== 1) chat.timer = 1;
       if (chat.kind === "group" && chat.wake_mode !== "all") chat.wake_mode = "mention";
+      this.applySendDefault(chat);
     }
     // 加入值守即视为启用该平台：钉钉默认不开，避免没装 dws 的用户每轮白跑一次 whoami。
     if (watching) {
@@ -523,6 +539,7 @@ export class App {
       chat.wake_mode = mode === "all" ? "all" : "mention";
       if (chat.wake_mode !== "all") chat.last_wake_at = 0;
       chat.target = true;
+      this.applySendDefault(chat);
       const enabled = this.state.data.config.platforms || [];
       if (!enabled.includes(platform)) {
         this.state.data.config.platforms =
@@ -541,6 +558,25 @@ export class App {
       try { this.profiles.ensureMemory(platform, chat, this.selfId(platform)); } catch { /* best effort */ }
     }
     return { ok: true, chat: this.publicChat(chat), open, poll: this.poller.pollInfo() };
+  }
+
+  /** 值班单点发送方式：只改这一通会话，之后改全局默认也不会覆盖它。 */
+  async chatSendMode(q, body = {}) {
+    const platform = pick(q, body, "platform");
+    const chatId = pick(q, body, "chat_id");
+    const mode = String(pick(q, body, "mode") || "");
+    if (!platform || !chatId) return { ok: false, reason: "bad_request" };
+    if (!SEND_MODES.includes(mode)) {
+      return { ok: false, reason: "mode 必须是 draft / auto" };
+    }
+    if (!this.supported(platform)) return this.unsupported(platform);
+    const r = this.state.setChatSendMode(platform, chatId, mode);
+    if (!r.ok) return r;
+    this.state.save();
+    return {
+      ok: true, send_mode: r.chat.send_mode,
+      chat: this.publicChat(r.chat),
+    };
   }
 
   async chatTimer(q, body = {}) {

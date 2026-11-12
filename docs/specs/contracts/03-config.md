@@ -23,6 +23,7 @@
 | `poll.cooldown_sec` | `20` | 0–600 | 点开 / 手动 `/api/poll` 都生效，防连点；post-turn 补拉例外 |
 | `poll.group_wake_sec` | `60` | 0–3600 | `wake_mode="all"` 的群合并窗口（秒）：窗口内到达的消息攒着，一次唤醒全给；`0` = 不合并。快车道仍是 60 秒一轮，所以默认值等价「每分钟最多一次」 |
 | `platforms` | `["feishu", "wecom"]` | 平台名数组 | 插件支持 `feishu` / `wecom` / `dingtalk`；缺省只开前两个，其他值被忽略。启用的平台才跑 `whoami` 与轮询；加入某平台值守会自动启用它 |
+| `send_mode_default` | `"draft"` | `draft` / `auto` | **新建值守**的默认发送方式。`draft`=草稿审批（默认）：agent 把回复留在 DSH 会话等用户说「发」；`auto`=全自动：agent 对「该回的消息」直接以本人身份发出。只决定之后新加入值守的会话如何初始化；已有值班的 `chats[].send_mode` 不被覆盖（见 `docs/specs/contracts/02-storage.md`）。缺省/非法一律回 `draft` |
 | `dsh.timeout` | `600` | 120–3600 秒 | **停滞**超时：这么久没有收到该会话的任何 `session/event`（工具/模型都没动静）才按卡死取消；有活动会不断重置，长任务不会被墙钟切掉 |
 | `dsh.turn_cap_sec` | `3600` | 0–86400 秒 | 单轮总时长兜底（从 turn 开始算，不随活动重置）；超时按失败处理并取消，`last_turn.reason` 记 `turn_cap`；`0` = 不设上限 |
 | `dsh.full_access` | `false` | true / false | 为 true 时把值守会话切到 DSH 内置 `danger-full-access`，agent 可直接写 `~/.im-standin/profiles`（人物档案；群还有会话工作本）；默认关闭，开启后 agent 能写整个 home |
@@ -81,6 +82,7 @@
 | `chatlist_interval` | — | 丢掉：会话列表改为跟着每轮走 |
 | `dsh.idle_reset_min` | — | 丢掉：会话寿命改由 `dsh.warm_min` 推导（一次保温 + 第二个周期换会话） |
 | `port` | — | 丢掉：插件不监听端口，老配置不能把它带回来 |
+| `send_mode` | `send_mode_default` | 未发布时的临时全局键：新键缺省且有合法旧值时迁成新建默认，然后丢弃 |
 
 ## 红线
 

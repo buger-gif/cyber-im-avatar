@@ -113,17 +113,53 @@ test("open prompt for a DM reads the one file", () => {
   assert.match(p, /先把上下文和这份人物档案读进来/);
 });
 
-test("later wakes send only the new message lines", () => {
+test("later wakes send only the new message lines plus the current send mode", () => {
   const prompt = buildWakePrompt("feishu", "示例对象 A", "oc_abc", recent(2), {
     firstTurn: false, interrupted: true,
   });
-  assert.equal(prompt.split("\n").length, 2);
+  const lines = prompt.split("\n");
+  assert.equal(lines.length, 3, "两条消息 + 一行发送方式");
   assert.match(prompt, /^- \[t0\] 客户: 消息 0$/m);
   assert.match(prompt, /^- \[t1\] 客户: 消息 1$/m);
+  assert.match(lines[2], /^发送方式：草稿审批/);
   assert.doesNotMatch(prompt,
     /\/cyber-im-avatar|值守命中|chat_id：|运行形态：|会话工作本：|人物档案：/);
   assert.doesNotMatch(prompt, /本次只追加|上一轮被新消息打断|媒体说明/);
   assert.doesNotMatch(prompt, /当前画像|最近 10 条|im-profile-update|按 skill 处理/);
+});
+
+test("wake and open prompts declare the current send mode on every turn", () => {
+  const draft = buildWakePrompt("feishu", "示例对象 A", "oc_dm", recent(1), {
+    firstTurn: true, kind: "p2p", sendMode: "draft",
+  });
+  assert.match(draft, /发送方式：草稿审批/);
+  assert.match(draft, /口头约定不改模式/);
+  assert.match(draft, /不要自己发，也不要反问/);
+  assert.match(draft, /「草稿待确认」/);
+  assert.match(draft, /一律停下等确认/);
+
+  const auto = buildWakePrompt("feishu", "示例对象 A", "oc_dm", recent(1), {
+    firstTurn: true, kind: "p2p", sendMode: "auto",
+  });
+  assert.match(auto, /发送方式：全自动/);
+  assert.match(auto, /不要征求确认/);
+  assert.match(auto, /不许自动发/);
+  assert.doesNotMatch(auto, /发送方式：草稿审批/);
+
+  const later = buildWakePrompt("feishu", "示例对象 A", "oc_dm", recent(1), {
+    firstTurn: false, kind: "p2p", sendMode: "auto",
+  });
+  assert.match(later, /发送方式：全自动/);
+
+  const open = buildOpenPrompt("feishu", "示例对象 A", "oc_dm", [], {
+    kind: "p2p", sendMode: "auto",
+  });
+  assert.match(open, /发送方式：全自动/);
+
+  const fallback = buildWakePrompt("feishu", "示例对象 A", "oc_dm", recent(1), {
+    firstTurn: false, kind: "p2p", sendMode: "unknown",
+  });
+  assert.match(fallback, /发送方式：草稿审批/, "缺省/非法模式按草稿审批");
 });
 
 test("later wakes append the batch senders' profile pointers without the workbook line", () => {
@@ -151,7 +187,9 @@ test("same display name with different ids tags message lines with the id tail",
   assert.match(dup, /- \[t2\] 张三（ID 222222，@你）: B 说的/);
   // 名字唯一时不加 ID 尾巴，避免每行都变长。
   const one = buildWakePrompt("feishu", "示例群", "oc_grp", [rows[0]], { firstTurn: false });
-  assert.equal(one, "- [t1] 张三: A 说的");
+  const oneLines = one.split("\n");
+  assert.equal(oneLines[0], "- [t1] 张三: A 说的");
+  assert.match(oneLines[1], /^发送方式：草稿审批/);
 });
 
 test("later wakes with stickers send only the message line, no media boilerplate", () => {
@@ -162,7 +200,9 @@ test("later wakes with stickers send only the message line, no media boilerplate
   const prompt = buildWakePrompt("feishu", "示例对象 A", "oc_abc", [row], {
     firstTurn: false, mediaMap: new Map([["s1", { sticker: true }]]),
   });
-  assert.equal(prompt, "- [t1] 客户 ／lark-doc: [表情]");
+  const lines = prompt.split("\n");
+  assert.equal(lines[0], "- [t1] 客户 ／lark-doc: [表情]");
+  assert.match(lines[1], /^发送方式：草稿审批/);
   assert.doesNotMatch(prompt,
     /值守命中|chat_id：|运行形态：|会话工作本：|人物档案：|媒体说明|本次只追加/);
 });
@@ -422,6 +462,32 @@ test("second wake reuses the bound session instead of creating another", async (
   assert.equal(host.created.length, 1);
   assert.equal(host.followups.length, 2);
   assert.equal(chat.session_turns, 2);
+});
+
+test("turns.wake and turns.open prefer the per-watch send mode over the default", async () => {
+  const { state, chat, host, turns } = setup({ reply: "好的" });
+  state.data.config.send_mode_default = "auto";
+  await turns.wake(chat);
+  assert.match(host.followups[0].content[0].text, /发送方式：全自动/,
+    "还没固化单点值时跟随新建默认");
+  await new Promise((r) => setTimeout(r, 5));
+
+  chat.send_mode = "draft";
+  state.save();
+  await turns.wake(chat, { batch: [{
+    msg_id: "m9", sender_id: "ou_other", sender_name: "客户",
+    content: "单点切成草稿后的一条", ts: "t9", ts_epoch: 109, kind: "dm", state: "new",
+  }] });
+  assert.match(host.followups[1].content[0].text, /发送方式：草稿审批/,
+    "单点值优先于全局默认");
+  await new Promise((r) => setTimeout(r, 5));
+
+  chat.send_mode = "auto";
+  state.data.config.send_mode_default = "draft";
+  state.save();
+  await turns.open(chat, { reason: "reset" });
+  assert.match(host.followups[2].content[0].text, /发送方式：全自动/,
+    "单点值不随默认变化");
 });
 
 test("a batched wake after the first turn only appends the new messages, without repeating profiles", async () => {
@@ -692,7 +758,8 @@ test("after a restart the next wake only appends new messages", async () => {
   const second = host2.followups[0].content[0].text;
   const lines = second.split("\n");
   assert.equal(lines[0], "- [t9] 客户: 重启后的新消息");
-  assert.equal(lines.length, 1, "单聊没有人物档案块可重复；记忆文件路径已在会话历史里");
+  assert.match(lines[1], /^发送方式：草稿审批/);
+  assert.equal(lines.length, 2, "单聊没有人物档案块可重复；记忆文件路径已在会话历史里");
   assert.doesNotMatch(second,
     /\/cyber-im-avatar|值守命中|会话工作本：|人物档案：|基础消息|当前画像|最近 10 条|im-profile-update/);
 });
@@ -1010,6 +1077,7 @@ test("warm prompt says it is a heartbeat and only tidies the listed files", () =
   assert.match(p, /没列出的文件不要动，不要扫目录/);
   assert.match(p, /不要拉 IM 消息/);
   assert.match(p, /不要给任何人发消息/);
+  assert.doesNotMatch(p, /发送方式：/, "心跳轮不声明发送方式，边界是不要发送");
 });
 
 test("warm prompt without people asks to tidy only the workbook", () => {
@@ -1398,6 +1466,7 @@ test("desk prompt is compact, carries member cap and decision path, and never lo
   assert.match(prompt, /定期清查/);
   assert.match(prompt, /只允许 mention/);
   assert.equal(prompt.includes("/cyber-im-avatar"), false);
+  assert.doesNotMatch(prompt, /发送方式：/, "值守台不声明发送方式，边界是不要发送");
 });
 
 test("desk triage starts a private-cwd session, updates desk state, and runs onDone", async () => {

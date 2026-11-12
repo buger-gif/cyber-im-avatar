@@ -21,6 +21,8 @@ export const SUPPORTED_PLATFORMS = ["feishu", "wecom", "dingtalk"];
 const DM_SCOPES = ["recent", "all", "watched"];
 /** 关注程度：mention=只有 @ 我唤醒；all=全部消息都唤醒（群里是只看不回）。 */
 export const WAKE_MODES = ["mention", "all"];
+/** 发送方式：draft=草稿审批（默认）；auto=全自动以本人身份发出。 */
+export const SEND_MODES = ["draft", "auto"];
 /**
  * state.json 格式版本。1 → 2：私聊开始读 wake_mode；老 state 里私聊的 mention
  * 只是当年「群策略」的默认值，加载时按当时的真实行为迁到 all（见 load()）。
@@ -40,6 +42,7 @@ export const DEFAULT_CONFIG = {
     group_wake_sec: 60,
   },
   platforms: ["feishu", "wecom"],
+  send_mode_default: "draft",
   dsh: { timeout: 600, turn_cap_sec: 3600, full_access: false, warm_min: 55, ack_reaction: true },
   duty: {
     enabled: true,
@@ -96,6 +99,11 @@ export function normalizeConfig(input) {
     if (poll.backfill_hours == null && src.backfill_hours != null) poll.backfill_hours = src.backfill_hours;
     if (poll.dm_scope == null && src.poll_watched_only === true) poll.dm_scope = "watched";
     src.poll = poll;
+    // 未发布时的临时全局键 send_mode：迁成新建值守的默认值，旧键不留在运行配置里。
+    if (src.send_mode_default == null && SEND_MODES.includes(src.send_mode)) {
+      src.send_mode_default = src.send_mode;
+    }
+    delete src.send_mode;
     for (const k of ["poll_interval", "recent_chats", "per_chat_limit", "backfill_hours",
       "poll_watched_only", "chatlist_interval", "port"]) delete src[k];
     for (const [k, v] of Object.entries(src)) {
@@ -147,6 +155,9 @@ export function normalizeConfig(input) {
   cfg.platforms = cfg.platforms
     .filter((x) => typeof x === "string" && x)
     .filter((x) => SUPPORTED_PLATFORMS.includes(x));
+  // 新建值守的默认发送方式只有两档；缺省/非法/老 state 一律回草稿审批。
+  cfg.send_mode_default = SEND_MODES.includes(cfg.send_mode_default)
+    ? cfg.send_mode_default : "draft";
   // 退役键：不让它们从旧 panel.json 混进运行配置。
   for (const k of RETIRED_KEYS) delete cfg[k];
   if (cfg.dsh) {
@@ -228,6 +239,7 @@ export class State {
     if (!raw) raw = safeReadJson(this.bakPath);
     const base = defaultState();
     if (raw && typeof raw === "object") {
+      const legacySendMode = raw.config && raw.config.send_mode;
       base.config = normalizeConfig(raw.config);
       base.paused = !!raw.paused;
       base.runtime = { ...base.runtime, ...(raw.runtime || {}) };
@@ -239,8 +251,13 @@ export class State {
       base.desk.baseline_group_ids = Array.isArray(base.desk.baseline_group_ids)
         ? base.desk.baseline_group_ids.map(String).filter(Boolean).slice(0, 10000) : [];
       base.chats = {};
+      // 存量已值守会话没有 send_mode：按旧全局值（未发布时）/新默认值补成显式值，
+      // 保证换默认不会改变它们；未值守会话留空，首次加入值守时再取当时默认。
+      const fallbackSendMode = SEND_MODES.includes(legacySendMode)
+        ? legacySendMode
+        : (base.config.send_mode_default || "draft");
       for (const [key, chat] of Object.entries(raw.chats || {})) {
-        const c = this.normalizeChat(chat);
+        const c = this.normalizeChat(chat, chat && chat.watching ? fallbackSendMode : "");
         if (c) base.chats[key] = c;
       }
       base.version = STATE_VERSION;
@@ -286,7 +303,7 @@ export class State {
     try { fs.chmodSync(this.statePath, 0o600); } catch { /* best effort */ }
   }
 
-  normalizeChat(input) {
+  normalizeChat(input, fallbackSendMode = "") {
     if (!input || !input.platform || !input.chat_id) return null;
     const platform = String(input.platform);
     const chatId = String(input.chat_id);
@@ -306,6 +323,8 @@ export class State {
         : (isGroup ? -1 : 0),
       // 关注程度缺省按 kind：群 mention 是现状；私聊 all = 每条都唤醒，与升级前一致。
       wake_mode: WAKE_MODES.includes(input.wake_mode) ? input.wake_mode : (isGroup ? "mention" : "all"),
+      // "" = 还没单独设过（首次加入值守时取 config.send_mode_default）；之后是显式选择。
+      send_mode: SEND_MODES.includes(input.send_mode) ? input.send_mode : fallbackSendMode,
       last_wake_at: Number(input.last_wake_at) || 0,
       last_wake_epoch: Number(input.last_wake_epoch) || 0,
       workspace: typeof input.workspace === "string" ? input.workspace : "",
@@ -367,6 +386,15 @@ export class State {
 
   getChat(platform, chatId) {
     return this.data.chats[chatKey(platform, chatId)] || null;
+  }
+
+  /** 值班单点发送方式："" 表示还没设过，首次加入值守时取默认；draft / auto 是显式值。 */
+  setChatSendMode(platform, chatId, mode) {
+    if (!SEND_MODES.includes(mode)) return { ok: false, reason: "bad_mode" };
+    const chat = this.getChat(platform, chatId);
+    if (!chat) return { ok: false, reason: "not_found" };
+    chat.send_mode = mode;
+    return { ok: true, chat };
   }
 
   ensureChat(platform, chatId, { name, kind, target = false } = {}) {

@@ -201,6 +201,15 @@ window.__ModuleLoader__.load({
     "font-size:12px;cursor:pointer;white-space:nowrap;min-width:0}",
     ".ims-seg-btn:hover{color:var(--fg);border-color:var(--line2)}",
     ".ims-seg-btn.on{border-color:var(--accent);color:var(--accent);background:color-mix(in srgb,var(--accent) 9%,transparent);font-weight:600}",
+    /* 发送方式：全局两段开关；自动档用 warn 色，和「已屏蔽/异常」区分开但仍醒目 */
+    ".ims-mode{display:inline-flex;align-items:center;gap:2px;padding:2px;border:1px solid var(--line2);",
+    "border-radius:999px;background:var(--bg);flex:none}",
+    ".ims-mode-btn{appearance:none;border:0;background:transparent;color:var(--fg3);font:inherit;",
+    "font-size:11.5px;line-height:1.4;padding:3px 9px;border-radius:999px;cursor:pointer;white-space:nowrap}",
+    ".ims-mode-btn:hover{color:var(--fg)}",
+    ".ims-mode-btn.on{background:var(--sunk);color:var(--fg);font-weight:620}",
+    ".ims-mode-btn.on.auto{background:color-mix(in srgb,var(--warn) 14%,transparent);color:var(--warn)}",
+    ".ims-mode-btn:focus-visible{outline:2px solid var(--blue);outline-offset:1px}",
     ".ims-pchip{padding:2px 9px;border-radius:999px;border:1px solid var(--line);background:var(--bg);color:var(--fg2);",
     "font-size:11px;cursor:pointer;white-space:nowrap;max-width:22ch;overflow:hidden;text-overflow:ellipsis}",
     ".ims-pchip:hover{color:var(--fg);border-color:var(--line2)}",
@@ -431,6 +440,145 @@ window.__ModuleLoader__.load({
       toast.classList.add("show");
       clearTimeout(toastTimer);
       toastTimer = setTimeout(function () { toast.classList.remove("show"); }, 2600);
+    }
+
+    // ---- 发送方式：值班单点配置；全局只提供「新建值守默认」 ----
+    function defaultSendModeValue() {
+      return ((S.cfg || {}).send_mode_default === "auto") ? "auto" : "draft";
+    }
+
+    function chatSendModeValue(chat) {
+      if (chat && (chat.send_mode === "auto" || chat.send_mode === "draft")) {
+        return chat.send_mode;
+      }
+      return defaultSendModeValue();
+    }
+
+    function sendModeLabel(mode) {
+      return mode === "auto" ? "全自动" : "草稿审批";
+    }
+
+    function chatSendModeHint(chat) {
+      return chatSendModeValue(chat) === "auto"
+        ? "这通值班直接发，不再逐条问你"
+        : "这通值班留草稿，等你说「发」";
+    }
+
+    function defaultSendModeHint() {
+      return defaultSendModeValue() === "auto"
+        ? "之后新加入值守的会话默认直接发"
+        : "之后新加入值守的会话默认留草稿";
+    }
+
+    function applyChatSendMode(chat, next) {
+      var cur = chatSendModeValue(chat);
+      if (next !== "auto" && next !== "draft") return;
+      if (chat.send_mode === next) return;
+      if (next === "auto") {
+        var ok = typeof window === "undefined" || !window.confirm ||
+          window.confirm("把这通值班切成全自动？\n\n" +
+            "之后「" + (chat.name || "这个会话") + "」里 agent 认为该回的消息会直接以你的身份发出，" +
+            "不再逐条确认。\n正在处理的那一轮按原设置跑完；切换对下一轮生效。\n" +
+            "涉及钱、合同、对外承诺、权限/凭据或外部群的，仍会停下等你确认。");
+        if (!ok) return;
+      }
+      api("/api/chat/send-mode", { body: {
+        platform: chat.platform, chat_id: chat.chat_id, mode: next,
+      } }).then(function (r) {
+        if (!r || r.ok === false) {
+          say("没保存：" + ((r && r.reason) || "本地服务没响应"));
+          return;
+        }
+        chat.send_mode = r.send_mode || next;
+        var hit = chatOf(chat.platform, chat.chat_id);
+        if (hit) hit.send_mode = chat.send_mode;
+        if (S.detail && S.detail.chat &&
+            S.detail.chat.platform === chat.platform && S.detail.chat.chat_id === chat.chat_id) {
+          S.detail.chat.send_mode = chat.send_mode;
+        }
+        say("已把「" + (chat.name || "这个会话") + "」切成" + sendModeLabel(chat.send_mode));
+        paint();
+      }).catch(function (e) {
+        say("没保存：" + shortReason(e));
+      });
+    }
+
+    function applyDefaultSendMode(next) {
+      if (next !== "auto" && next !== "draft") return;
+      if (next === defaultSendModeValue()) return;
+      if (next === "auto") {
+        var ok = typeof window === "undefined" || !window.confirm ||
+          window.confirm("之后新加入值守的会话默认全自动？\n\n" +
+            "只影响还没加入的值守；已有值班各自的设置不会被覆盖。\n" +
+            "涉及钱、合同、对外承诺、权限/凭据或外部群的，仍会停下等你确认。");
+        if (!ok) return;
+      }
+      api("/api/config", { body: { send_mode_default: next } }).then(function (c) {
+        if (!c || c.error) {
+          say("没保存：" + ((c && c.error) || "本地服务没响应"));
+          return;
+        }
+        S.cfg = c;
+        if (S.status && S.status.config) S.status.config.send_mode_default = c.send_mode_default;
+        say(next === "auto" ? "已设为新值班默认全自动" : "已设为新值班默认草稿审批");
+        paint();
+      }).catch(function (e) {
+        say("没保存：" + shortReason(e));
+      });
+    }
+
+    function modeControl(cur, onPick) {
+      var wrap = h("span", { class: "ims-mode", role: "group", "aria-label": "发送方式" });
+      [["draft", "草稿审批"], ["auto", "全自动"]].forEach(function (d) {
+        wrap.appendChild(h("button", {
+          class: "ims-mode-btn" + (cur === d[0] ? " on" : "") + (d[0] === "auto" ? " auto" : ""),
+          type: "button",
+          "aria-pressed": cur === d[0] ? "true" : "false",
+          title: d[0] === "auto"
+            ? "全自动：agent 直接以你的身份发出；敏感内容仍会停下等确认"
+            : "草稿审批：回复留在会话里，等你说「发」",
+          onclick: function () { onPick(d[0]); }
+        }, d[1]));
+      });
+      return wrap;
+    }
+
+    function sendModeControl(chat) {
+      return modeControl(chatSendModeValue(chat), function (mode) {
+        applyChatSendMode(chat, mode);
+      });
+    }
+
+    function defaultSendModeControl() {
+      return modeControl(defaultSendModeValue(), applyDefaultSendMode);
+    }
+
+    function sendDefaultCard() {
+      var mode = defaultSendModeValue();
+      return h("div", { class: "ims-card" },
+        h("div", { class: "ims-card-h" },
+          h("span", { class: "ims-ico", html: icon("send", 15) }),
+          "新建值守默认发送方式",
+          h("span", { class: "ims-grow" }),
+          h("span", { class: "ims-tag",
+            style: "color:" + (mode === "auto" ? "var(--warn)" : "var(--fg3)"),
+            text: sendModeLabel(mode) })),
+        h("div", { class: "ims-rowline" },
+          defaultSendModeControl(),
+          h("span", { class: "ims-hint", text: defaultSendModeHint() }),
+          h("span", { class: "ims-grow" })),
+        h("div", { class: "ims-hint",
+          text: "只决定之后新加入值守的会话；已有值班在「分身」卡片上各自设置，" +
+            "改这里不会覆盖它们。" }),
+        h("div", { class: "ims-hint",
+          text: "钱、合同、对外承诺、权限/凭据、外部群在两种模式下都会停下等你确认。" }));
+    }
+
+    // 上一轮结束后的提示：按这通值班自己的发送方式切换文案。
+    function afterTurnHint(chat) {
+      return chatSendModeValue(chat) === "auto"
+        ? "上一轮已完成；全自动模式下 agent 会自己发出，去会话能看到发送结果。"
+        : "上一轮已完成；如果 agent 把草稿留在会话里，去会话确认后发送。";
     }
 
     // 手动拉一轮：不受 10 分钟间隔限制，拉完再把结果说出来
@@ -807,7 +955,8 @@ window.__ModuleLoader__.load({
       }
       return h("div", { class: "ims-head" },
         h("div", { style: "min-width:0" },
-          h("div", { class: "ims-title" }, h("span", { class: "ims-dot", style: "background:" + dotColor }), "IM 值守"),
+          h("div", { class: "ims-title" },
+            h("span", { class: "ims-dot", style: "background:" + dotColor }), "IM 值守"),
           h("div", { class: "ims-sub", text: sub })),
         h("span", { class: "ims-grow" }),
         h("button", {
@@ -1276,6 +1425,11 @@ window.__ModuleLoader__.load({
                       text: (chat.session_turns || 0) + " 轮" }),
           h("span", { class: "ims-grow" }),
           newSessionBtn(d)));
+        wrap.appendChild(h("div", { class: "ims-rowline", style: "padding:0 var(--pad) 6px" },
+          h("span", { class: "ims-hint", text: "发送方式" }),
+          sendModeControl(chat),
+          h("span", { class: "ims-hint", text: chatSendModeHint(chat) }),
+          h("span", { class: "ims-grow" })));
         if (chat.last_warm_at || (chat.last_reset && chat.last_reset.at)) {
           wrap.appendChild(h("div", { class: "ims-hint", style: "padding:0 var(--pad) 6px",
             text: [
@@ -1297,7 +1451,7 @@ window.__ModuleLoader__.load({
                                       text: "上一轮失败：" + (chat.last_reason || "未知原因") + "；下一轮有新消息会再喊。" }));
         } else if ((chat.pending || 0) > 0 && sid) {
           wrap.appendChild(h("div", { class: "ims-hint", style: "padding:0 var(--pad) 6px",
-                                      text: "上一轮已完成；如果 agent 把草稿留在会话里，去会话确认后发送。" }));
+                                      text: afterTurnHint(chat) }));
         }
       }
 
@@ -1657,7 +1811,7 @@ window.__ModuleLoader__.load({
             : (c.last_ok === false
                 ? h("div", { class: "ims-hint ims-err", text: "上一轮失败：" + (c.last_reason || "未知原因") + "；下一轮有新消息会再喊。" })
                 : ((c.pending || 0) > 0 && c.dsh_session
-                    ? h("div", { class: "ims-hint", text: "上一轮已完成；如果它把草稿留在会话里，去会话确认后发送。" })
+                    ? h("div", { class: "ims-hint", text: afterTurnHint(c) })
                     : null)),
           prof ? h("div", { class: "ims-note" },
             h("span", { class: "ims-ico", html: icon("note", 13) }),
@@ -1665,6 +1819,11 @@ window.__ModuleLoader__.load({
             : h("div", { class: "ims-hint", text: c.kind === "group"
                 ? "还没有会话工作本，去「服务对象 · 群聊」补一份；agent 起草时会按它对齐本群要求"
                 : "人物档案还是空的，去「服务对象 · 人物」写一份；单聊只有这一份记忆" }),
+          h("div", { class: "ims-rowline" },
+            h("span", { class: "ims-hint", text: "发送" }),
+            sendModeControl(c),
+            h("span", { class: "ims-hint", text: chatSendModeHint(c) }),
+            h("span", { class: "ims-grow" })),
           h("div", { class: "ims-rowline" },
             modeSelect(c),
             h("span", { class: "ims-grow" }),
@@ -2689,6 +2848,9 @@ window.__ModuleLoader__.load({
       var st = S.status || {};
       var scroll = h("div", { class: "ims-scroll" });
 
+      // 新建值守的默认发送方式；单点值在各自的「分身」卡片上
+      scroll.appendChild(sendDefaultCard());
+
       // 值守会话：模型/网关/凭据全部由 DSH 自己解析，插件不再有第二份配置
       var resolved = cfg.resolved || {};
       scroll.appendChild(h("div", { class: "ims-card" },
@@ -2746,7 +2908,7 @@ window.__ModuleLoader__.load({
               });
             }
           }, (cfg.dsh || {}).ack_reaction === false ? "开启回执" : "关闭回执")),
-        h("div", { class: "ims-hint", text: "命中值守会话的新消息 → 在绑定的 DSH 会话里跑一轮 agent，由它自己调 IM CLI、查工作区、起草与发送。插件只负责拉取、唤醒和展示。" })));
+        h("div", { class: "ims-hint", text: "命中值守会话的新消息 → 在绑定的 DSH 会话里跑一轮 agent，由它自己调 IM CLI、查工作区、起草与发送。插件只负责拉取、唤醒、展示与发送方式设置。" })));
 
       // 值守节奏：快车道（值守会话，秒级）+ 慢车道（发现新会话，分钟级）
       var pcfg = cfg.poll || {};

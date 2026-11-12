@@ -24,7 +24,7 @@ const W2 = "/Users/demo/work/im-standin";
 const chats = [
   {
     platform: "feishu", chat_id: "oc_demo_lin", name: "林一帆", kind: "p2p",
-    tracked: 0, watching: 1, timer: 1, wake_mode: "mention", mentionable: true, turn_state: "running", blocked: 0, pending: 3,
+    tracked: 0, watching: 1, timer: 1, wake_mode: "mention", send_mode: "auto", mentionable: true, turn_state: "running", blocked: 0, pending: 3,
     dsh_session: "session-demo-lin", session_turns: 12, session_bound_at: now - day * 3,
     last_warm_at: now - 120, last_warm_ok: true,
     last_ts: stamp(1800), last_epoch: now - 1800, last_sync: now - 20,
@@ -33,7 +33,7 @@ const chats = [
   },
   {
     platform: "wecom", chat_id: "wm_demo_zhou", name: "周敏", kind: "p2p",
-    tracked: 0, watching: 1, timer: 1, wake_mode: "all", mentionable: false, turn_state: "warm", blocked: 0, pending: 0,
+    tracked: 0, watching: 1, timer: 1, wake_mode: "all", send_mode: "draft", mentionable: false, turn_state: "warm", blocked: 0, pending: 0,
     dsh_session: "session-demo-zhou", session_turns: 5, session_bound_at: now - day * 2,
     last_warm_at: now - 30, last_warm_ok: true,
     last_reset: { at: now - day * 2, reason: "idle" },
@@ -43,7 +43,7 @@ const chats = [
   },
   {
     platform: "feishu", chat_id: "oc_demo_unwatched", name: "未值守示例", kind: "p2p",
-    tracked: 0, watching: 0, timer: 0, wake_mode: "all", mentionable: true, turn_state: "idle", blocked: 0, pending: 0,
+    tracked: 0, watching: 0, timer: 0, wake_mode: "all", send_mode: "", mentionable: true, turn_state: "idle", blocked: 0, pending: 0,
     dsh_session: "", session_turns: 0, session_bound_at: 0,
     last_ts: "", last_epoch: 0, last_sync: 0,
     last_error: "", added_at: now - day * 4, workspace: "",
@@ -51,7 +51,7 @@ const chats = [
   },
   {
     platform: "feishu", chat_id: "oc_demo_grp", name: "云雀项目 · 交付群", kind: "group",
-    tracked: 0, watching: 1, timer: 1, wake_mode: "mention", mentionable: true, turn_state: "idle", blocked: 0, pending: 3,
+    tracked: 0, watching: 1, timer: 1, wake_mode: "mention", send_mode: "draft", mentionable: true, turn_state: "idle", blocked: 0, pending: 3,
     last_ts: stamp(60000), last_epoch: now - 60000, last_sync: now - 20,
     last_error: "", added_at: now - day, workspace: "",
     workspace_effective: W1,
@@ -320,10 +320,21 @@ const status = {
   ],
 };
 
+const duty = {
+  ok: true, enabled: false,
+  counts: { queued: 0, triaging: 0, trial: 0, failed: 0, ignore: 0, watch: 0,
+    quota_used: 0, quota_max: 20, watch_groups: 0, watch_max: 20 },
+  desk: { session_id: "", workspace: "", session_turns: 0, session_max_turns: 20,
+    last_turn: { ok: null, reason: "", at: 0 }, last_error: "",
+    baseline_at: 0, full_baseline_at: 0, last_sweep_at: 0 },
+  items: [],
+};
+
 const config = {
   poll: { interval_min: 10, dm_scope: "recent", dm_recent: 20, cooldown_sec: 20,
           min_interval_min: 10, max_interval_min: 240, interval_sec: 600, fast_sec: 60 },
   platforms: ["feishu", "wecom"],
+  send_mode_default: "auto",
   dsh: { timeout: 600, full_access: true, warm_min: 55, ack_reaction: true },
   resolved: { dsh_ready: true, label: "跟随 DSH 配置" },
 };
@@ -393,13 +404,14 @@ export function resolve(path) {
   if (p === "/api/workspaces") return workspaces;
   if (p === "/api/config") return config;
   if (p === "/api/doctor") return { checks: [] };
+  if (p === "/api/duty") return FIX.duty;
   if (p === "/api/logs") return { sends: [], errors: [], turns: {}, events: turnEvents };
   return null;
 }
 
 /** 注入到页面里的拦截器源码（字符串，走 addScriptToEvaluateOnNewDocument）。 */
 export const intercept = `(() => {
-  const FIX = ${JSON.stringify({ chats, inbox: inboxGroups, thread, targets, persons, workspaces, status, config, searchUsers, searchChats, digest, turnEvents })};
+  const FIX = ${JSON.stringify({ chats, inbox: inboxGroups, thread, targets, persons, workspaces, status, config, duty, searchUsers, searchChats, digest, turnEvents })};
   const chatFor = (path) => {
     const q = new URLSearchParams(path.split("?")[1] || "");
     return FIX.chats.find((c) => c.platform === q.get("platform") && c.chat_id === q.get("chat_id")) || FIX.chats[0];
@@ -459,6 +471,7 @@ export const intercept = `(() => {
     if (p === "/api/workspaces") return FIX.workspaces;
     if (p === "/api/config") return FIX.config;
     if (p === "/api/doctor") return { checks: [] };
+  if (p === "/api/duty") return FIX.duty;
     if (p === "/api/logs") return { sends: [], errors: [], turns: {}, events: FIX.turnEvents };
     return null;
   };
@@ -630,6 +643,14 @@ export const intercept = `(() => {
       return FIX.config;
     }
     if (p === "/api/poll") return { ok: true, busy: false };
+    if (p === "/api/duty/triage") return { ok: true };
+    if (p === "/api/chat/send-mode") {
+      const c = FIX.chats.find((x) => x.platform === body.platform && x.chat_id === body.chat_id);
+      if (!c) return { ok: false, reason: "not_found" };
+      if (body.mode !== "draft" && body.mode !== "auto") return { ok: false, reason: "bad_mode" };
+      c.send_mode = body.mode;
+      return { ok: true, send_mode: c.send_mode, chat: c };
+    }
     return null;
   };
 

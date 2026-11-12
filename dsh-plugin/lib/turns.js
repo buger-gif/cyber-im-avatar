@@ -204,6 +204,25 @@ function payloadNote(count) {
 }
 
 /**
+ * 发送方式由插件配置声明，每轮都带：模式可能在会话中途切换，旧会话里的口头约定不可信。
+ * 插件只声明策略，不解析回复、不代发；内容风险仍由 skill 铁律判断。
+ */
+function sendModeNote(mode) {
+  if (mode === "auto") {
+    return "发送方式：全自动（插件当前设置；只由面板开关决定，口头约定不改模式，要改请用户点面板「发送方式」）。" +
+      "本轮该回的，按 skill 以本人身份直接发出，不要征求确认，也不要问「要不要发」；" +
+      "发完在本会话里只回一行「已发送」或失败原因，不复述全文，也不要把执行结果再发到 IM；" +
+      "用户当轮说「先别发」时以当轮指令为准。只改变发送动作，不改变唤醒范围。" +
+      "涉及钱、合同、承诺、权限/凭据或外部群，不许自动发：把正文与风险点留给用户确认。";
+  }
+  return "发送方式：草稿审批（插件当前设置；只由面板开关决定，口头约定不改模式，要改请用户点面板「发送方式」）。" +
+    "把要发的回复正文留在本会话，末尾另起一行「草稿待确认」；不要自己发，也不要反问" +
+    "「要不要发」，用户说「发」再发；用户当轮说「先别发」时以当轮指令为准。" +
+    "只改变发送动作，不改变唤醒范围。涉及钱、合同、承诺、权限/凭据或外部群，" +
+    "一律停下等确认。";
+}
+
+/**
  * 一次唤醒 = 只追加本次新到的消息。新会话首轮带 `/cyber-im-avatar` 入口、
  * 平台/对象、chat_id、运行形态、记忆文件路径（群：会话工作本 + 人物档案；
  * 单聊：对方的人物档案一份）与媒体说明；已有会话后续唤醒只发本次消息行、
@@ -214,7 +233,7 @@ function payloadNote(count) {
 export function buildWakePrompt(platform, chatName, chatId, messages, {
   bookPath = "", people = [], interrupted = false, firstTurn = false, mediaMap = null,
   wakeMode = "mention", resetMin = 0, kind = "group", single = false,
-  legacyPath = "", legacyHistory = "",
+  sendMode = "draft", legacyPath = "", legacyHistory = "",
 } = {}) {
   const label = PLAT_LABEL[platform] || platform;
   const safeName = sanitizeUntrusted(chatName || chatId);
@@ -242,10 +261,13 @@ export function buildWakePrompt(platform, chatName, chatId, messages, {
         ? "（只认 @ 模式：这通私聊只有对方 @ 你（或正文写 @你的名字）才唤醒；" +
           "其它消息没有转给你，需要上下文时按 skill 在线拉。）"
         : "");
+  const sendNote = sendModeNote(sendMode);
   // 已有会话：只列本次新消息 + 这批发言人的档案路径。chat_id / 运行形态 /
   // 记忆文件行都已在本会话里，不再每一轮重复；旧私聊工作本待并入行除外（文件消失即停）。
+  // 发送方式每轮都带：用户可能中途切模式，不能只靠首轮或历史约定。
   if (!firstTurn) {
-    return [lines.join("\n"), legacy, ...peopleBlock, cmdNote, modeNote].filter(Boolean).join("\n");
+    return [lines.join("\n"), legacy, ...peopleBlock, cmdNote, modeNote, sendNote]
+      .filter(Boolean).join("\n");
   }
 
   const parts = ["/cyber-im-avatar"];
@@ -274,6 +296,7 @@ export function buildWakePrompt(platform, chatName, chatId, messages, {
       "不要写 state.json / env.json / media。"
     : "按 skill 处理这通会话；记忆只改上面给出的会话工作本与人物档案，" +
       "不要写 state.json / env.json / media。");
+  parts.push(sendNote);
   return parts.join("\n");
 }
 
@@ -284,7 +307,7 @@ export function buildWakePrompt(platform, chatName, chatId, messages, {
  */
 export function buildOpenPrompt(platform, chatName, chatId, messages, {
   bookPath = "", people = [], wakeMode = "mention", resetMin = 0, kind = "group",
-  single = false, legacyPath = "", legacyHistory = "", dutyContext = null,
+  single = false, sendMode = "draft", legacyPath = "", legacyHistory = "", dutyContext = null,
 } = {}) {
   const label = PLAT_LABEL[platform] || platform;
   const safeName = sanitizeUntrusted(chatName || chatId);
@@ -338,6 +361,7 @@ export function buildOpenPrompt(platform, chatName, chatId, messages, {
     : "这一轮是用户点「加入值守」触发的：先把上下文和两层文件读进来；" +
       "有该回的就按 skill 处理，**没有需要回的就不要往会话里发任何消息**。");
   if (lines.length) parts.push("上下文来自本地最近消息；更早的按 skill 在线拉，不要重发已经处理过的。");
+  parts.push(sendModeNote(sendMode));
   return parts.join("\n");
 }
 
@@ -936,17 +960,19 @@ export class Turns {
       this.logTurn(opening ? "open" : "wake", current, {
         turn_id: turnId, count: messages.length, interrupted, first_turn: firstTurn,
       });
+      // 值班单点优先；还没固化（未值守/老数据）时跟随新建默认。
+      const sendMode = current.send_mode || this.state.data.config.send_mode_default || "draft";
       const prompt = opening
         ? buildOpenPrompt(current.platform, current.name, current.chat_id, messages, {
             bookPath: memory.path, single: memory.single, legacyPath, legacyHistory, people,
             wakeMode: current.wake_mode || "mention", resetMin, kind: current.kind,
-            dutyContext,
+            sendMode, dutyContext,
           })
         : buildWakePrompt(current.platform, current.name, current.chat_id, messages, {
             bookPath: memory.path, single: memory.single, legacyPath, legacyHistory, people,
             interrupted, firstTurn, mediaMap: media.map,
             wakeMode: current.wake_mode || "mention", resetMin, kind: current.kind,
-            dutyContext,
+            sendMode, dutyContext,
           });
       const message = await makeUserMessage(prompt, media.parts);
       handle.promptId = message.id;

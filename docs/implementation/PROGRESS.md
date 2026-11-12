@@ -5,12 +5,13 @@
 
 ## 更新时间
 
-2026-11-10（0.18.3 已发布：web 启动审计误报止损（spec 0042，待真机）；spec 0039 / 0038 待真机验收）
+2026-11-12（发送方式改为值班单点 + 新建默认（0043），待真机刷新面板验收；0042 / 0040 / 0039 / 0038 待真机）
 
 ## 最近批次
 
 | 日期 | 主题 | 证据 |
 | --- | --- | --- |
+| 2026-11-12 | 发送方式（0043 / ADR 0013）：值班单点 `chats[].send_mode`（草稿 / 全自动）+ 新建默认 `send_mode_default`；「分身」卡片与详情各自可切，设置页只配新值班默认；首次加入值守固化默认，改默认不覆盖已有值班；每次唤醒/开场按值班声明并覆盖旧约定；心跳/值守台不注入；契约 01/02/03、SKILL、两份 README、架构 02/03、CHANGELOG 同步；Node 全绿、文档对账、gate quick 全绿 | `dsh-plugin/lib/{state,app,turns,duty}.js`、`dsh-plugin/web/panel.js`、`dsh-plugin/lib/client.js`、`dsh-plugin/tests/`、`docs/specs/active/0043-发送方式开关.md` |
 | 2026-11-10 | 启动竞态止损（0042）并发布 0.18.3：`dsh.client.immediately` + 宿主入口只静态依赖 Node 内置（导入 ~12ms→~4ms）；npm latest 与市场索引指向 0.18.3；诊断与 DSH 上游补丁草稿见 `docs/audits/2026-11-10-web-boot-audit-race.md` | `dsh-plugin/package.json`、`dsh-plugin/lib/index.js`、`dsh-plugin/market/index.json`、[run 42794468238](https://github.com/buger-gif/cyber-im-avatar/actions/runs/42794468238) |
 | 2026-11-09 | 值守分诊（0040 / ADR 0012）：新群基线、探针、私有值守台、决策文件 watch/trial/ignore（只 mention）、可选试用、两段式（新建一次 + 新 @ 再判）、Feishu `--is-at-me` 搜索 / DingTalk 回退、群成员 >10/未知硬门、API/面板/9 键/测试/契约；已验收归档；安装时写入 policy.md 初始版本 | `dsh-plugin/lib/duty.js`、`dsh-plugin/lib/poller.js`、`docs/specs/archive/0040-值守分诊.md` |
 | 2026-11-09 | 0.18.0 发布：值守分诊（0040）进 npm latest 与市场索引；CI Trusted Publishing 成功，`v0.18.0` tag；`market/index.json` 指向 0.18.0 | `CHANGELOG.md`、`dsh-plugin/package.json`、`dsh-plugin/market/index.json`、[run 42582621666](https://github.com/buger-gif/cyber-im-avatar/actions/runs/42582621666) |
@@ -56,62 +57,30 @@
 
 ## 当前断点
 
-- **0042 已随 0.18.3 发布，待真机**：冷启动不再把本插件报成 `import failed`；重启桌面 app 后看
+- **0043 发送方式已实施，待真机验收**：每个值守会话有独立 `send_mode`（草稿 / 全自动），
+  「分身」卡片与会话详情各自可切；设置页只配「新建值守默认」`send_mode_default`，新值班首次
+  加入时固化，之后改默认不覆盖已有值班。每次唤醒 / 开场按该值班声明发送方式；心跳与值守台
+  不注入。存量已值守会话按旧全局值/默认值补显式值，未值守留空；未发布旧键 `send_mode`
+  自动迁成 `send_mode_default`。`node --test`、`python3 tests/run_tests.py`、`gate --quick`
+  全绿。**剩余用户自验**：刷新右侧栏，①把一个值班切全自动，新消息命中后不询问直接发；
+  ②再切回草稿审批，确认恢复留草稿；③改「新建默认」后加一个新值班，确认取新默认、
+  旧值班不被覆盖。真机通过后归档 0043。
+- **0042 已随 0.18.3 发布，待真机**：重启桌面 app 后看
   `~/Library/Logs/DeepSeek Harness/` 有没有新的 `crash-*-web-boot.log`，没有即通过。
-- **0040 值守分诊已实施，待真机/全量 gate**：新群/被 @ 后由 agent 判断是否 watch / trial / ignore，插件只做发现、探针、排队、校验与执行；新群一律只盯 @我（分诊不产生 all，企微判不了 @ 只能 ignore）；判断在插件私有的 `<state.dir>/duty/` 工作区，不碰常规项目；值守台全局一个，按闲置/`session_max_turns` 轮换，`ignore`/`failed` 记录按 `record_keep_days` 清理；每 `sweep_min` 只处理基线之后、未值守的新群（存量群完全不扫）：Feishu 一条 `--is-at-me` 搜索直接拉 @我（@all 用 `isMention` 过滤），DingTalk 逐新群回退；新的个人 @ 触发 `trigger=sweep` 分诊（`ignore`/`failed` 可重开）。群成员 >`max_group_members`（默认 10）或未知 → 自动只能 ignore，插件拒绝 watch/trial；手动可强制。分诊轮不发言，决定值守后才起接手轮；成本是事件驱动，0 新群/无 @ 0 模型调用。代码在 `lib/duty.js` + `lib/poller.js` + `lib/turns.js` + `lib/app.js` + `web/panel.js`，契约 01/02/03 已改，Node 测试全绿，全量 gate 已过；真机未做。
-- **0039 已实施，待真机验收**：群里本人 @ 自己现在与私聊同权，记 `kind=cmd` 进批次唤醒
-  （「只盯 @我」与「全部消息」都算），不算待回；全量群不等 60 秒合并窗口；载荷要求指令默认
-  只在本地处理、别在群里说「收到」。`node --test` 与 `gate --quick` 全绿。**剩余用户自验**：
-  重启宿主（插件后端模块启动时加载）后，在在盯的群（`timer=1`）发 `@自己 …`，面板出现
-  「处理中」，群里没有自动发言。
-- **0038 已实施，待真机验收**：真实唤醒会打断绑定会话里**任何**在飞的 turn（含人在 DSH 面板里直接发消息、goal / 定时任务起的），不再只认插件自己的 active；被手动 steer 的载荷按当前轮收口，不再误报 `timeout`；turn 事件写 `~/.im-standin/logs/turns.jsonl`，体检页「最近事件」可看。`node --test` 215、Python 全量、`gate --quick` 全绿。**剩余用户自验**：在 DSH 面板里手动发一条长任务，再从群里 @，确认旧轮被打断、新载荷立刻起轮，体检页看到 `唤醒 → 打断(外来轮) → 已送达 → 进入会话 → 本轮结束`。
-- **0037 已验收归档（随 0.16.0 发布）**：命中后给本批 @ 消息点 `Get` 表情回执；
-  只认群 `mention` 与私聊「只认 @」的 `dm`，仅飞书，失败不影响 turn。用户已真机确认。
-- **0.16.0 已发布**：CI Trusted Publishing 成功，`dist-tags.latest = 0.16.0`，`v0.16.0` tag 与
-  `market/index.json` 一致；市场卡片描述同步为当前形态（不再写已删除的收件箱页）。
-- **0036 已实施并归档（ADR 0010）**：每段连续闲置最多一次心跳，第二个 `warm_min` 仍无真实
-  消息则下一条消息换新会话；`dsh.idle_reset_min` 退役，老配置静默丢弃，`warm_min=0` 同时关
-  保温与自动换会话。`node --test` 198、Python 194、全量 gate 与独立预览页走查通过。
-  **剩余用户自验**：宿主刷新后把 `warm_min` 临时调成 1，观察约 1 分钟保温一次、约 2 分钟后
-  下一条消息换新会话，再把 `warm_min` 改回 55。
-- **0035 已实施，待真机验收**：单聊只剩一份人物档案；群仍两层。`node --test`、
-  Node 194 / Python 194 项、预览页 320/360/420 浅深色走查均通过。**剩余用户自验**：
-  ①私聊命中载荷只有一行 `人物档案：`、agent 只改那一份；②旧私聊工作本已在第一次被碰到时改名
-  （原文一字不改），下一轮 agent 整理成四段并把旧全文归档 `.history.md`；③钉钉私聊继续走
-  工作本兜底，真机确认 `senderId` = `userId` 后再放开。
-- **0032 已实施，待真机刷新验收**：面板只剩五个页签（关注 / 分身 / 服务对象 / 体检 / 设置），
-  收件箱页与三处红色提醒已删；`/api/inbox` 与 `state.inbox()` 保留，供 `/api/status` 计数、
-  详情「现在处理」与排障。独立预览页 320 / 360 / 420 宽与浅 / 深色已走查；**真实 DSH 宿主
-  刷新页面（或重启）后**由用户确认页签与席位。
-- **0031 已实施并归档（ADR 0008 → implemented）**：两层文件、载荷双路径、面板对象/人物、
-  `/api/persons` 三条、独立形态人物 CLI 均已接线；`node --test` 181、`python3 tests/run_tests.py`、
-  `bash scripts/gate.sh` 全绿。**剩余用户自验**：①合成 live turn 看 agent 是否按
-  `SKILL.md` 把旧四段工作本拆分（人物评价迁出、旧全文进 `.history.md`、`## 待归人物` 兜底）；
-  ②真机群 + 私聊各跑一轮命中，确认载荷可读、档案落点正确；③钉钉 `senderId ≠ userId`
-  的双 ID 记录/合并规则真机确认（本期待验证，不自动合并）。
-- **0026–0029 已归档（随 0.12.0 / 0.13.0 发布）**：闲置重开与值守心跳、私聊关注程度
-  （「只盯 @我」）、重开会话即开新会话、私聊里 @ 自己 = 对替身说话；四份 spec 与 plan 已
-  `git mv` 进 `docs/specs/archive/` 并在 archive README 登记。真机项由用户自行验收
-  （2026-11-04 用户指示直接归档，未在插件会话内实测；其余项均有测试/走查证据）。
+- **0040 值守分诊已实施，待真机/全量 gate**：新群/被 @ 后由 agent 判断 watch / trial / ignore；
+  插件只做发现、探针、排队、校验与执行。新群一律只盯 @我，群成员 >10 或未知只能 ignore；
+  值守台每次新建会话，`sweep_min` 只看基线后未值守的新群。真机未做。
+- **0039 已实施，待真机验收**：群里本人 @ 自己与私聊同权，记 `kind=cmd` 进批次唤醒；不算待回，
+  全量群不等合并窗口。**剩余用户自验**：重启宿主后在在盯的群发 `@自己 …`，面板出现「处理中」，
+  群里没有自动发言。
+- **0038 已实施，待真机验收**：真实唤醒会打断绑定会话里任何在飞 turn；被手动 steer 的载荷按
+  当前轮收口；turn 事件写 `~/.im-standin/logs/turns.jsonl`，体检页可看。**剩余用户自验**：手动
+  发一条长任务再从群里 @，确认旧轮被打断、新载荷立刻起轮。
 - **市场收录待合并**：条目 PR
-  [#11669](https://github.com/awesome-dsh-plugin/awesome-dsh-plugin/pull/11669)。唯一的红是
-  「仓库满 1 天」自动检查（仓库 2026-11-02T15:59Z 建），该检查自己重跑，约 6 小时后达标；
-  合并后市场当日构建即可搜到。自托管索引仍在，两者并存。
-- **验证环境**：3080 使用 `IM_STANDIN_DIR=/tmp/im-standin-accept` 的隔离状态，只有合成会话
-  `oc_e2e_local_only`；web profile 已 link 本地插件。**没有向真实客户外发**，也没有拉真实消息。
-- **合成 live turn**：`chatWake` 创建 `session-76a20026…` → turn/end → `session_turns=1`、
-  `last_ok=true`、post-turn `last_sync` 更新；会话元数据出现 `danger-full-access`，agent 直接
-  写了 `profiles/feishu/oc_e2e_local_only.md`。无效 chat_id 的 CLI 报错是该演练的预期结果。
-- **面板走查**：320 / 360 / 420，浅/深两套（spec 0032 后按五个页签重走一遍：无溢出、席位无角标）；`.ims-panel` 各宽度
-  `scrollWidth === clientWidth`，越界元素 0；设置页三个数字框均 92px；详情「重开会话」
-  在 DSH 会话行右侧不换行。走查截图在本地临时目录（未入库）。
-- **状态文件**：真实 `~/.im-standin/state.json` 未被本轮写入；所有演练写入
-  `/tmp/im-standin-accept/`（验收后已清理）。桌面 DSH 与 3080 不要同时写同一份 state。
-- **钉钉真机已通，发送未验证**：组织开通「CLI 数据访问」后 `dws auth login --device` 一次成功
-  （access 当日 18:09 到期 / refresh 2026-12-03），`profile list` 取到 `userId`，
-  `env.json` 已写入 `self_id`。真实会话上监听命中、正文完整、水位推进、退出码 0。
-  **发送只到 dry-run**：计划解析为 `send_personal_message` + `identity=user`，未真发。
-  该组织里只有一个机器人会话，人类私聊的完整闭环仍缺真实对象。
+  [#11669](https://github.com/awesome-dsh-plugin/awesome-dsh-plugin/pull/11669)。
+- **验证环境**：3080 用 `IM_STANDIN_DIR=/tmp/im-standin-accept` 隔离状态；没有向真实客户外发。
+- 更早的 0031 / 0032 / 0035 / 0036 / 0037 已归档或随版本发布，真机项由用户自行验收；
+  历史见 `docs/specs/archive/README.md` 与 `docs/implementation/log/`。
 
 ## 挂账（按优先级）
 
@@ -125,25 +94,12 @@
 
 ## 下一步
 
-1. **0040 真机（已完成）**：用户已验收；spec 0040 已归档，ADR 0012 已 implemented。
-1. 用户重启/刷新 DSH 后验 spec 0036：设置页只剩「保温间隔」；把 `warm_min` 临时调成 1，
-   观察约 1 分钟保温一次、约 2 分钟后下一条消息换新会话，再把 `warm_min` 改回 55。
-   通过后 0036 已归档，无需再动。
-2. 用户重启/刷新 DSH 后验 spec 0035：私聊命中只见一份人物档案、面板「人物」里每人一张卡
-   （没有「私聊工作本」），旧私聊工作本下一轮被并入并归档；通过后把 0035 归档。
-3. 用户重启/刷新 DSH 后验 spec 0032：页签只剩五个、席位没有红点、分身卡片「打开」能进
-   会话详情；有问题按新 spec 修，通过后把 0032 归档。
-4. 用户自查 spec 0031 的剩余真机项（已归档）：重启宿主后看面板「服务对象」群聊/人物两段、
-   人物编辑/12KB/stale、私聊人物档案条、群本群人物；对一个旧画像会话跑一轮，让 agent 按
-   `SKILL.md` 拆分（人物评价迁出、旧全文进 `.history.md`、`## 待归人物` 兜底）；再做一轮
-   真机群/私聊命中确认载荷路径。钉钉双 ID 记录/合并在真人会话上确认。
-5. 用户自行验收 0026–0029 的真机项（spec 已归档）：重启宿主后测「只盯 @我」普通消息不唤醒 /
-   @ 唤醒、重开会话立刻有新会话、私聊里 @ 自己能被处理、闲置重开与心跳；临时调
-   `warm_min` 的话记得改回 55。有问题按新 spec 修。
-6. 等真实客户消息/媒体命中；只观察，不主动给真实客户发消息。
-7. 用户确认后清理历史待回；清理前不要当作用户已同意。
-8. 钉钉补完真人闭环：在环境里启用钉钉，给一个真人会话跑「命中 → 草稿 → 发送 → 重挂」，
-   先定 `--ai-tag` 口径。
+1. 真机验 0043（单点开关 + 新建默认 + 自动模式载荷），通过后归档。
+2. 重启桌面 app 验 0042 冷启动审计；通过后归档。
+3. 0040 / 0039 / 0038 的真机项按上面断点逐条走；通过后归档。
+4. 等真实客户消息 / 媒体命中；只观察，不主动给真实客户发消息。
+5. 用户确认后清理历史待回；清理前不要当作用户已同意。
+6. 钉钉补完真人闭环：启用钉钉，跑「命中 → 草稿 → 发送 → 重挂」，先定 `--ai-tag` 口径。
 
 ## 规则性提醒
 

@@ -282,6 +282,7 @@ export async function applyDecision({ state, chat, decision, turns = null, profi
   chat.target = true;
   chat.timer = 1;
   chat.wake_mode = "mention";
+  if (!chat.send_mode) chat.send_mode = state.data.config.send_mode_default || "draft";
   d.state = action === "trial" ? "trial" : "watch";
   d.by = "agent";
   d.decided_at = now;

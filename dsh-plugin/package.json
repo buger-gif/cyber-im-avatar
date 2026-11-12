@@ -1,7 +1,7 @@
 {
   "name": "dsh-cyber-im-avatar",
   "version": "0.18.3",
-  "description": "IM 分身壳：在 DSH 侧边栏值守飞书/企业微信/钉钉，命中新消息唤醒绑定 DSH 会话，由 agent 按 skill 闭环自己调 CLI、调研、回复；面板只做消息展示、通知与手动发送。",
+  "description": "IM 分身壳：在 DSH 侧边栏值守飞书/企业微信/钉钉，命中新消息唤醒绑定 DSH 会话，由 agent 按 skill 闭环自己调 CLI、调研、回复；面板做消息展示、值班单点发送方式（草稿审批 / 全自动）与新建默认、通知与手动发送。",
   "type": "module",
   "main": "./lib/index.js",
   "scripts": {

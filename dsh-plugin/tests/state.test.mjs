@@ -37,7 +37,62 @@ test("config clamps poll floor to 10 minutes and drops retired keys", () => {
   assert.equal(cfg.ui, undefined);
   assert.equal(cfg.seed_targets, undefined);
   assert.equal(cfg.dsh.profile, undefined);
+  assert.equal(cfg.send_mode_default, "draft");
   assert.equal(publicConfig(cfg, true).resolved.dsh_ready, true);
+});
+
+test("send_mode_default defaults to draft and only accepts draft / auto", () => {
+  assert.equal(normalizeConfig({}).send_mode_default, "draft");
+  assert.equal(normalizeConfig({ send_mode_default: "auto" }).send_mode_default, "auto");
+  assert.equal(normalizeConfig({ send_mode_default: "draft" }).send_mode_default, "draft");
+  for (const bad of ["AUTO", "Auto", "manual", "full", "", null, true, 1, {}]) {
+    assert.equal(normalizeConfig({ send_mode_default: bad }).send_mode_default, "draft", String(bad));
+  }
+  assert.equal(publicConfig({ send_mode_default: "auto" }, true).send_mode_default, "auto");
+});
+
+test("unreleased global send_mode migrates to send_mode_default and is dropped", () => {
+  assert.equal(normalizeConfig({ send_mode: "auto" }).send_mode_default, "auto");
+  assert.equal(normalizeConfig({ send_mode: "nonsense" }).send_mode_default, "draft");
+  const cfg = normalizeConfig({ send_mode: "auto", send_mode_default: "draft" });
+  assert.equal(cfg.send_mode_default, "draft", "新键优先");
+  assert.equal(cfg.send_mode, undefined);
+});
+
+test("new chats keep send_mode empty until they become watched", () => {
+  const { state } = tempState();
+  state.data.config.send_mode_default = "auto";
+  const chat = state.ensureChat("feishu", "oc_new", { kind: "p2p" });
+  assert.equal(chat.send_mode, "");
+});
+
+test("loading an old global send_mode fixes watched chats and leaves unwatched empty", () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "im-state-send-"));
+  fs.writeFileSync(path.join(dir, "state.json"), JSON.stringify({
+    version: 2,
+    config: { send_mode: "auto" },
+    chats: {
+      "feishu:oc_watched": {
+        platform: "feishu", chat_id: "oc_watched", name: "值守中", kind: "p2p",
+        watching: true, timer: 1,
+      },
+      "feishu:oc_idle": {
+        platform: "feishu", chat_id: "oc_idle", name: "没值守", kind: "p2p",
+        watching: false, timer: 0,
+      },
+      "feishu:oc_explicit": {
+        platform: "feishu", chat_id: "oc_explicit", name: "显式草稿", kind: "p2p",
+        watching: true, timer: 1, send_mode: "draft",
+      },
+    },
+  }, null, 2));
+  const state = new State(dir);
+  state.load();
+  assert.equal(state.data.config.send_mode_default, "auto");
+  assert.equal(state.data.config.send_mode, undefined);
+  assert.equal(state.getChat("feishu", "oc_watched").send_mode, "auto");
+  assert.equal(state.getChat("feishu", "oc_idle").send_mode, "");
+  assert.equal(state.getChat("feishu", "oc_explicit").send_mode, "draft");
 });
 
 test("dsh.full_access only accepts explicit true", () => {
