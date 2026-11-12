@@ -16,7 +16,7 @@
 | GET | `/api/inbox` | `filter`、`limit`、`group` | 待回聚合；默认按会话聚合，`group=msg` 逐条；只从每会话最近 10 条派生（面板自 spec 0032 起不再展示） |
 | GET | `/api/inbox/cleanup` | — | 把未值守会话的待回批量标成 ignored |
 | GET | `/api/thread` | `platform`、`chat_id`、`fetch`、`limit` | 会话正文：默认在线拉 30 条；`fetch=1` 先补拉分类（**只读，不唤醒**；冷却中直接用本地指针）；失败回退本地 10 条并带 `offline` / `error` |
-| GET | `/api/chats` | — | 会话清单，含 `blocked` / `timer` / `timed` / `watching` / `wake_mode` / `send_mode` / `mentionable` / `dsh_session` / `session_turns` / `turn_state` / `duty`；`send_mode` 是该值班实际生效的 `draft` / `auto`；`mentionable=false` 表示该平台判不了 @（面板置灰「只盯 @我」）。工作区字段见下 |
+| GET | `/api/chats` | — | 会话清单，含 `blocked` / `timer` / `timed` / `watching` / `wake_mode` / `send_mode` / `mentionable` / `dsh_session` / `session_turns` / `turn_state` / `duty` / `command`；`send_mode` 是该值班实际生效的 `draft` / `auto`；`mentionable=false` 表示该平台判不了 @（面板置灰「只盯 @我」）；`command` 是最近一次 IM 启动指令结果（见契约 02）。工作区字段见下 |
 | GET | `/api/duty` | — | 值守候选：`enabled`、`counts`（排队/判断中/试用/失败/忽略/值守/复核 + 配额与上限）、`desk`（session_id/workspace/session_turns/session_max_turns/last_turn/last_error/baseline_at/full_baseline_at/last_sweep_at）、`last_sweep`、`items`（每个非 none 的会话 + duty） |
 | GET | `/api/send` | `platform`、`chat_id`、`text`、`msg_id` | 以本人身份发出；不写发送历史 |
 | GET | `/api/state` | `platform`、`msg_id`、`state`、`chat_id` | 改最近 10 条里的一条：new / opened / replied / ignored；更早的返回 `not_cached` |
@@ -58,7 +58,7 @@
 
 | 方法 | 路径 | 说明 |
 | --- | --- | --- |
-| POST | `/api/config` | 写配置；`poll.interval_min` 夹到 ≥10；`send_mode_default` 只接受 `draft` / `auto`，非法值回 `draft`（只影响之后新加入值守的会话） |
+| POST | `/api/config` | 写配置；`poll.interval_min` 夹到 ≥10；`send_mode_default` 只接受 `draft` / `auto`，非法值回 `draft`（只影响之后新加入值守的会话）；`command.enabled` / `command.start_keyword` 一并合并，启用时关键词不能为空、最多 20 字，否则整次拒绝 |
 | POST | `/api/platforms` | 启用 / 停用平台：入参 `platform`、`enabled`；只接受 `feishu` / `wecom` / `dingtalk`，写回 `config.platforms`（按固定顺序去重） |
 | POST | `/api/targets/profile` | 覆盖写该会话的记忆文件：p2p 写人物档案（同一份，不另存工作本），群写会话工作本；入参 `platform`、`chat_id`（优先）/`name`（兼容旧面板）、`text`（≤12KB，超限拒绝不截断） |
 | POST | `/api/persons/profile` | 覆盖写人物档案；入参 `platform`、`person_id`、`name`、`text`（≤12KB）、`base_mtime`（可选）；mtime 更新过则回 `{ok:false, reason:"stale"}` 不写 |

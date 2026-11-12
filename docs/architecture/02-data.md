@@ -122,6 +122,20 @@ Markdown，都不在 `state.json` 里。**群两层，单聊一份**：
   ignore，不拉消息、不花 token。已经在值班的群后来变大不自动停。常见原因：
   DingTalk/WeCom 没有成员列表，自动只能忽略；飞书 `truncations[]` 也按未知。
 
+## IM 启动指令：自 @ + 关键词
+
+- 本人 @ 自己且正文含 `config.command.start_keyword`（默认「启动」）时，插件在当前会话
+  启动值班：写入 `watching/target/timer`、固化发送方式、按加入默认落工作区，再开一场
+  开场 turn。命中关键词的这条 `cmd` 被开关消费，不再作为普通指令交给 agent。
+- 已值守会话在快车道下一轮识别；未值守的飞书会话由 `maybeCommandScan` 每 10 分钟一条
+  `+messages-search --sender <本人> --at-chatter-ids <本人>` 覆盖 p2p / group（含存量群），
+  本地再用 `isMention` 与关键词复核。结果写 `chats[].command`；同一 `msg_id` 幂等。
+- 同一 `platform:chat_id` 只允许一个值班：已有 `dsh_session` → `already`，正在启动 →
+  本次不重复启动；`watching` 但绑定为空只补开。企微 / 钉钉没有跨会话搜索，只在已值守
+  会话里即时识别。
+- 成本：飞书每 10 分钟 1 条窄搜索（本人发送 + @本人，关键词本地复核），不逐会话轮询；搜索失败
+  只记 `lastCommandScan`，不影响轮询。
+
 ## 拉取节奏：快慢两条车道，三条按需路径
 
 | 路径 | 触发 | 冷却 | 额外约束 |

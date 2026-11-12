@@ -126,6 +126,47 @@ test("send_mode_default is exposed in status and writable through POST /api/conf
   assert.equal(out.body.send_mode_default, "draft", "非法值回默认，不让配置加载失败");
 });
 
+test("command keyword is writable through config and exposed per chat", async () => {
+  const { app, state } = makeApp();
+  let out = await app.handle("/api/config", "GET");
+  assert.deepEqual(out.body.command, { enabled: true, start_keyword: "启动" });
+
+  out = await app.handle("/api/config", "POST", null, {
+    command: { enabled: true, start_keyword: "  开工  " },
+  });
+  assert.equal(out.status, 200);
+  assert.deepEqual(out.body.command, { enabled: true, start_keyword: "开工" });
+  assert.deepEqual((await app.handle("/api/config", "GET")).body.command,
+    { enabled: true, start_keyword: "开工" });
+
+  out = await app.handle("/api/config", "POST", null, {
+    command: { enabled: true, start_keyword: "   " },
+  });
+  assert.equal(out.body.ok, false, "启用时关键词不能为空");
+  assert.equal(state.data.config.command.start_keyword, "开工", "拒绝时不写坏值");
+
+  out = await app.handle("/api/config", "POST", null, {
+    command: { enabled: true, start_keyword: "一".repeat(21) },
+  });
+  assert.equal(out.body.ok, false, "超长不静默截断");
+  assert.equal(state.data.config.command.start_keyword, "开工");
+
+  out = await app.handle("/api/config", "POST", null, {
+    command: { enabled: false, start_keyword: "" },
+  });
+  assert.equal(out.status, 200);
+  assert.deepEqual(out.body.command, { enabled: false, start_keyword: "" });
+
+  const chat = state.ensureChat("feishu", "oc_cmd_api", { name: "客户", kind: "p2p" });
+  chat.command = {
+    at: 123, keyword: "开工", msg_id: "m1", result: "already", reason: "已有值班",
+  };
+  out = await app.handle("/api/chats", "GET");
+  assert.deepEqual(out.body.items.find((x) => x.chat_id === "oc_cmd_api").command, {
+    at: 123, keyword: "开工", msg_id: "m1", result: "already", reason: "已有值班",
+  });
+});
+
 test("per-watch send mode is fixed on first watch and survives default changes", async () => {
   const { app, state } = makeApp();
   await app.handle("/api/config", "POST", null, { send_mode_default: "auto" });

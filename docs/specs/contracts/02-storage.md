@@ -53,6 +53,21 @@
 | last_warm_at | number | 最近一次保温轮的墙钟时刻（epoch 秒）；每段连续闲置最多写一次，失败也写，`0` = 没跑过或刚换过会话。不推进闲置时钟 |
 | last_warm_ok | bool/null | 最近一次保温轮结果；null = 没跑过或刚换过会话，失败不覆盖 `last_error` |
 | last_reset | object | `at` / `reason`；reason = `idle`（保温一次后第二个周期仍无新消息）/ `manual` / `workspace` / `missing`；`at=0` 表示没重开过 |
+| command | object | 最近一次「本人 @ 自己 + 启动关键词」的处理结果；见「command 对象」 |
+
+## command 对象
+
+| 键 | 类型 | 说明 |
+| --- | --- | --- |
+| at | number | 处理这条启动指令的时刻（epoch 秒）；0=没触发过 |
+| keyword | string | 当时命中的关键词（最多 20 字）；空=没触发过 |
+| msg_id | string | 最近处理过的启动指令消息 ID；同 ID 幂等，不重复启动 |
+| result | string | `""` / `starting` / `started` / `already` / `blocked` / `failed`；`already`=已有值班或正在启动，没有新建第二个；`starting` 进程重启后清空以便重试 |
+| reason | string | 单行结果原因，≤160 字；不含消息正文 |
+
+老 state 缺该字段时补 `{at:0, keyword:"", msg_id:"", result:"", reason:""}`，不升 `STATE_VERSION`。
+启动失败不回滚 `watching`；下一次新消息仍可照常唤醒。`starting` 在进程重启加载时清成空结果并清空
+`msg_id`，下一轮扫描 / 新消息可以重试。
 
 ## duty 对象
 

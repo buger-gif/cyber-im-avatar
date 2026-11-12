@@ -1,5 +1,29 @@
 # Changelog
 
+## 未发布
+
+### 未发布：自 @ 关键词启动值班（spec 0046）
+
+- **IM 里就地开值班**：在飞书群聊 / 私聊里 @ 自己并带上关键词（默认「启动」），就在当前
+  会话加入值守并开一场开场 turn；不用回面板点「加入值守」。
+- **关键词可改可关**：设置页新增「IM 启动指令」卡片，写 `config.command.enabled` /
+  `command.start_keyword`（最多 20 字）；启用时空关键词或超长会被拒绝，不静默截断。
+  关闭后自 @ 回到普通 `cmd`：照旧唤醒 agent，不启动值班。
+- **未值守会话也能发现**：已值守会话在快车道即时识别；飞书每 10 分钟发一条
+  `+messages-search --sender 本人 --at-chatter-ids 本人`，覆盖 p2p / group / 存量会话。
+  企微 / 钉钉没有跨会话搜索，只在已值守会话里识别。
+- **同一会话只允许一个值班**：已有 `dsh_session` → `command.result=already`，不新建、不再起
+  turn；正在启动不重复启动；`watching` 但绑定为空只补开。`chats[].command` 记录
+  `started / already / blocked / failed`，会话详情可见。
+- **开关消费**：命中关键词的那条 `cmd` 不再交给 agent；开场上下文仍能看到，但载荷明确
+  「它只负责打开值守，不要回复」。启动失败不回滚 `watching`，下一条消息仍可唤醒。
+- **接线**：新增 `lib/command.js`；`lib/im.js` 加飞书自 @ 搜索；`lib/poller.js` 加即时识别、
+  10 分钟扫描、启动锁与冲突；`lib/turns.js` 开场口径；`lib/state.js` 配置与 chat 字段；
+  `lib/app.js` 校验；面板设置 / 会话详情与构建产物；契约 01/02/03、架构 02/03、ADR 0015、
+  README、SKILL、`references/feishu.md` 同步。
+- **兼容**：老 state 补 `chats[].command` 默认，不升 `STATE_VERSION`；老配置无 `command`
+  键按默认开启。未发真实 IM 消息；真机验收项见 PROGRESS。
+
 ## 0.19.0 — 2026-11-12
 
 ### 0.19.0：载荷只声明变化（spec 0045）

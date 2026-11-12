@@ -6,6 +6,7 @@ import test from "node:test";
 
 import { State } from "../lib/state.js";
 import { Poller } from "../lib/poller.js";
+import * as duty from "../lib/duty.js";
 
 function msg(id, epoch, extra = {}) {
   return {
@@ -25,6 +26,10 @@ class FakeAdapter {
     this.listOk = true;
     this.atMeCalls = 0;
     this.atMe = [];
+    this.selfMentions = [];
+    this.selfMentionCalls = 0;
+    this.selfMentionArgs = null;
+    this.supportsSelfMentions = true;
     this.memberCount = 8;
     this.memberKnown = true;
     this.fetchCalls = 0;
@@ -42,6 +47,10 @@ class FakeAdapter {
     return this.listOk ? { ok: true, items: this.chats } : { ok: false, items: [], error: "auth expired" };
   }
   async searchAtMe() { this.atMeCalls += 1; return { ok: true, items: this.atMe }; }
+  async searchSelfMentions(args) {
+    this.selfMentionCalls += 1; this.selfMentionArgs = args;
+    return { ok: true, items: this.selfMentions };
+  }
   async chatMembers() { return { ok: true, known: this.memberKnown, count: this.memberCount }; }
   async sendText() { return { ok: true, message_id: "om_sent" }; }
   async search() { return { ok: true, items: [] }; }
@@ -52,14 +61,24 @@ class FakeTurns {
   constructor() {
     this.active = new Set();
     this.wakes = [];
+    this.opens = [];
     this.warmCalls = 0;
     this.warmResult = { ok: true, started: true };
   }
   hostReady() { return true; }
   isActive(platform, chatId) { return this.active.has(`${platform}:${chatId}`); }
+  busy(platform, chatId) { return this.active.has(`${platform}:${chatId}`); }
   async wake(chat, opts = {}) {
     this.wakes.push({ chat, opts });
     return { ok: true, started: true, turn_id: `turn-${this.wakes.length}` };
+  }
+  async open(chat, opts = {}) {
+    this.opens.push({ chat, opts });
+    this.active.add(`${chat.platform}:${chat.chat_id}`);
+    return { ok: true, started: true, turn_id: `open-${this.opens.length}` };
+  }
+  openMessages(chat) {
+    return (chat.recent || []).filter((m) => String(m.content || "").trim());
   }
   async warm(chat) {
     this.warmCalls += 1;
@@ -707,6 +726,271 @@ test("command wake has a circuit breaker (5 per 10 minutes)", async () => {
   }
   assert.equal(turns.wakes.length, 5, "前 5 条唤醒，第 6 条被熔断");
   assert.match(chat.last_error, /本人指令.*暂停唤醒/);
+});
+
+test("a start command never opens a second duty in an already-watched chat", async () => {
+  const { state, poller, adapter, turns } = setup();
+  const chat = state.ensureChat("feishu", "oc_start_busy", { name: "客户", kind: "p2p" });
+  chat.watching = true;
+  chat.wake_mode = "mention";
+  chat.dsh_session = "session-existing";
+  adapter.messages = [msg("b0", 13000)];
+  await poller.pollChat("feishu", "oc_start_busy");
+
+  adapter.messages = [
+    msg("b1", 13010, { sender_id: "ou_me", sender_name: "我", content: "@我 启动值班" }),
+    msg("b0", 13000),
+  ];
+  const r = await poller.pollChat("feishu", "oc_start_busy", { force: true });
+  assert.equal(r.woke, false);
+  assert.equal(r.command.result, "already");
+  assert.equal(turns.opens.length, 0, "不能有第二个会话");
+  assert.equal(turns.wakes.length, 0, "启动开关不再交给 agent");
+  assert.equal(chat.dsh_session, "session-existing");
+  assert.equal(chat.command.msg_id, "b1");
+  assert.match(chat.command.reason, /没有重复创建/);
+});
+
+test("a start command in an unwatched DM starts duty and opens one session", async () => {
+  const { state, poller, adapter, turns } = setup();
+  const chat = state.ensureChat("feishu", "oc_start_dm", { name: "客户", kind: "p2p" });
+  adapter.messages = [msg("d0", 13100)];
+  await poller.pollChat("feishu", "oc_start_dm");
+  adapter.messages = [
+    msg("d1", 13110, {
+      sender_id: "ou_me", sender_name: "我", content: "@我 启动一下",
+      mentions: [{ id: { open_id: "ou_me" } }],
+    }),
+    msg("d0", 13100),
+  ];
+  const r = await poller.pollChat("feishu", "oc_start_dm", { force: true });
+  assert.equal(r.command.result, "started");
+  assert.equal(r.woke, false, "开场 turn 已包含上下文，不再额外唤醒");
+  assert.equal(chat.watching, true);
+  assert.equal(chat.timer, 1);
+  assert.equal(chat.target, true);
+  assert.equal(chat.wake_mode, "all");
+  assert.equal(chat.send_mode, "draft");
+  assert.equal(chat.duty.state, "watch");
+  assert.equal(chat.duty.by, "user");
+  assert.equal(chat.command.msg_id, "d1");
+  assert.equal(turns.opens.length, 1);
+  assert.equal(turns.opens[0].opts.reason, "command");
+  assert.equal(turns.opens[0].opts.dutyContext.command.keyword, "启动");
+  assert.equal(turns.wakes.length, 0);
+  assert.ok(chat.recent.some((m) => m.msg_id === "d1" && m.kind === "cmd"));
+});
+
+test("a start command in an unwatched group defaults to mention-only", async () => {
+  const { state, poller, adapter, turns } = setup();
+  const chat = state.ensureChat("feishu", "oc_start_grp", { name: "项目群", kind: "group" });
+  adapter.messages = [msg("g0", 13200)];
+  await poller.pollChat("feishu", "oc_start_grp");
+  adapter.messages = [
+    msg("g1", 13210, {
+      sender_id: "ou_me", sender_name: "我", content: "@我 启动值守",
+      mentions: [{ id: { open_id: "ou_me" } }],
+    }),
+    msg("g0", 13200),
+  ];
+  const r = await poller.pollChat("feishu", "oc_start_grp", { force: true });
+  assert.equal(r.command.result, "started");
+  assert.equal(chat.watching, true);
+  assert.equal(chat.timer, 1);
+  assert.equal(chat.wake_mode, "mention");
+  assert.equal(turns.opens.length, 1);
+  assert.equal(turns.opens[0].chat.kind, "group");
+  assert.equal(turns.wakes.length, 0);
+});
+
+test("a read-only poll never starts duty from a start command", async () => {
+  const { state, poller, adapter, turns } = setup();
+  const chat = state.ensureChat("feishu", "oc_start_readonly", { name: "客户", kind: "p2p" });
+  adapter.messages = [msg("r0", 13250)];
+  await poller.pollChat("feishu", "oc_start_readonly");
+  adapter.messages = [
+    msg("r1", 13260, {
+      sender_id: "ou_me", sender_name: "我", content: "@我 启动",
+      mentions: [{ id: { open_id: "ou_me" } }],
+    }),
+    msg("r0", 13250),
+  ];
+  const r = await poller.pollChat("feishu", "oc_start_readonly", { force: true, wake: false });
+  assert.equal(r.command, null);
+  assert.equal(chat.watching, false);
+  assert.equal(turns.opens.length, 0);
+  assert.equal(chat.command.msg_id, "");
+});
+
+test("a watched chat with no bound session is healed instead of treated as a conflict", async () => {
+  const { state, poller, adapter, turns } = setup();
+  const chat = state.ensureChat("feishu", "oc_start_heal", { name: "客户", kind: "p2p" });
+  chat.watching = true;
+  chat.timer = 1;
+  chat.wake_mode = "mention";
+  chat.dsh_session = "";
+  adapter.messages = [msg("h0", 13300)];
+  await poller.pollChat("feishu", "oc_start_heal");
+  adapter.messages = [
+    msg("h1", 13310, {
+      sender_id: "ou_me", sender_name: "我", content: "@我 启动",
+      mentions: [{ id: { open_id: "ou_me" } }],
+    }),
+    msg("h0", 13300),
+  ];
+  const r = await poller.pollChat("feishu", "oc_start_heal", { force: true });
+  assert.equal(r.command.result, "started");
+  assert.equal(turns.opens.length, 1);
+  assert.equal(turns.wakes.length, 0);
+});
+
+test("the start keyword is configurable and can be switched off", async () => {
+  const { state, poller, adapter, turns } = setup();
+  state.data.config.command.start_keyword = "go";
+  const chat = state.ensureChat("feishu", "oc_start_kw", { name: "客户", kind: "p2p" });
+  chat.watching = true;
+  chat.wake_mode = "mention";
+  adapter.messages = [msg("k0", 13400)];
+  await poller.pollChat("feishu", "oc_start_kw");
+
+  // 旧词不再触发：仍按普通 cmd 唤醒。
+  adapter.messages = [
+    msg("k1", 13410, {
+      sender_id: "ou_me", sender_name: "我", content: "@我 启动",
+      mentions: [{ id: { open_id: "ou_me" } }],
+    }),
+    msg("k0", 13400),
+  ];
+  let r = await poller.pollChat("feishu", "oc_start_kw", { force: true });
+  assert.equal(r.command, null);
+  assert.equal(turns.wakes.length, 1);
+  assert.equal(turns.opens.length, 0);
+
+  // 新词命中：启动值班（当前没有绑定会话，补开一个）。
+  adapter.messages = [
+    msg("k2", 13420, {
+      sender_id: "ou_me", sender_name: "我", content: "@我 go 值班",
+      mentions: [{ id: { open_id: "ou_me" } }],
+    }),
+    msg("k1", 13410),
+    msg("k0", 13400),
+  ];
+  r = await poller.pollChat("feishu", "oc_start_kw", { force: true });
+  assert.equal(r.command.result, "started");
+  assert.equal(turns.opens.length, 1);
+
+  // 整体关闭：关键词消息回到普通 cmd。
+  state.data.config.command.enabled = false;
+  adapter.messages = [
+    msg("k3", 13430, {
+      sender_id: "ou_me", sender_name: "我", content: "@我 go 再看一下",
+      mentions: [{ id: { open_id: "ou_me" } }],
+    }),
+    msg("k2", 13420),
+    msg("k1", 13410),
+    msg("k0", 13400),
+  ];
+  r = await poller.pollChat("feishu", "oc_start_kw", { force: true });
+  assert.equal(r.command, null);
+  assert.equal(turns.wakes.length, 2);
+  assert.equal(turns.opens.length, 1);
+});
+
+test("a start command supersedes a triage probe instead of being overwritten", async () => {
+  const { state, poller, adapter, turns } = setup();
+  const chat = state.ensureChat("feishu", "oc_cmd_race", { name: "项目群", kind: "group" });
+  duty.newEvent(chat, "manual", { id: "evt-race", at: 13600 });
+  state.save();
+  let releaseProbe;
+  const probeGate = new Promise((resolve) => { releaseProbe = resolve; });
+  let markStarted;
+  const probeStarted = new Promise((resolve) => { markStarted = resolve; });
+  adapter.fetchMessages = async () => {
+    markStarted();
+    await probeGate;
+    return { ok: true, messages: [msg("race0", 13610, { content: "普通消息" })] };
+  };
+
+  const triage = poller.startTriage(chat);
+  await probeStarted;
+  const started = await poller.startDutyFromCommand(chat, {
+    msg_id: "race1", sender_id: "ou_me", sender_name: "我", content: "@我 启动",
+    ts_epoch: 13620, kind: "cmd",
+  }, { source: "poll", keyword: "启动" });
+  assert.equal(started.result, "started");
+  assert.equal(chat.watching, true);
+  assert.equal(chat.duty.by, "user");
+  assert.equal(chat.duty.state, "watch");
+  assert.equal(turns.opens.length, 1);
+
+  releaseProbe();
+  const out = await triage;
+  assert.equal(out.reason, "superseded", "陈旧分诊不能再覆盖用户手动接管");
+  assert.equal(chat.duty.state, "watch");
+  assert.equal(chat.duty.by, "user");
+});
+
+test("the command scan discovers self-@ start commands in unwatched p2p and group chats", async () => {
+  const { state, poller, adapter, turns } = setup();
+  const mention = { id: { open_id: "ou_me" } };
+  adapter.selfMentions = [{
+    msg_id: "s1", chat_id: "oc_scan_dm", chat_type: "p2p",
+    sender_id: "ou_me", sender_name: "我", content: "@我 启动",
+    mentions: [mention], ts_epoch: 13510,
+  }, {
+    msg_id: "s2", chat_id: "oc_scan_grp", chat_type: "group",
+    sender_id: "ou_me", sender_name: "我", content: "@我 启动值班",
+    chat_name: "项目群", mentions: [mention], ts_epoch: 13520,
+  }, {
+    msg_id: "s3", chat_id: "oc_scan_other", chat_type: "p2p",
+    sender_id: "ou_me", sender_name: "我", content: "@我 随便说说",
+    mentions: [mention], ts_epoch: 13530,
+  }];
+
+  adapter.messages = [
+    msg("x2", 13511, { sender_id: "ou_other", sender_name: "客户", content: "这个谁看下" }),
+    msg("x1", 13510, {
+      sender_id: "ou_me", sender_name: "我", content: "@我 启动",
+      mentions: [mention],
+    }),
+  ];
+
+  const ok = await poller.maybeCommandScan({ force: true });
+  assert.equal(ok, true);
+  assert.equal(adapter.selfMentionCalls, 1);
+  assert.equal(adapter.selfMentionArgs.selfId, "ou_me");
+  const dm = state.getChat("feishu", "oc_scan_dm");
+  const grp = state.getChat("feishu", "oc_scan_grp");
+  assert.ok(dm && dm.watching, "未值守私聊被扫描启动");
+  assert.ok(grp && grp.watching, "未值守群被扫描启动");
+  assert.equal(grp.kind, "group");
+  assert.equal(grp.wake_mode, "mention");
+  assert.equal(dm.command.result, "started");
+  assert.equal(turns.opens.length, 2);
+  assert.equal(poller.lastCommandScan.started, 2);
+  const ctxRows = turns.opens[0].opts.dutyContext.messages;
+  assert.ok(ctxRows.some((m) => m.content === "@我 启动" && m.kind === "cmd"),
+    "开场上下文保留启动指令原文");
+  assert.ok(ctxRows.some((m) => m.content === "这个谁看下"),
+    "首次见到的会话也要把客户原文带进开场，而不是 baseline 清空后只剩指令");
+  assert.equal(poller.lastCommandScan.matched, 2, "不带关键词的自 @ 不匹配");
+  assert.equal(state.getChat("feishu", "oc_scan_other"), null, "没命中就不建会话行");
+
+  // 同一 msg_id 再次扫到：幂等，不再开第二个会话。
+  await poller.maybeCommandScan({ force: true });
+  assert.equal(turns.opens.length, 2);
+  assert.equal(dm.command.msg_id, "s1");
+});
+
+test("a failed command scan only records the error and leaves polling alone", async () => {
+  const { state, poller, adapter } = setup();
+  adapter.searchSelfMentions = async () => ({
+    ok: false, items: [], error: "permission denied",
+  });
+  const ok = await poller.maybeCommandScan({ force: true });
+  assert.equal(ok, true);
+  assert.equal(poller.lastCommandScan.ok, false);
+  assert.match(poller.lastCommandScan.error, /permission denied/);
 });
 
 function warmChat(state, { platform = "feishu", chatId = "oc_warm", idleMin = 60 } = {}) {

@@ -77,10 +77,16 @@ export const ADAPTERS = {
     cmd_at_me: ["im", "+messages-search", "--is-at-me", "--chat-type", "group",
       "--start", "{start}", "--end", "{end}", "--page-all", "--page-limit", "20",
       "--no-reactions", "--format", "json"],
+    // 本人 @ 自己的启动指令：跨群 / 私聊搜，只查本人发送且 @ 本人的消息。
+    cmd_self_mentions: ["im", "+messages-search", "--as", "user",
+      "--sender", "{sender}", "--at-chatter-ids", "{sender}",
+      "--start", "{start}", "--end", "{end}", "--page-all", "--page-limit", "5",
+      "--page-size", "50", "--no-reactions", "--format", "json"],
     cmd_chat_members: ["im", "+chat-members-list", "--chat-id", "{chat_id}",
       "--member-types", "user", "--page-all", "--format", "json"],
     f_at_messages: [["data", "messages"]],
     f_at_chat_name: [["chat_name"], ["chat", "name"]],
+    f_at_chat_type: [["chat_type"], ["chat", "type"]],
     f_at_members: [["data", "users"], ["data", "items"], ["users"], ["items"]],
     f_at_truncations: [["data", "truncations"], ["truncations"]],
     f_items: [["data", "messages"], ["data", "items"], ["messages"], ["items"]],
@@ -635,6 +641,11 @@ export class Adapter {
     return !!this.ad.cmd_at_me;
   }
 
+  /** 该平台是否支持跨会话搜「本人发送 + @本人」的启动指令：目前只有飞书。 */
+  get supportsSelfMentions() {
+    return !!this.ad.cmd_self_mentions;
+  }
+
   /** 该平台是否能拿到群成员数：目前只有飞书 `+chat-members-list`。 */
   get supportsMembers() {
     return !!this.ad.cmd_chat_members;
@@ -666,6 +677,46 @@ export class Adapter {
       if (!m) continue;
       m.chat_id = String(it.chat_id || "");
       m.chat_name = String(dig(it, this.ad.f_at_chat_name) || m.chat_id);
+      m.chat_type = String(dig(it, this.ad.f_at_chat_type) || "");
+      if (m.chat_id) items.push(m);
+    }
+    return { ok: true, items, error: "" };
+  }
+
+  /**
+   * 跨会话搜「本人 @ 自己」的消息，用于发现未值守会话里的启动指令（spec 0046）。
+   * 搜索条件在服务端收窄到 sender=本人、@=本人；调用方仍需按 isMention 与关键词本地复核。
+   * 返回的 `chat_type` 是 p2p / group；群名可能为空（飞书搜索对 p2p 只给 chat_partner）。
+   */
+  async searchSelfMentions({ selfId = "", start, end } = {}) {
+    if (!this.ad.cmd_self_mentions) {
+      return { ok: false, unsupported: true, items: [], error: "self_mentions_unavailable" };
+    }
+    const sender = String(selfId || "");
+    if (!sender) {
+      return { ok: false, items: [], error: "bad_request" };
+    }
+    const now = new Date();
+    const from = start ? new Date(start) : new Date(now.getTime() - 30 * 60 * 1000);
+    const to = end ? new Date(end) : now;
+    const kw = {
+      sender, start: isoWithOffset(from), end: isoWithOffset(to),
+    };
+    const { rc, json, raw } = await this.run(this.argv(this.ad.cmd_self_mentions, kw), 90);
+    if (rc !== 0 || !json) {
+      return { ok: false, items: [], error: redact(raw || `rc=${rc}`, 300) };
+    }
+    const rows = dig(json, this.ad.f_at_messages);
+    if (rows === undefined || rows === null) {
+      return { ok: false, items: [], error: "SCHEMA_MISMATCH " + redact(JSON.stringify(outline(json)), 300) };
+    }
+    const items = [];
+    for (const it of (Array.isArray(rows) ? rows : [])) {
+      const m = this.norm(it);
+      if (!m) continue;
+      m.chat_id = String(it.chat_id || "");
+      m.chat_name = String(dig(it, this.ad.f_at_chat_name) || "");
+      m.chat_type = String(dig(it, this.ad.f_at_chat_type) || "");
       if (m.chat_id) items.push(m);
     }
     return { ok: true, items, error: "" };

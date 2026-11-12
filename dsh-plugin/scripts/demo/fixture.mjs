@@ -30,6 +30,8 @@ const chats = [
     last_ts: stamp(1800), last_epoch: now - 1800, last_sync: now - 20,
     last_error: "", added_at: now - day * 3, workspace: W1,
     workspace_in_dsh: 1, workspace_effective: W1,
+    command: { at: now - 300, keyword: "启动", msg_id: "om_demo_cmd",
+      result: "started", reason: "已在当前会话启动值班" },
   },
   {
     platform: "wecom", chat_id: "wm_demo_zhou", name: "周敏", kind: "p2p",
@@ -297,6 +299,8 @@ const status = {
     timer_dm: 3, timer_group: 1, groups: 1, blocked: 0,
     last_fast: { at: now - 20, chats: 2, new: 0, skipped: 1, targets: 2, ms: 420 },
     last_result: { at: now - 300, chats: 2, new: 1, skipped: 0, targets: 2, ms: 980 },
+    command_scan: { at: now - 480, ok: true, scanned: 3, matched: 1,
+      started: 1, failed: 0, ms: 310, error: "" },
   },
   platforms: [
     { platform: "feishu", logged_in: true, watched: 2, service: 1, chats: 2,
@@ -335,6 +339,7 @@ const config = {
           min_interval_min: 10, max_interval_min: 240, interval_sec: 600, fast_sec: 60 },
   platforms: ["feishu", "wecom"],
   send_mode_default: "auto",
+  command: { enabled: true, start_keyword: "启动" },
   dsh: { timeout: 600, full_access: true, warm_min: 55, ack_reaction: true },
   resolved: { dsh_ready: true, label: "跟随 DSH 配置" },
 };

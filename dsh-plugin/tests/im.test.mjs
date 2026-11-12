@@ -244,6 +244,50 @@ test("feishu at-me search normalizes chat/sender/content and returns messages", 
   assert.ok(seen.includes("group"));
 });
 
+test("feishu self-mention search filters sender and at-chatter-ids and keeps chat_type", async () => {
+  const a = new Adapter("feishu", { dir: "/nonexistent-im-test" });
+  let seen = null;
+  a.run = async (args) => {
+    seen = args;
+    return { rc: 0, raw: "", json: { data: { messages: [{
+      chat_id: "oc_dm", chat_type: "p2p", chat_partner: { open_id: "ou_other" },
+      message_id: "om_dm", msg_type: "text", content: "@我 启动",
+      create_time: "2026-11-12 22:00", mentions: [{ id: { open_id: "ou_me" } }],
+      sender: { id: "ou_me", name: "我" },
+    }, {
+      chat_id: "oc_g", chat_type: "group", chat_name: "项目群",
+      message_id: "om_g", msg_type: "text", content: "@我 启动值班",
+      create_time: "2026-11-12 22:01", mentions: [{ id: { open_id: "ou_me" } }],
+      sender: { id: "ou_me", name: "我" },
+    }] } } };
+  };
+  const r = await a.searchSelfMentions({
+    selfId: "ou_me",
+    start: new Date("2026-11-12T22:00:00+08:00"),
+    end: new Date("2026-11-12T23:00:00+08:00"),
+  });
+  assert.equal(r.ok, true);
+  assert.equal(a.supportsSelfMentions, true);
+  assert.equal(r.items[0].chat_id, "oc_dm");
+  assert.equal(r.items[0].chat_type, "p2p");
+  assert.equal(r.items[0].chat_name, "", "p2p 搜索不硬造名字");
+  assert.equal(r.items[0].sender_id, "ou_me");
+  assert.equal(r.items[0].content, "@我 启动");
+  assert.equal(r.items[1].chat_type, "group");
+  assert.equal(r.items[1].chat_name, "项目群");
+  assert.ok(seen.includes("--sender"));
+  assert.ok(seen.includes("ou_me"));
+  assert.ok(seen.includes("--at-chatter-ids"));
+  assert.equal(seen.includes("--query"), false, "不把关键词交给服务端分词，本地过滤更稳");
+  assert.equal(seen.includes("--chat-type"), false, "搜索要同时覆盖 p2p 与 group");
+  assert.ok(r.items[0].ts_epoch > 0);
+
+  const ding = new Adapter("dingtalk", { dir: "/nonexistent-im-test" });
+  assert.equal(ding.supportsSelfMentions, false);
+  const unsupported = await ding.searchSelfMentions({ selfId: "u" });
+  assert.equal(unsupported.unsupported, true);
+});
+
 test("feishu chatMembers counts users and reports truncation/unsupported", async () => {
   const a = new Adapter("feishu", { dir: "/nonexistent-im-test" });
   a.run = async () => ({

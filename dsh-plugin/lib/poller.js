@@ -16,6 +16,14 @@ import { fileURLToPath } from "node:url";
 import { isMention, PLATFORM_META } from "./im.js";
 import { chatKey, RECENT_LIMIT, SUPPORTED_PLATFORMS } from "./state.js";
 import * as duty from "./duty.js";
+import * as workspaces from "./workspaces.js";
+import {
+  commandEnabled, commandRow, isStartCommand, normalizeKeyword,
+} from "./command.js";
+
+/** 跨会话找启动指令的间隔与回看窗口：与慢车道下限一致，一次搜索代替逐会话轮询。 */
+const COMMAND_SCAN_SEC = 600;
+const COMMAND_SCAN_LOOKBACK_SEC = 1200;
 
 
 function nowSec() {
@@ -57,6 +65,12 @@ export class Poller {
     this.dutyLock = false;
     this.dutyLastCleanup = 0;
     this.lastSweep = { at: 0, ok: null, scanned: 0, queued: 0, error: "" };
+    // 启动指令：同一会话同时只允许一个启动流程；扫描节流与最近一次结果只在内存。
+    this.dutyStarts = new Map();
+    this.commandScanAt = 0;
+    this.lastCommandScan = {
+      at: 0, ok: null, scanned: 0, matched: 0, started: 0, failed: 0, ms: 0, error: "",
+    };
   }
 
   get cfg() {
@@ -130,6 +144,11 @@ export class Poller {
     } catch (e) {
       this.logError(null, null, (full ? "cycle: " : "fast cycle: ") +
         (e && e.message ? e.message : e));
+    }
+    try {
+      await this.maybeCommandScan();
+    } catch (e) {
+      this.logError(null, null, "command: " + (e && e.message ? e.message : e));
     }
     try {
       await this.maybeDuty();
@@ -472,6 +491,7 @@ export class Poller {
 
   async pollChat(platform, chatId, {
     name = "", kind = "", force = false, dueAfter = 0, limit = 0, wake = true,
+    handleCommands = true,
   } = {}) {
     const chat = this.state.ensureChat(platform, chatId, { name, kind });
     if (chat.blocked) return { fetched: false, blocked: true, skipped: "已屏蔽，不同步" };
@@ -527,10 +547,17 @@ export class Poller {
       baseline, platform, advance: wake || baseline,
     });
     this.state.save();
-    const woke = wake ? await this.maybeWake(chat, result.batch) : false;
+    const handled = handleCommands && wake
+      ? await this.consumeStartCommands(chat, result.batch, { source: "poll" })
+      : { consumed: new Set(), results: [], started: false };
+    const batch = handled.consumed.size
+      ? result.batch.filter((m) => !handled.consumed.has(m.msg_id))
+      : result.batch;
+    // 启动指令已经开了开场 turn：本批其它消息在 recent 里，别马上再起一轮把它打断。
+    const woke = wake && !handled.started ? await this.maybeWake(chat, batch) : false;
     return {
-      fetched: true, new: result.batch.length, msgs: messages.length,
-      baseline, woke, items: messages,
+      fetched: true, new: batch.length, msgs: messages.length,
+      baseline, woke, command: handled.results[0] || null, items: messages,
     };
   }
 
@@ -711,6 +738,294 @@ export class Poller {
     return false;
   }
 
+  // ---- 本人 @ 自己 + 关键词 = 启动值班（spec 0046） -------------------------
+
+  /** 记一条命令结果；`starting` 不算终态，重启或下一轮可以重试。 */
+  writeCommand(chat, msg, keyword, result, reason) {
+    chat.command = {
+      at: nowSec(),
+      keyword: normalizeKeyword(keyword),
+      msg_id: String(msg?.msg_id || ""),
+      result,
+      reason: String(reason || "").slice(0, 160),
+    };
+  }
+
+  /**
+   * 从一批消息里消费启动指令。命中关键词的 cmd 全部从唤醒批次移除；
+   * 只处理最新一条未处理过的，重复消息按 msg_id 幂等。
+   */
+  async consumeStartCommands(chat, batch, { source = "poll" } = {}) {
+    const cfg = this.cfg.command || {};
+    if (!commandEnabled(cfg)) return { consumed: new Set(), results: [], started: false };
+    const keyword = normalizeKeyword(cfg.start_keyword);
+    const selfId = this.identity[chat.platform]?.self_id || "";
+    const names = this.selfNames(chat.platform);
+    const hits = (Array.isArray(batch) ? batch : [])
+      .filter((m) => m && m.kind === "cmd" &&
+        isStartCommand(m, { selfId, selfNames: names, keyword }))
+      .sort((a, b) => (Number(b.ts_epoch) || 0) - (Number(a.ts_epoch) || 0));
+    const consumed = new Set(hits.map((m) => String(m.msg_id)));
+    const results = [];
+    let started = false;
+    for (const m of hits) {
+      const r = await this.startDutyFromCommand(chat, m, { source, keyword });
+      if (r?.deduped) continue;
+      results.push(r);
+      if (r?.result === "started") started = true;
+      break;
+    }
+    return { consumed, results, started };
+  }
+
+  /**
+   * 在指定会话启动值班。硬约束：同一 platform:chat_id 只能有一个值班会话。
+   * 已绑定会话 / 正在启动 → 冲突，不再 open；空绑定只补开，不新建第二个。
+   */
+  async startDutyFromCommand(chat, msg, { source = "poll", keyword = "" } = {}) {
+    if (!chat || !msg) return { ok: false, result: "failed", reason: "missing_chat" };
+    const kw = normalizeKeyword(keyword || this.cfg.command?.start_keyword);
+    if (!kw) return { ok: false, result: "failed", reason: "no_keyword" };
+    const key = chatKey(chat.platform, chat.chat_id);
+    const current = this.state.getChat(chat.platform, chat.chat_id) || chat;
+    const prev = current.command || {};
+    if (prev.msg_id === String(msg.msg_id) && prev.result && prev.result !== "starting") {
+      return { ok: true, result: prev.result, reason: prev.reason, deduped: true };
+    }
+    if (this.dutyStarts.has(key)) {
+      return { ok: false, result: "already", reason: "值班正在启动，没有重复创建" };
+    }
+    this.dutyStarts.set(key, true);
+    try {
+      if (current.blocked) {
+        this.writeCommand(current, msg, kw, "blocked", "会话已屏蔽，不能启动值班");
+        this.state.save();
+        return { ok: false, result: "blocked", reason: current.command.reason };
+      }
+      const busy = typeof this.turns?.busy === "function"
+        ? this.turns.busy(current.platform, current.chat_id)
+        : !!this.turns?.isActive?.(current.platform, current.chat_id);
+      // 已有一个值班会话：不新建第二个；关键词这条消息由开关消费，不再交给 agent。
+      if (current.watching && current.dsh_session) {
+        this.writeCommand(current, msg, kw, "already",
+          "已在值班且已绑定会话，没有重复创建");
+        this.state.save();
+        return { ok: true, result: "already", reason: current.command.reason };
+      }
+      if (current.watching && busy) {
+        this.writeCommand(current, msg, kw, "already", "值班正在启动，没有重复创建");
+        this.state.save();
+        return { ok: true, result: "already", reason: current.command.reason };
+      }
+
+      this.writeCommand(current, msg, kw, "starting", "正在启动值班");
+      current.watching = true;
+      current.target = true;
+      current.timer = 1;
+      if (current.kind === "group") {
+        if (current.wake_mode !== "all") current.wake_mode = "mention";
+      } else if (!["all", "mention"].includes(current.wake_mode)) {
+        current.wake_mode = "all";
+      }
+      if (!current.send_mode) {
+        current.send_mode = this.cfg.send_mode_default === "auto" ? "auto" : "draft";
+      }
+      if (!String(current.workspace || "").trim()) {
+        const joinWs = workspaces.resolveJoinDefault(this.state.data.chats, this.cfg);
+        if (joinWs) current.workspace = joinWs;
+      }
+      // 用户显式动作优先于排队 / 进行中的分诊：清掉事件，陈旧 ignore 决策不能把它再关掉。
+      const d = current.duty || (current.duty = {});
+      d.state = "watch";
+      d.trigger = "manual";
+      d.by = "user";
+      d.decided_at = nowSec();
+      d.reason = `你在 IM 里 @ 自己用「${kw}」启动值班`.slice(0, 160);
+      d.confidence = 1;
+      d.review_at = 0;
+      d.error = "";
+      d.attempts = 0;
+      d.event_id = "";
+      d.event_at = 0;
+      d.triaged_at = 0;
+      // 指令可能来自未启用平台？飞书扫描只跑已启用平台；这里仍按面板加入的口径补启用。
+      const enabled = this.cfg.platforms || [];
+      if (!enabled.includes(current.platform)) {
+        this.cfg.platforms = SUPPORTED_PLATFORMS
+          .filter((p) => p === current.platform || enabled.includes(p));
+      }
+      this.state.save();
+
+      // 跨会话搜索只拿到这一条指令：先补一次最近上下文（只读，不推进水位）。
+      // 首次见到的会话 pollChat 会走 baseline 并清空正文，所以再取一次原始消息给开场
+      // prompt 用；两个调用都失败时才退回只有指令本身。
+      let contextMessages = null;
+      if (source === "scan") {
+        try {
+          await this.pollChat(current.platform, current.chat_id, {
+            name: current.name, kind: current.kind, force: true, wake: false,
+            handleCommands: false,
+          });
+        } catch { /* 补不到上下文就用指令本身 */ }
+        const selfId = this.identity[current.platform]?.self_id || "";
+        const names = this.selfNames(current.platform);
+        try {
+          const raw = await this.fetchThread(current.platform, current.chat_id, 30);
+          if (raw.ok && raw.items.length) {
+            contextMessages = raw.items
+              .map((m) => {
+                const isSelf = !!selfId && m.sender_id === selfId;
+                let kind = "dm";
+                if (isSelf) {
+                  kind = isStartCommand(m, { selfId, selfNames: names, keyword: kw })
+                    ? "cmd" : "out";
+                } else if (current.kind === "group") {
+                  kind = isMention(m, selfId, names) ? "mention" : "fyi";
+                }
+                return {
+                  ...m,
+                  kind,
+                  state: "new",
+                  content: String(m.content || ""),
+                  media_paths: Array.isArray(m.media_paths) ? m.media_paths : [],
+                };
+              })
+              .sort((a, b) => (Number(b.ts_epoch) || 0) - (Number(a.ts_epoch) || 0))
+              .slice(0, 10);
+          }
+        } catch { /* 取不到原文就用本地 recent 兜底 */ }
+        if (current.kind !== "group" &&
+            (current.name === current.chat_id || !current.name)) {
+          const other = (contextMessages || current.recent || []).find((m) =>
+            m.sender_id && m.sender_id !== selfId && String(m.sender_name || "").trim());
+          if (other) current.name = String(other.sender_name).trim();
+        }
+      }
+
+      let r;
+      if (!this.turns?.open) {
+        r = { ok: false, reason: "host_unavailable" };
+      } else {
+        const ctx = {
+          command: { keyword: kw, msg_id: String(msg.msg_id || ""), source },
+        };
+        if (source === "scan") {
+          if (contextMessages?.length) ctx.messages = contextMessages;
+          else if (!this.turns.openMessages?.(current)?.length) ctx.messages = [commandRow(msg)];
+        }
+        try {
+          r = await this.turns.open(current, { reason: "command", dutyContext: ctx });
+        } catch (e) {
+          r = { ok: false, reason: String(e?.message || e?.name || e).slice(0, 160) };
+        }
+      }
+      if (r?.ok) {
+        this.writeCommand(current, msg, kw, "started", "已在当前会话启动值班");
+        try {
+          this.turns?.profiles?.ensureMemory?.(
+            current.platform, current, this.identity[current.platform]?.self_id || "");
+        } catch { /* best effort */ }
+        this.state.save();
+        return { ok: true, result: "started", reason: current.command.reason, open: r };
+      }
+      const reason = String(r?.reason || "start_failed").slice(0, 160);
+      this.writeCommand(current, msg, kw, "failed", "启动失败：" + reason);
+      this.state.save();
+      this.logger.warn?.(`[im-standin] command start ${key}: ${reason}`);
+      return { ok: false, result: "failed", reason: current.command.reason, open: r };
+    } finally {
+      this.dutyStarts.delete(key);
+    }
+  }
+
+  /**
+   * 飞书跨会话找启动指令：每 10 分钟一条搜索，覆盖未值守私聊 / 群 / 存量会话。
+   * 只消费本地复核通过的「本人 + @本人 + 关键词」；搜索失败不影响轮询。
+   */
+  async maybeCommandScan({ force = false } = {}) {
+    const cfg = this.cfg.command || {};
+    if (!commandEnabled(cfg)) return false;
+    if (!this.turns?.hostReady?.()) return false;
+    if (!(this.cfg.platforms || []).includes("feishu")) return false;
+    let adapter;
+    const now = nowSec();
+    try {
+      adapter = this.im.adapter("feishu");
+    } catch {
+      adapter = null;
+    }
+    if (!adapter?.supportsSelfMentions) {
+      this.commandScanAt = now;
+      this.lastCommandScan = {
+        ...this.lastCommandScan, at: now, ok: false,
+        error: adapter ? "self_mentions_unavailable" : "adapter_unavailable",
+      };
+      return false;
+    }
+    if (!force && this.commandScanAt && now - this.commandScanAt < COMMAND_SCAN_SEC) return false;
+    this.commandScanAt = now;
+    const keyword = normalizeKeyword(cfg.start_keyword);
+    const startedAt = Date.now();
+    let scanned = 0;
+    let matched = 0;
+    let started = 0;
+    let failed = 0;
+    let error = "";
+    try {
+      let ident = this.identity.feishu;
+      if (!ident?.ok || !ident.self_id) ident = await this.whoami("feishu");
+      if (!ident?.ok || !ident.self_id) {
+        error = "identity_unavailable";
+      } else {
+        const r = await adapter.searchSelfMentions({
+          selfId: ident.self_id,
+          start: new Date((now - COMMAND_SCAN_LOOKBACK_SEC) * 1000),
+          end: new Date(now * 1000),
+        });
+        if (!r.ok) {
+          error = String(r.error || "search_failed").slice(0, 200);
+        } else {
+          scanned = r.items.length;
+          const names = this.selfNames("feishu");
+          const seen = new Set();
+          const jobs = [];
+          for (const m of r.items.slice().sort((a, b) =>
+            (Number(b.ts_epoch) || 0) - (Number(a.ts_epoch) || 0))) {
+            if (!m?.chat_id || !m.msg_id || seen.has(m.msg_id)) continue;
+            seen.add(m.msg_id);
+            if (!isStartCommand(m, { selfId: ident.self_id, selfNames: names, keyword })) continue;
+            let kind = m.chat_type === "group" ? "group"
+              : (m.chat_type === "p2p" ? "p2p" : "");
+            if (!kind) {
+              const known = this.state.getChat("feishu", m.chat_id);
+              kind = known?.kind === "group" ? "group" : (known?.kind === "p2p" ? "p2p" : "");
+            }
+            if (!kind) continue;
+            const chat = this.state.ensureChat("feishu", m.chat_id, {
+              name: m.chat_name || "", kind,
+            });
+            if (chat.blocked) continue;
+            jobs.push({ chat, m });
+          }
+          matched = jobs.length;
+          for (const { chat, m } of jobs.slice(0, 20)) {
+            const res = await this.startDutyFromCommand(chat, m, { source: "scan", keyword });
+            if (res?.result === "started") started += 1;
+            if (res?.result === "failed") failed += 1;
+          }
+        }
+      }
+    } catch (e) {
+      error = String(e?.message || e?.name || e).slice(0, 200);
+      this.logger.warn?.(`[im-standin] command scan: ${error}`);
+    }
+    this.lastCommandScan = {
+      at: now, ok: !error, scanned, matched, started, failed,
+      ms: Date.now() - startedAt, error,
+    };
+    return true;
+  }
+
   async fetchThread(platform, chatId, limit = 30) {
     await this.whoami(platform);
     const n = Math.max(1, Math.min(Number(limit) || 30, 50));
@@ -791,6 +1106,7 @@ export class Poller {
       blocked_dm: rows.filter((r) => r.blocked && (r.kind || "p2p") === "p2p").length,
       blocked_group: rows.filter((r) => r.blocked && r.kind === "group").length,
       last_result: this.lastResult,
+      command_scan: { ...this.lastCommandScan },
     };
   }
 
@@ -941,6 +1257,9 @@ export class Poller {
     const d = chat.duty;
     if (!d || !d.event_id) return { ok: false, reason: "no_event" };
     if (!this.turns?.hostReady?.()) return { ok: false, reason: "host_unavailable" };
+    const eventId = d.event_id;
+    // 用户可能在探针 / 查人数期间用启动指令接管：旧事件不能再覆盖 watch。
+    const superseded = () => chat.duty !== d || d.by === "user" || d.event_id !== eventId;
     // 决策文件已经写好（上一轮回调丢了 / 进程重启）：先应用，不重复起 turn。
     const early = await duty.consumeDecision({
       state: this.state, chat, turns: this.turns, profiles: this.turns?.profiles || null, im: this.im,
@@ -973,6 +1292,7 @@ export class Poller {
         return { ok: true, skipped: count > 0 ? "group_too_large" : "member_unknown", count };
       }
     }
+    if (superseded()) return { ok: false, reason: "superseded" };
     d.state = "triaging";
     d.attempts = Math.max(0, Number(d.attempts) || 0) + 1;
     if (!review) d.triaged_at = nowSec();
@@ -988,6 +1308,7 @@ export class Poller {
       this.state.save();
       return { ok: false, reason };
     }
+    if (superseded()) return { ok: false, reason: "superseded" };
     const facts = this.dutyFacts(chat);
     const r = await this.turns.deskTriage(chat, {
       eventId: d.event_id, trigger: d.trigger, review, messages, facts,
@@ -1006,6 +1327,8 @@ export class Poller {
     if (!current) return;
     const d = current.duty;
     if (!d) return;
+    // 启动指令是用户显式接管：陈旧分诊结果不能再把它关掉。
+    if (d.by === "user") return;
     const r = await duty.consumeDecision({
       state: this.state, chat: current, turns: this.turns, profiles: this.turns?.profiles || null, im: this.im,
       contextMessages: messages,

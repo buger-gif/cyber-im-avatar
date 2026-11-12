@@ -1399,6 +1399,21 @@
       wrap.appendChild(dhead);
       wrap.appendChild(h("div", { class: "ims-hint", style: "padding:6px var(--pad) 0",
                                   text: "只显示最近 30 条；更早消息去 IM 客户端或 DSH 会话看" }));
+      if (chat.command && chat.command.result) {
+        var cmdLabel = {
+          starting: "IM 指令：正在启动值班",
+          started: "IM 指令：已启动值班",
+          already: "IM 指令：已有值班，没有重复创建",
+          blocked: "IM 指令：会话已屏蔽，未启动",
+          failed: "IM 指令：启动失败",
+        }[chat.command.result] || ("IM 指令：" + chat.command.result);
+        wrap.appendChild(h("div", {
+          class: "ims-hint" + (chat.command.result === "failed" ? " ims-err" : ""),
+          style: "padding:2px var(--pad) 0",
+          text: cmdLabel + (chat.command.reason ? " · " + chat.command.reason : "") +
+            (chat.command.at ? " · " + fmtTime(chat.command.at) : ""),
+        }));
+      }
       if (chat.kind !== "group" && chat.watching && chat.wake_mode === "mention") {
         wrap.appendChild(h("div", { class: "ims-hint", style: "padding:2px var(--pad) 0",
           text: "只盯 @我：对方 @ 你（或正文写 @你的名字）才唤醒 agent；其它消息只记知会、不算待回。" }));
@@ -2814,6 +2829,63 @@
       return card;
     }
 
+    function commandSettingsCard(cfg) {
+      var c = (cfg && cfg.command) || {};
+      var enabled = c.enabled !== false;
+      var kwInp = h("input", {
+        class: "ims-inp", type: "text", maxlength: "20",
+        placeholder: "启动", style: "max-width:160px",
+      });
+      kwInp.value = c.start_keyword || "";
+      var box = h("input", { type: "checkbox", checked: enabled });
+      var card = h("div", { class: "ims-card" },
+        h("div", { class: "ims-card-h" },
+          h("span", { class: "ims-ico", html: icon("play", 15) }),
+          "IM 启动指令",
+          h("span", { class: "ims-grow" }),
+          h("span", { class: "ims-tag",
+            style: "color:" + (enabled ? "var(--ok)" : "var(--fg3)"),
+            text: enabled ? "关键词「" + (c.start_keyword || "") + "」" : "已关闭" })),
+        h("div", { class: "ims-rowline" },
+          h("span", { class: "ims-hint", text: "启用" }), box,
+          h("span", { class: "ims-field" },
+            h("span", { class: "ims-hint", text: "启动关键词" }), kwInp),
+          h("span", { class: "ims-grow" }),
+          h("button", { class: "ims-btn primary", type: "button", onclick: function () {
+            var kw = String(kwInp.value || "").trim();
+            if (box.checked && !kw) {
+              say("启用启动指令时关键词不能为空");
+              return;
+            }
+            api("/api/config", { body: { command: {
+              enabled: !!box.checked, start_keyword: kw,
+            } } }).then(function (out) {
+              S.cfg = out;
+              say(box.checked ? "已保存：@ 自己 +「" + kw + "」启动值班" : "已关闭 IM 启动指令");
+              paint();
+            }).catch(function (e) { say("保存失败：" + shortReason(e)); });
+          } }, "保存指令")),
+        h("div", { class: "ims-hint", text: "在飞书私聊 / 群里 @ 自己并带上关键词，就在当前会话" +
+          "加入值守并开一场会话；飞书每 10 分钟用一条跨会话搜索发现未值守的会话，" +
+          "企微 / 钉钉只认已值守会话里到达的指令。" }),
+        h("div", { class: "ims-hint", text: "同一会话同一时间只允许一个值班：已有值班时只记冲突，" +
+          "不会再开第二个；命中关键词的这条消息由开关消费，不再作为本人指令交给 agent。" }),
+        scanHint());
+      function scanHint() {
+        var scan = (S.status && S.status.poll && S.status.poll.command_scan) || null;
+        if (!scan || !scan.at) {
+          return h("div", { class: "ims-hint", text: "跨会话扫描：还没跑过（宿主启动后第一轮开始）。" });
+        }
+        var line = scan.error
+          ? "跨会话扫描失败：" + scan.error
+          : "跨会话扫描：读 " + (scan.scanned || 0) + " 条 · 命中 " +
+            (scan.matched || 0) + " 条 · 启动 " + (scan.started || 0) + " 个";
+        return h("div", { class: "ims-hint" + (scan.error ? " ims-err" : ""),
+          text: line + " · " + fmtTime(scan.at) });
+      }
+      return card;
+    }
+
     function dutySettingsCard(cfg) {
       var d = (cfg && cfg.duty) || {};
       var card = h("div", { class: "ims-card" },
@@ -3098,6 +3170,7 @@
             }
           }, "清理其他会话的待回"))));
 
+      scroll.appendChild(commandSettingsCard(cfg));
       scroll.appendChild(dutySettingsCard(cfg));
       scroll.appendChild(h("div", { class: "ims-card" },
         h("div", { class: "ims-card-h", text: "关于" }),

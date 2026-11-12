@@ -95,6 +95,49 @@ test("loading an old global send_mode fixes watched chats and leaves unwatched e
   assert.equal(state.getChat("feishu", "oc_explicit").send_mode, "draft");
 });
 
+test("command config defaults on, normalizes the keyword and keeps an empty keyword off", () => {
+  const base = normalizeConfig({});
+  assert.deepEqual(base.command, { enabled: true, start_keyword: "启动" });
+  assert.equal(normalizeConfig({ command: { enabled: false } }).command.enabled, false);
+  assert.equal(normalizeConfig({ command: { enabled: "false" } }).command.enabled, false);
+  assert.equal(normalizeConfig({ command: { enabled: 0 } }).command.enabled, false);
+  assert.equal(normalizeConfig({ command: { enabled: "yes" } }).command.enabled, true);
+  assert.equal(normalizeConfig({ command: { start_keyword: "  开工  值班 " } })
+    .command.start_keyword, "开工 值班");
+  assert.equal(normalizeConfig({ command: { start_keyword: "a\u0000  b" } })
+    .command.start_keyword, "a b");
+  assert.equal(normalizeConfig({ command: { start_keyword: "   " } })
+    .command.start_keyword, "");
+  assert.equal(normalizeConfig({ command: { start_keyword: "一二三四五六七八九十一二三四五六七八九十多" } })
+    .command.start_keyword, "一二三四五六七八九十一二三四五六七八九十");
+});
+
+test("chat command records default safely and a restart clears a half-open start", () => {
+  const { dir, state } = tempState();
+  const chat = state.ensureChat("feishu", "oc_cmd_state", { kind: "p2p" });
+  assert.deepEqual(chat.command, { at: 0, keyword: "", msg_id: "", result: "", reason: "" });
+  chat.command = {
+    at: 123, keyword: "  启动 ", msg_id: "m1", result: "watched", reason: "x".repeat(200),
+  };
+  const normalized = state.normalizeChat(chat, "");
+  assert.equal(normalized.command.keyword, "启动");
+  assert.equal(normalized.command.result, "", "未知结果归一成空");
+  assert.equal(normalized.command.reason.length, 160);
+  state.save();
+
+  const raw = JSON.parse(fs.readFileSync(path.join(dir, "state.json"), "utf8"));
+  raw.chats["feishu:oc_cmd_state"].command = {
+    at: 456, keyword: "启动", msg_id: "m2", result: "starting", reason: "正在启动值班",
+  };
+  fs.writeFileSync(path.join(dir, "state.json"), JSON.stringify(raw, null, 2));
+  const reloaded = new State(dir);
+  reloaded.load();
+  const loaded = reloaded.getChat("feishu", "oc_cmd_state");
+  assert.equal(loaded.command.result, "");
+  assert.equal(loaded.command.msg_id, "");
+  assert.match(loaded.command.reason, /进程重启/);
+});
+
 test("dsh.full_access only accepts explicit true", () => {
   assert.equal(normalizeConfig({ dsh: { full_access: true } }).dsh.full_access, true);
   assert.equal(normalizeConfig({ dsh: { full_access: 1 } }).dsh.full_access, true);

@@ -87,6 +87,11 @@ poller 发现新群 / sweep 命中 @
 - `sweep` 每 `duty.sweep_min`（默认 10）跑：飞书一条 `--is-at-me` 搜索，钉钉逐新群回退，
   企微跳过；只处理基线之后、未值守的新群；`@all` 不算；`sweep_epoch` 去重。清查本身
   0 token，命中个人 @ 才起一次分诊。
+- `maybeCommandScan` 每 10 分钟、在 `maybeDuty` 之前跑：飞书一条
+  `+messages-search --sender <本人> --at-chatter-ids <本人>`，跨 p2p / group 找自 @
+  消息，关键词在本地复核（不依赖服务端分词）；命中后直接 `watch`，清掉排队中的分诊
+  事件；同一 chat 已被用户手动接管时 `finishTriage` 丢弃陈旧决策。企微 / 钉钉只在
+  已值守会话里即时识别。
 - 硬门：`trial_hours=0` 拒绝 trial；`max_group_members` 超过/未知拒绝 watch/trial；
   `all` 一律拒绝；平台判不了 @ 只能 ignore。**自动路径在起 desk turn 前就查人数**，
   超限/未知直接 ignore，不花 token；手动入口不受自动硬门限制。
@@ -101,6 +106,8 @@ poller 发现新群 / sweep 命中 @
 - `dsh.warm_min` 是会话寿命的唯一时钟（默认 55 分钟，0 = 关闭保温与自动换会话）：每段闲置先保温一次，第二个周期后下一条消息换会话；保温轮不推进闲置时钟。
 - `send_mode_default` 是新建值守的默认发送方式（`draft` 仓库默认 / `auto`），面板设置页写入；
   已有值班的 `chats[].send_mode` 单独存，改默认不覆盖。老 state 缺键回 `draft`。
+- `command.enabled` / `command.start_keyword` 控制「本人 @ 自己 + 关键词启动值班」；关键词
+  空 = 关闭，启用时设置接口拒绝空值。改词立即生效，存量消息不回溯。
 - 平台白名单只有 `feishu` / `wecom`；`platforms` 里其他值被忽略，存量钉钉会话保留不拉取。
 - 风险拦截在 skill 铁律里（钱、承诺、外部群由 agent 停下等本人）；插件只持久化用户选择的发送方式，不做正文级闸门，也不恢复起草/审批管道。
 

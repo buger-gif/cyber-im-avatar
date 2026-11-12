@@ -1277,6 +1277,28 @@ test("open prompt carries the recent context and the group mode rule", () => {
   assert.match(prompt, /非点名的群消息只看不回/);
 });
 
+test("open prompt marks an IM start command and never calls it a triage handoff", () => {
+  const rows = [
+    { msg_id: "o1", sender_id: "ou_x", sender_name: "客户", content: "这个谁看下",
+      ts: "t1", ts_epoch: 100, kind: "dm", state: "new" },
+    { msg_id: "s1", sender_id: "ou_me", sender_name: "我", content: "@我 启动值班",
+      ts: "t2", ts_epoch: 101, kind: "cmd", state: "new" },
+  ];
+  const prompt = buildOpenPrompt("feishu", "示例对象 A", "oc_cmd_open", rows, {
+    dutyContext: { command: { keyword: "启动", msg_id: "s1", source: "scan" } },
+  });
+  assert.match(prompt, /IM 指令启动（你在会话里 @ 自己，不是新消息唤醒）/);
+  assert.match(prompt, /启动指令：@ 自己 \+ 「启动」/);
+  assert.match(prompt, /其中「启动」那条只负责打开值守，不要回复它/);
+  assert.match(prompt, /不要为「启动」这条指令本身往会话里发消息/);
+  assert.doesNotMatch(prompt, /值守判断：|决定值守后的接手轮/);
+
+  const panel = buildOpenPrompt("feishu", "示例对象 A", "oc_panel_open", rows);
+  assert.match(panel, /会话开场（人工开启，不是新消息唤醒）/);
+  assert.doesNotMatch(panel, /IM 指令启动/);
+  assert.doesNotMatch(panel, /不要为「启动」这条指令本身/);
+});
+
 test("warm prompt says it is a heartbeat and only tidies the listed files", () => {
   const p = buildWarmPrompt("feishu", "示例对象 A", "oc_abc", {
     bookPath: "/tmp/book.md",

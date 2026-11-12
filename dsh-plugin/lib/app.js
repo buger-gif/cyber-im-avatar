@@ -6,6 +6,7 @@
  */
 import { publicConfig, normalizeConfig, SUPPORTED_PLATFORMS, SEND_MODES } from "./state.js";
 import { isMention } from "./im.js";
+import { keywordTooLong } from "./command.js";
 import * as workspaces from "./workspaces.js";
 import * as sessions from "./sessions.js";
 import { chatPersonId, excerpt } from "./profiles.js";
@@ -692,7 +693,7 @@ export class App {
 
   async setConfig(q, body) {
     const merged = { ...this.state.data.config, ...(body || {}) };
-    for (const k of ["poll", "dsh", "duty"]) {
+    for (const k of ["poll", "dsh", "duty", "command"]) {
       if (body?.[k] && typeof body[k] === "object") {
         merged[k] = { ...(this.state.data.config[k] || {}), ...body[k] };
       }
@@ -711,7 +712,16 @@ export class App {
     const ignored = Array.isArray(body?.platforms)
       ? body.platforms.filter((p) => !SUPPORTED_PLATFORMS.includes(String(p)))
       : [];
-    this.state.data.config = normalizeConfig(merged);
+    // 启动指令：超长不静默截断；启用状态下关键词不能为空（否则就是一个永远不触发的开关）。
+    if (body?.command && Object.prototype.hasOwnProperty.call(body.command, "start_keyword") &&
+        keywordTooLong(body.command.start_keyword)) {
+      return { ok: false, reason: "启动关键词最多 20 个字符" };
+    }
+    const next = normalizeConfig(merged);
+    if (next.command.enabled && !next.command.start_keyword) {
+      return { ok: false, reason: "启用启动指令时关键词不能为空" };
+    }
+    this.state.data.config = next;
     this.state.save();
     this.poller.reload();
     const out = publicConfig(this.state.data.config, this.hostReady());

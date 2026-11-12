@@ -88,6 +88,11 @@
   它确实返回跨群的 @我 消息，结果含 `chat_id` / `chat_name` / `sender` / `content` /
   `mentions` / `create_time`。注意：它**也会返回 @all / @everyone**（例如告警卡片），
   引擎必须再用 `isMention()` 过滤，不能把 @all 当个人 @。适配器已接 `cmd_at_me` / `searchAtMe`；`--start/--end` 必须带本地时区偏移。
+- 找「本人 @ 自己」的启动指令：同一个 `+messages-search` 加 `--sender <本人 open_id>
+  --at-chatter-ids <本人 open_id>`，不传 `--chat-type` 可同时覆盖 p2p 与 group。**已实测
+  2026-11-12**：p2p 结果也带 `chat_type` / `mentions` / `content`；p2p 的 `chat_name` 为空，
+  只有 `chat_partner.open_id`，不能用显示名兜底。搜索服务端收窄后引擎仍需本地复核
+  `isMention()` 与关键词；`--at-chatter-ids` 也会命中 @all，不能省过滤。
 - 系统消息没有 `sender.id`，不给人物档案路径；私聊里要留就写进这个私聊的人物档案，
   群资料写群工作本，不要按显示名猜人。
 

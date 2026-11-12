@@ -343,14 +343,23 @@ export function buildOpenPrompt(platform, chatName, chatId, messages, {
 } = {}) {
   const label = PLAT_LABEL[platform] || platform;
   const safeName = sanitizeUntrusted(chatName || chatId);
+  const commandCtx = dutyContext && dutyContext.command ? dutyContext.command : null;
+  const viaCommand = !!commandCtx;
+  const commandKeyword = commandCtx ? sanitizeUntrusted(commandCtx.keyword || "") : "";
   const dupNames = duplicateSenderNames(messages);
   const lines = messages
     .slice()
     .sort((a, b) => (a.ts_epoch - b.ts_epoch))
     .map((m) => formatMsgLine(m, null, platform, dupNames));
   const parts = ["/cyber-im-avatar"];
-  parts.push(`值守已开启 · ${label} · ${safeName} · 会话开场（人工开启，不是新消息唤醒）`);
+  parts.push(viaCommand
+    ? `值守已开启 · ${label} · ${safeName} · IM 指令启动（你在会话里 @ 自己，不是新消息唤醒）`
+    : `值守已开启 · ${label} · ${safeName} · 会话开场（人工开启，不是新消息唤醒）`);
   parts.push(`chat_id：${chatId}`);
+  if (viaCommand) {
+    parts.push(`启动指令：@ 自己 + 「${commandKeyword || "启动"}」；它只是打开值守的开关，` +
+      "不是客户来信，也不是让你在会话里回一句话。");
+  }
   parts.push("运行形态：DSH 插件壳；监听、水位、唤醒由插件负责，不要挂监听，不要运行 listen_cli/bootstrap.py。");
   if (resetMin > 0) {
     parts.push(`会话：上一段会话闲置约 ${resetMin} 分钟（期间只保温一次），已自动重开；` +
@@ -368,8 +377,11 @@ export function buildOpenPrompt(platform, chatName, chatId, messages, {
       : `最近上下文（最近 30 分钟，共 ${lines.length} 条）：`);
     parts.push(...lines);
     if (messages.some((m) => m.kind === "cmd")) {
-      parts.push("（带「本人（@自己）」的行是本人对替身说的话，不是客户消息；按它执行即可，" +
-        "回复里不要 @ 本人自己。）");
+      parts.push(viaCommand
+        ? "（带「本人（@自己）」的行是本人说的话；其中「启动」那条只负责打开值守，不要回复它；" +
+          "其它指令照常执行。你的回复里不要 @ 本人自己。）"
+        : "（带「本人（@自己）」的行是本人对替身说的话，不是客户消息；按它执行即可，" +
+          "回复里不要 @ 本人自己。）");
     }
   } else {
     parts.push("最近 30 分钟没有新消息。");
@@ -379,6 +391,9 @@ export function buildOpenPrompt(platform, chatName, chatId, messages, {
     if (dutyContext.reason) parts.push("判断理由：" + sanitizeUntrusted(dutyContext.reason));
     parts.push("这是决定值守后的接手轮；下面是分诊时看到的最近消息。");
     parts.push("有该回的就按 skill 回，没有需要回的就不要往群里发消息。");
+  } else if (viaCommand) {
+    parts.push("这是启动指令触发的开场轮：先把上下文和记忆读进来；" +
+      "需要回的客户消息按 skill 处理，不需要回的不要为了确认启动往会话里发言。");
   }
   parts.push(kind === "group"
     ? (wakeMode === "all"
@@ -387,11 +402,19 @@ export function buildOpenPrompt(platform, chatName, chatId, messages, {
     : (wakeMode === "all"
         ? "关注程度：全部消息（每条新消息都会唤醒）。"
         : "关注程度：只认 @（对方 @ 你（或正文写 @你的名字）才唤醒；其它消息不会转给你）。"));
-  parts.push(single
-    ? "这一轮是用户点「加入值守」触发的：先把上下文和这份人物档案读进来；" +
-      "有该回的就按 skill 处理，**没有需要回的就不要往会话里发任何消息**。"
-    : "这一轮是用户点「加入值守」触发的：先把上下文和两层文件读进来；" +
-      "有该回的就按 skill 处理，**没有需要回的就不要往会话里发任何消息**。");
+  if (viaCommand) {
+    parts.push(single
+      ? "这一轮是你在 IM 里 @ 自己用启动关键词开启的值班：先把上下文和这份人物档案读进来；" +
+        "有该回的就按 skill 处理，**不要为「启动」这条指令本身往会话里发消息**。"
+      : "这一轮是你在 IM 里 @ 自己用启动关键词开启的值班：先把上下文和两层文件读进来；" +
+        "有该回的就按 skill 处理，**不要为「启动」这条指令本身往会话里发消息**。");
+  } else {
+    parts.push(single
+      ? "这一轮是用户点「加入值守」触发的：先把上下文和这份人物档案读进来；" +
+        "有该回的就按 skill 处理，**没有需要回的就不要往会话里发任何消息**。"
+      : "这一轮是用户点「加入值守」触发的：先把上下文和两层文件读进来；" +
+        "有该回的就按 skill 处理，**没有需要回的就不要往会话里发任何消息**。");
+  }
   if (lines.length) parts.push("上下文来自本地最近消息；更早的按 skill 在线拉，不要重发已经处理过的。");
   parts.push(sendModeNote(sendMode));
   return parts.join("\n");

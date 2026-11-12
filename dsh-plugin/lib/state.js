@@ -13,6 +13,8 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
+import { COMMAND_RESULTS, normalizeKeyword } from "./command.js";
+
 export const MIN_INTERVAL_MIN = 10;
 export const MAX_INTERVAL_MIN = 240;
 export const RECENT_LIMIT = 10;
@@ -45,6 +47,8 @@ export const DEFAULT_CONFIG = {
   send_mode_default: "draft",
   // 面板「加入值守时绑定工作区」的持久化选择；空 = 未显式选择，分诊按最近在用→DSH 默认推断。
   join_workspace: "",
+  // 本人 @ 自己 + 关键词 = 在当前会话启动值班（spec 0046）。
+  command: { enabled: true, start_keyword: "启动" },
   dsh: { timeout: 600, turn_cap_sec: 3600, full_access: false, warm_min: 55, ack_reaction: true },
   duty: {
     enabled: true,
@@ -162,6 +166,13 @@ export function normalizeConfig(input) {
     ? cfg.send_mode_default : "draft";
   // 加入值守默认工作区只做类型归一；路径是否真实存在由 setConfig / 分诊使用时校验。
   cfg.join_workspace = typeof cfg.join_workspace === "string" ? cfg.join_workspace.trim() : "";
+  // 启动指令：关键词空 = 关闭；开关只认真实 false/0/"false" 一类显式关闭值。
+  const rawCmd = cfg.command || {};
+  const cmd = { enabled: rawCmd.enabled, start_keyword: rawCmd.start_keyword };
+  cmd.enabled = !(cmd.enabled === false || cmd.enabled === 0 ||
+    ["false", "no", "off", "0", ""].includes(String(cmd.enabled).trim().toLowerCase()));
+  cmd.start_keyword = normalizeKeyword(cmd.start_keyword);
+  cfg.command = cmd;
   // 退役键：不让它们从旧 panel.json 混进运行配置。
   for (const k of RETIRED_KEYS) delete cfg[k];
   if (cfg.dsh) {
@@ -282,6 +293,12 @@ export class State {
         chat.last_turn = { ok: false, reason: "restarted", at: Date.now() / 1000 };
         chat.last_error = "进程重启：上一轮 turn 未完成";
       }
+      // 启动指令在打开会话途中进程退出：清掉这次尝试，下一轮扫描 / 新指令可重试。
+      if (chat.command?.result === "starting") {
+        chat.command.result = "";
+        chat.command.msg_id = "";
+        chat.command.reason = "进程重启：上次启动未完成";
+      }
     }
     this.loaded = true;
     return this.data;
@@ -372,6 +389,16 @@ export class State {
       last_reset: input.last_reset && typeof input.last_reset === "object"
         ? { at: Number(input.last_reset.at) || 0, reason: String(input.last_reset.reason || "") }
         : { at: 0, reason: "" },
+      // 最近一次「本人 @ 自己 + 启动关键词」的处理结果（spec 0046）；空 = 没触发过。
+      command: input.command && typeof input.command === "object"
+        ? {
+            at: Number(input.command.at) || 0,
+            keyword: normalizeKeyword(input.command.keyword),
+            msg_id: String(input.command.msg_id || ""),
+            result: COMMAND_RESULTS.includes(input.command.result) ? input.command.result : "",
+            reason: String(input.command.reason || "").slice(0, 160),
+          }
+        : { at: 0, keyword: "", msg_id: "", result: "", reason: "" },
     };
     const seen = new Set();
     for (const m of (Array.isArray(input.recent) ? input.recent : [])) {
