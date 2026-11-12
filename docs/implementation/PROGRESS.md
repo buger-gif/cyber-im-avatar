@@ -5,12 +5,13 @@
 
 ## 更新时间
 
-2026-11-12（0045 载荷只声明变化已验收归档，随 0.19.0 发版；0044 分诊值班跟随加入工作区已实施，待真机；0043 待真机刷新面板验收；0042 / 0040 / 0039 / 0038 待真机）
+2026-11-12（0.19.0 已发布：0045 载荷只声明变化已验收归档；0044 分诊值班跟随加入工作区待真机；0043 待真机刷新面板验收；0042 / 0040 / 0039 / 0038 待真机）
 
 ## 最近批次
 
 | 日期 | 主题 | 证据 |
 | --- | --- | --- |
+| 2026-11-12 | 0.19.0 发布（0043 / 0044 / 0045）：三条未发布特性进版；npm 包描述与市场索引描述同步当前形态（值守私聊 / 群聊、@ 或新消息唤醒、关注程度三态、新群自动分诊、值班单点草稿 / 全自动、消息只留本机）；CI Trusted Publishing 成功，`v0.19.0` tag；npm latest 与市场索引指向 0.19.0 | `CHANGELOG.md`、`dsh-plugin/package.json`、`dsh-plugin/market/index.json`、[run 43186222163](https://github.com/buger-gif/cyber-im-avatar/actions/runs/43186222163) |
 | 2026-11-12 | 载荷只声明变化（0045）：发送方式 / 关注程度 / 本人指令规则只在首轮与切档 / 压缩后的第一轮声明；`Turns` 按 DSH 会话内存记账（followup 成功才记、`compaction/*` 后清空口径与人物档案指针），skill 补常驻口径；ADR 0014；用户真机确认，Node 265 绿、gate quick 绿；已验收归档 | `dsh-plugin/lib/turns.js`、`dsh-plugin/tests/turns.test.mjs`、`SKILL.md`、`docs/architecture/03-runtime.md`、`docs/specs/archive/0045-载荷只声明变化.md` |
 | 2026-11-12 | 分诊值班跟随加入工作区（0044）：新增 `config.join_workspace` 持久化面板「加入值守时绑定工作区」；自动分诊判定 watch / trial 后首个值班会话按「配置 → 最近在用 → DSH 默认」落 `chats[].workspace`（已有绑定不覆盖）；面板同序并同步配置；契约 03、README、CHANGELOG、测试同步；Node 全绿、文档对账、gate quick 全绿 | `dsh-plugin/lib/{state,workspaces,duty,app}.js`、`dsh-plugin/web/panel.js`、`dsh-plugin/lib/client.js`、`dsh-plugin/tests/`、`docs/specs/active/0044-分诊值班跟随加入工作区.md` |
 | 2026-11-10 | 启动竞态止损（0042）并发布 0.18.3：`dsh.client.immediately` + 宿主入口只静态依赖 Node 内置（导入 ~12ms→~4ms）；npm latest 与市场索引指向 0.18.3；诊断与 DSH 上游补丁草稿见 `docs/audits/2026-11-10-web-boot-audit-race.md` | `dsh-plugin/package.json`、`dsh-plugin/lib/index.js`、`dsh-plugin/market/index.json`、[run 42794468238](https://github.com/buger-gif/cyber-im-avatar/actions/runs/42794468238) |
