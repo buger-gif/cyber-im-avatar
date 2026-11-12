@@ -5,8 +5,8 @@
     "zh-cn": "赛博办公 IM 分身"
   },
   "description": {
-    "en": "Plugins from the cyber-im-avatar project: keep an IM stand-in seat inside DSH.",
-    "zh-cn": "cyber-im-avatar 的插件：在 DSH 里挂一个替你值守 IM 的常驻席位。"
+    "en": "Open-source cyber office IM stand-in for DSH: watch Feishu / WeCom / DingTalk, wake the agent only when needed, and handle chats as you. Message bodies stay local.",
+    "zh-cn": "开源赛博办公 IM 分身：在 DSH 里替你值守飞书 / 企业微信 / 钉钉，需要你时才唤醒 agent 并以本人身份处理；消息正文只留本机。"
   },
   "metadata": {
     "categories": {
@@ -41,8 +41,8 @@
         "zh-cn": "IM 值守"
       },
       "description": {
-        "en": "Sidebar seat in DSH that watches Feishu / WeCom / DingTalk chats, wakes the agent only on new messages, and lets it draft, research, and reply in your voice.",
-        "zh-cn": "在 DSH 侧边栏常驻的 IM 值守席位：命中 @我 或私聊新消息才唤醒 agent，由它按你的语气起草、调研并回复；面板展示值守实例、消息与手动发送。"
+        "en": "Sidebar stand-in for Feishu / WeCom / DingTalk: wakes the agent only when a chat needs attention, then lets it research and reply in your voice. Watch-level control, automatic triage for new groups, per-seat draft/auto send mode, and local-first message bodies.",
+        "zh-cn": "在 DSH 侧边栏常驻的赛博办公 IM 分身：盯飞书 / 企业微信 / 钉钉的私聊与群聊，命中 @我 或新消息才唤醒 agent，由它按你的语气起草、调研并回复；支持关注程度三态、新群自动分诊、按值班单点切换草稿审批 / 全自动发送。消息正文只在本机，复用本机 IM CLI 登录态。"
       },
       "icon": "data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCA2NCA2NCIgd2lkdGg9IjY0IiBoZWlnaHQ9IjY0Ij4KPHJlY3Qgd2lkdGg9IjY0IiBoZWlnaHQ9IjY0IiByeD0iMTQiIGZpbGw9IiMxZjZmNWMiLz4KPHBhdGggZD0iTTE0IDMyaDEwbDQgN2g4bDQtN2gxMCIgZmlsbD0ibm9uZSIgc3Ryb2tlPSIjZjZmM2VjIiBzdHJva2Utd2lkdGg9IjQiCiAgc3Ryb2tlLWxpbmVjYXA9InJvdW5kIiBzdHJva2UtbGluZWpvaW49InJvdW5kIi8+CjxwYXRoIGQ9Ik0xNCAzNFYyMGE0IDQgMCAwIDEgNC00aDI4YTQgNCAwIDAgMSA0IDR2MTQiIGZpbGw9Im5vbmUiIHN0cm9rZT0iI2Y2ZjNlYyIKICBzdHJva2Utd2lkdGg9IjQiIHN0cm9rZS1saW5lY2FwPSJyb3VuZCIvPgo8cGF0aCBkPSJNMTQgMzR2MTBhNCA0IDAgMCAwIDQgNGgyOGE0IDQgMCAwIDAgNC00VjM0IiBmaWxsPSJub25lIiBzdHJva2U9IiNmNmYzZWMiCiAgc3Ryb2tlLXdpZHRoPSI0IiBzdHJva2UtbGluZWNhcD0icm91bmQiLz4KPC9zdmc+",
       "author": "buger-gif",
@@ -62,6 +62,8 @@
           "lark",
           "wecom",
           "dingtalk",
+          "stand-in",
+          "triage",
           "customer-service",
           "inbox"
         ],
@@ -73,8 +75,8 @@
       },
       "versions": [
         {
-          "version": "0.18.3",
-          "publishTimestamp": 1794304780,
+          "version": "0.19.0",
+          "publishTimestamp": 1794473661,
           "source": {
             "type": "npm"
           },
