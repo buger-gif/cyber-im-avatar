@@ -21,9 +21,12 @@ import {
   commandEnabled, commandRow, isStartCommand, normalizeKeyword,
 } from "./command.js";
 
-/** 跨会话找启动指令的间隔与回看窗口：与慢车道下限一致，一次搜索代替逐会话轮询。 */
-const COMMAND_SCAN_SEC = 600;
-const COMMAND_SCAN_LOOKBACK_SEC = 1200;
+/**
+ * 跨会话找启动指令的间隔与回看窗口：一次 CLI 搜索代替逐会话轮询。
+ * 1 分钟一跳（与快车道同频），回看 3 分钟覆盖一次 tick 的抖动与重叠；消息按 msg_id 幂等。
+ */
+const COMMAND_SCAN_SEC = 60;
+const COMMAND_SCAN_LOOKBACK_SEC = 180;
 
 
 function nowSec() {
@@ -939,7 +942,7 @@ export class Poller {
   }
 
   /**
-   * 飞书跨会话找启动指令：每 10 分钟一条搜索，覆盖未值守私聊 / 群 / 存量会话。
+   * 飞书跨会话找启动指令：每分钟一条搜索，覆盖未值守私聊 / 群 / 存量会话。
    * 只消费本地复核通过的「本人 + @本人 + 关键词」；搜索失败不影响轮询。
    */
   async maybeCommandScan({ force = false } = {}) {

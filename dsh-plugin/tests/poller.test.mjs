@@ -982,6 +982,20 @@ test("the command scan discovers self-@ start commands in unwatched p2p and grou
   assert.equal(dm.command.msg_id, "s1");
 });
 
+test("the command scan runs at most once a minute unless forced", async () => {
+  const { poller, adapter } = setup();
+  adapter.selfMentions = [];
+  poller.commandScanAt = Date.now() / 1000 - 30;
+  assert.equal(await poller.maybeCommandScan(), false);
+  assert.equal(adapter.selfMentionCalls, 0, "30 秒内不重复打搜索接口");
+
+  poller.commandScanAt = Date.now() / 1000 - 61;
+  assert.equal(await poller.maybeCommandScan(), true);
+  assert.equal(adapter.selfMentionCalls, 1);
+  assert.equal(await poller.maybeCommandScan(), false, "刚扫过，下一分钟前不再扫");
+  assert.equal(adapter.selfMentionCalls, 1);
+});
+
 test("a failed command scan only records the error and leaves polling alone", async () => {
   const { state, poller, adapter } = setup();
   adapter.searchSelfMentions = async () => ({

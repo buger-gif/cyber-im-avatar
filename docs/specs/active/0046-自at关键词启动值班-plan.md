@@ -33,10 +33,10 @@
 - 验证：`node --test tests/poller.test.mjs`（已值守冲突、未值守启动、群默认、关键词开关、
   重复消息幂等）。
 
-## 4. Poller：10 分钟搜索扫描
+## 4. Poller：1 分钟搜索扫描
 
-- [x] `maybeCommandScan()` 每 600 秒一次，仅飞书，启用且关键词非空；最近 20 分钟、
-      最多 5 页；结果逐条本地过滤。
+- [x] `maybeCommandScan()` 每 60 秒一次，仅飞书，启用且关键词非空；最近 3 分钟、
+      只取一页；结果逐条本地过滤。
 - [x] 新命中的会话 `ensureChat` 后先 `pollChat({ wake:false, handleCommands:false })`
       补上下文，再走同一个启动函数；同一 `msg_id` 不重复处理。
 - [x] 失败只写 `lastCommandScan` / `logger.warn`，不进错误列表刷屏。
@@ -69,5 +69,5 @@
 - [x] `cd dsh-plugin && node --test` 全绿。
 - [x] `python3 tests/run_tests.py` 全绿。
 - [x] `bash scripts/gate.sh --quick` 全绿。
-- [ ] 真机（用户）：未值守飞书私聊 / 群 @ 自己 + 「启动」→ 10 分钟内面板出现值班；
+- [ ] 真机（用户）：未值守飞书私聊 / 群 @ 自己 + 「启动」→ 约 1 分钟内面板出现值班；
       重复发只显示冲突，不出现第二个会话。

@@ -80,8 +80,8 @@ export const ADAPTERS = {
     // 本人 @ 自己的启动指令：跨群 / 私聊搜，只查本人发送且 @ 本人的消息。
     cmd_self_mentions: ["im", "+messages-search", "--as", "user",
       "--sender", "{sender}", "--at-chatter-ids", "{sender}",
-      "--start", "{start}", "--end", "{end}", "--page-all", "--page-limit", "5",
-      "--page-size", "50", "--no-reactions", "--format", "json"],
+      "--start", "{start}", "--end", "{end}", "--page-size", "50",
+      "--no-reactions", "--format", "json"],
     cmd_chat_members: ["im", "+chat-members-list", "--chat-id", "{chat_id}",
       "--member-types", "user", "--page-all", "--format", "json"],
     f_at_messages: [["data", "messages"]],

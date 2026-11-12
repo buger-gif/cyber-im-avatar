@@ -280,6 +280,9 @@ test("feishu self-mention search filters sender and at-chatter-ids and keeps cha
   assert.ok(seen.includes("--at-chatter-ids"));
   assert.equal(seen.includes("--query"), false, "不把关键词交给服务端分词，本地过滤更稳");
   assert.equal(seen.includes("--chat-type"), false, "搜索要同时覆盖 p2p 与 group");
+  assert.equal(seen.includes("--page-all"), false, "每分钟一跳只取一页，不翻页");
+  assert.ok(seen.includes("--page-size"));
+  assert.ok(seen.includes("50"));
   assert.ok(r.items[0].ts_epoch > 0);
 
   const ding = new Adapter("dingtalk", { dir: "/nonexistent-im-test" });

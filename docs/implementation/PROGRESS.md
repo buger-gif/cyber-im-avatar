@@ -11,7 +11,7 @@
 
 | 日期 | 主题 | 证据 |
 | --- | --- | --- |
-| 2026-11-12 | 自 @ 关键词启动值班（0046）：`config.command.enabled/start_keyword`；已值守会话快车道即时识别，未值守飞书会话每 10 分钟一条 `+messages-search`（本人发送 + @本人）发现；同一 `platform:chat_id` 只允许一个值班（已有会话 / 正在启动 → `already`）；命中关键词的 `cmd` 被开关消费，开场载荷说明不要回复；面板设置卡 + 会话详情结果；ADR 0015；契约 01/02/03、架构 02/03、README、SKILL、references 同步；Node 全绿、gate quick 绿；待真机 | `dsh-plugin/lib/{command,im,poller,turns,state,app}.js`、`dsh-plugin/web/panel.js`、`dsh-plugin/lib/client.js`、`dsh-plugin/tests/`、`docs/specs/active/0046-自at关键词启动值班.md` |
+| 2026-11-12 | 自 @ 关键词启动值班（0046）：`config.command.enabled/start_keyword`；已值守会话快车道即时识别，未值守飞书会话每分钟一条 `+messages-search`（本人发送 + @本人，只取一页）发现；同一 `platform:chat_id` 只允许一个值班（已有会话 / 正在启动 → `already`）；命中关键词的 `cmd` 被开关消费，开场载荷说明不要回复；面板设置卡 + 会话详情结果；ADR 0015；契约 01/02/03、架构 02/03、README、SKILL、references 同步；Node 全绿、gate 全量绿；待真机 | `dsh-plugin/lib/{command,im,poller,turns,state,app}.js`、`dsh-plugin/web/panel.js`、`dsh-plugin/lib/client.js`、`dsh-plugin/tests/`、`docs/specs/active/0046-自at关键词启动值班.md` |
 | 2026-11-12 | 0.19.0 发布（0043 / 0044 / 0045）：三条未发布特性进版；npm 包描述与市场索引描述同步当前形态（值守私聊 / 群聊、@ 或新消息唤醒、关注程度三态、新群自动分诊、值班单点草稿 / 全自动、消息只留本机）；CI Trusted Publishing 成功，`v0.19.0` tag；npm latest 与市场索引指向 0.19.0 | `CHANGELOG.md`、`dsh-plugin/package.json`、`dsh-plugin/market/index.json`、[run 43186222163](https://github.com/buger-gif/cyber-im-avatar/actions/runs/43186222163) |
 | 2026-11-12 | 载荷只声明变化（0045）：发送方式 / 关注程度 / 本人指令规则只在首轮与切档 / 压缩后的第一轮声明；`Turns` 按 DSH 会话内存记账（followup 成功才记、`compaction/*` 后清空口径与人物档案指针），skill 补常驻口径；ADR 0014；用户真机确认，Node 265 绿、gate quick 绿；已验收归档 | `dsh-plugin/lib/turns.js`、`dsh-plugin/tests/turns.test.mjs`、`SKILL.md`、`docs/architecture/03-runtime.md`、`docs/specs/archive/0045-载荷只声明变化.md` |
 | 2026-11-12 | 分诊值班跟随加入工作区（0044）：新增 `config.join_workspace` 持久化面板「加入值守时绑定工作区」；自动分诊判定 watch / trial 后首个值班会话按「配置 → 最近在用 → DSH 默认」落 `chats[].workspace`（已有绑定不覆盖）；面板同序并同步配置；契约 03、README、CHANGELOG、测试同步；Node 全绿、文档对账、gate quick 全绿 | `dsh-plugin/lib/{state,workspaces,duty,app}.js`、`dsh-plugin/web/panel.js`、`dsh-plugin/lib/client.js`、`dsh-plugin/tests/`、`docs/specs/active/0044-分诊值班跟随加入工作区.md` |
@@ -61,9 +61,9 @@
 ## 当前断点
 
 - **0046 自 @ 关键词启动值班已实施，待真机验收**：设置页「IM 启动指令」可改关键词 / 关闭；
-  已值守会话即时识别，未值守飞书会话每 10 分钟搜索；同一会话已有值班只记 `already`，
-  不新建。`node --test` 284 绿、`gate` 全量绿。**剩余用户自验**：在未值守的飞书私聊 /
-  群里 @ 自己 + 「启动」，10 分钟内面板出现值班；重复发只显示冲突；关掉指令后自 @ 回到
+  已值守会话即时识别，未值守飞书会话每分钟搜索；同一会话已有值班只记 `already`，
+  不新建。`node --test` 285 绿、`gate` 全量绿。**剩余用户自验**：在未值守的飞书私聊 /
+  群里 @ 自己 + 「启动」，约 1 分钟内面板出现值班；重复发只显示冲突；关掉指令后自 @ 回到
   普通唤醒。真机通过后归档 0046。
 - **0044 分诊值班跟随加入工作区已实施，待真机验收**：新增 `config.join_workspace`；
   自动分诊判定 watch / trial 后，首个值班会话按「配置 → 最近在用 → DSH 默认」落
@@ -107,7 +107,7 @@
 
 ## 下一步
 
-1. 真机验 0046（未值守飞书私聊 / 群 @ 自己 + 「启动」→ 10 分钟内有值班；重复发只冲突；
+1. 真机验 0046（未值守飞书私聊 / 群 @ 自己 + 「启动」→ 约 1 分钟内有值班；重复发只冲突；
    关指令后回到普通 cmd），通过后归档。
 2. 真机验 0044（改加入默认 → 刷新仍显示；自动分诊拉起的新值班落在该工作区），通过后归档。
 3. 真机验 0043（单点开关 + 新建默认 + 自动模式载荷），通过后归档。

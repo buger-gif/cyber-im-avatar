@@ -87,7 +87,7 @@ poller 发现新群 / sweep 命中 @
 - `sweep` 每 `duty.sweep_min`（默认 10）跑：飞书一条 `--is-at-me` 搜索，钉钉逐新群回退，
   企微跳过；只处理基线之后、未值守的新群；`@all` 不算；`sweep_epoch` 去重。清查本身
   0 token，命中个人 @ 才起一次分诊。
-- `maybeCommandScan` 每 10 分钟、在 `maybeDuty` 之前跑：飞书一条
+- `maybeCommandScan` 每分钟、在 `maybeDuty` 之前跑：飞书一条
   `+messages-search --sender <本人> --at-chatter-ids <本人>`，跨 p2p / group 找自 @
   消息，关键词在本地复核（不依赖服务端分词）；命中后直接 `watch`，清掉排队中的分诊
   事件；同一 chat 已被用户手动接管时 `finishTriage` 丢弃陈旧决策。企微 / 钉钉只在
