@@ -2,6 +2,20 @@
 
 ## 未发布
 
+### 未发布：分诊创建的值班跟随加入值守工作区（spec 0044）
+
+- **配置**：新增 `config.join_workspace`（默认 `""`），保存面板「加入值守时绑定工作区」的
+  选择；非空必须是真实存在的绝对路径，`POST /api/config` 校验通过才落库。
+- **分诊**：自动判定 `watch` / `trial` 后，首个值班会话按「`join_workspace` → 最近在用 →
+  DSH 默认」落 `chats[].workspace` 再开会话；已有显式绑定的群不覆盖，之后轮换 / 重开沿用。
+- **面板**：「加入值守时绑定工作区」默认改为「面板记忆 → `join_workspace` → 最近在用 →
+  DSH 默认」；选择 / 加入成功 / 切换工作区时把值同步到配置，刷新后仍显示同一个默认。
+- **兼容**：老 `state.json` 无该键补空，不升 `STATE_VERSION`；无显式配置时行为变为优先跟随
+  最近在用的工作区（即本次需求）。
+- **接线**：`DEFAULT_CONFIG` / `normalizeConfig` / `publicConfig`、
+  `workspaces.resolveJoinDefault()`、`duty.applyDecision()`、面板与构建产物、契约 03、
+  README、测试同步。
+
 ### 未发布：发送方式：值班单点 + 新建默认（spec 0043）
 
 - **每个值班单独设**：「分身」页每张值守卡片与会话详情各有一个「草稿审批 / 全自动」开关，

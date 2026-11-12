@@ -170,3 +170,49 @@ test("ensureDutyDir seeds a non-empty initial policy and only fills missing/empt
   assert.match(fs.readFileSync(policy, "utf8"), /# 值守方针/);
   assert.ok(fs.statSync(path.join(dir, "duty", "decisions")).isDirectory());
 });
+
+test("auto watch binds the configured join workspace", async () => {
+  const { dir, state, chat, turns, profiles, im, opened } = setup();
+  const ws = fs.realpathSync(dir);
+  state.data.config.join_workspace = ws;
+  const r = await duty.applyDecision({ state, chat, decision: { action: "watch", reason: "项目群" },
+    turns, profiles, im });
+  assert.equal(r.ok, true);
+  assert.equal(chat.workspace, ws);
+  assert.equal(opened[0].c.workspace, ws, "首个值班会话用同一工作区创建");
+});
+
+test("auto watch falls back to the most recently used workspace", async () => {
+  const { dir, state, chat, turns, profiles, im } = setup();
+  const ws = fs.realpathSync(dir);
+  const other = state.ensureChat("feishu", "oc_bound", { name: "已绑群", kind: "group" });
+  other.workspace = ws;
+  other.session_bound_at = 100;
+  state.data.config.join_workspace = "";
+  const r = await duty.applyDecision({ state, chat, decision: { action: "watch", reason: "项目群" },
+    turns, profiles, im });
+  assert.equal(r.ok, true);
+  assert.equal(chat.workspace, ws);
+});
+
+test("auto watch leaves workspace unbound when there is no join default", async () => {
+  const { state, chat, turns, profiles, im, opened } = setup();
+  state.data.config.join_workspace = "";
+  const r = await duty.applyDecision({ state, chat, decision: { action: "watch", reason: "项目群" },
+    turns, profiles, im });
+  assert.equal(r.ok, true);
+  assert.equal(chat.workspace, "");
+  assert.equal(opened[0].c.workspace, "");
+});
+
+test("auto watch does not overwrite an existing workspace binding", async () => {
+  const { dir, state, chat, turns, profiles, im } = setup();
+  const bound = fs.realpathSync(dir);
+  const otherDir = fs.mkdtempSync(path.join(os.tmpdir(), "im-join-ws-"));
+  chat.workspace = bound;
+  state.data.config.join_workspace = fs.realpathSync(otherDir);
+  const r = await duty.applyDecision({ state, chat, decision: { action: "watch", reason: "项目群" },
+    turns, profiles, im });
+  assert.equal(r.ok, true);
+  assert.equal(chat.workspace, bound);
+});

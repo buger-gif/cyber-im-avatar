@@ -947,3 +947,21 @@ test("GET /api/duty exposes candidates and POST /api/duty/triage queues manually
   r = await app.handle("/api/duty", "GET");
   assert.equal(r.body.items.some((x) => x.chat_id === "oc_duty"), true);
 });
+
+test("join_workspace is exposed and validated through POST /api/config", async () => {
+  const { app, state, dir } = makeApp();
+  const ws = fs.realpathSync(dir);
+
+  let out = await app.handle("/api/config", "POST", null, { join_workspace: ws });
+  assert.equal(out.status, 200);
+  assert.equal(out.body.join_workspace, ws);
+  assert.equal(state.data.config.join_workspace, ws);
+
+  out = await app.handle("/api/config", "POST", null, { join_workspace: "/不存在/的/目录" });
+  assert.equal(out.body.ok, false);
+  assert.equal(state.data.config.join_workspace, ws, "非法路径不落库，整次保存拒绝");
+
+  out = await app.handle("/api/config", "POST", null, { join_workspace: "" });
+  assert.equal(out.body.join_workspace, "");
+  assert.equal(state.data.config.join_workspace, "");
+});

@@ -172,7 +172,9 @@ agent 在这一轮里自己用 `lark-cli` 拉上下文、去绑定工作区核�
 写入初始 `policy.md`（缺/空才补，已有内容不覆盖）。每次判断**新建会话、无历史**，agent 只写
 `decisions/<event_id>.json`，插件校验后执行。`trial_hours=0` 默认关（严格两段式）；
 `session_max_turns` 保留为兼容键但不再生效；`max_group_members=10`（0=不限）只数人；自动路径在起分诊会话前先查人数，超过/未知
-直接 ignore，不花 token；手动可强制。
+直接 ignore，不花 token；手动可强制。判定为 watch / trial 后，首个值班会话沿用
+「加入值守时绑定工作区」的默认（`config.join_workspace` → 最近在用 → DSH 默认），
+与手动加入一致，之后轮换 / 重开沿用该绑定。
 `GET /api/duty` 看候选，`POST /api/duty/triage` 手动重判。详细契约见
 `docs/specs/contracts/01-api.md`、`02-storage.md`、`03-config.md`。
 
@@ -313,6 +315,10 @@ agent 在这一轮里自己用 `lark-cli` 拉上下文、去绑定工作区核�
 
 所有「加入值守」入口都会带工作区，默认取「上次在面板里选过的」→「现有会话最近在用的」
 → DSH 默认，不用每次重选：
+
+- **自动分诊同样跟随**：分诊判定 `watch` / `trial` 后，插件按同一默认（`config.join_workspace`
+  → 最近在用 → DSH 默认）给新值班落 `chats[].workspace` 再开会话，不是一律回 DSH 默认；
+  已有显式绑定的群不覆盖。页面上的选择会同步到 `config.join_workspace`，刷新后仍是同一个默认。
 
 - 下拉列表来自 DSH 自己的登记表（`~/.dsh/storages/workspace.json`），默认项标「默认」；
   「跟随 DSH 默认」表示不显式绑定。

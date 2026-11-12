@@ -43,6 +43,8 @@ export const DEFAULT_CONFIG = {
   },
   platforms: ["feishu", "wecom"],
   send_mode_default: "draft",
+  // 面板「加入值守时绑定工作区」的持久化选择；空 = 未显式选择，分诊按最近在用→DSH 默认推断。
+  join_workspace: "",
   dsh: { timeout: 600, turn_cap_sec: 3600, full_access: false, warm_min: 55, ack_reaction: true },
   duty: {
     enabled: true,
@@ -158,6 +160,8 @@ export function normalizeConfig(input) {
   // 新建值守的默认发送方式只有两档；缺省/非法/老 state 一律回草稿审批。
   cfg.send_mode_default = SEND_MODES.includes(cfg.send_mode_default)
     ? cfg.send_mode_default : "draft";
+  // 加入值守默认工作区只做类型归一；路径是否真实存在由 setConfig / 分诊使用时校验。
+  cfg.join_workspace = typeof cfg.join_workspace === "string" ? cfg.join_workspace.trim() : "";
   // 退役键：不让它们从旧 panel.json 混进运行配置。
   for (const k of RETIRED_KEYS) delete cfg[k];
   if (cfg.dsh) {

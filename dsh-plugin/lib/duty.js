@@ -10,6 +10,7 @@ import fs from "node:fs";
 import path from "node:path";
 
 import { chatKey } from "./state.js";
+import * as workspaces from "./workspaces.js";
 
 const ACTIONS = new Set(["watch", "trial", "ignore"]);
 const REVIEW_ACTIONS = new Set(["watch", "ignore"]);
@@ -309,6 +310,12 @@ export async function applyDecision({ state, chat, decision, turns = null, profi
     }
   }
   d.sweep_epoch = Math.max(Number(d.sweep_epoch) || 0, Number(chat.last_epoch) || 0);
+  // 自动分诊创建的值班跟随「加入值守时绑定工作区」的配置：
+  // 显式配置 → 最近在用 → 空（跟随 DSH 默认）。已有显式绑定的群不覆盖。
+  if (firstOpen && !String(chat.workspace || "").trim()) {
+    const joinWs = workspaces.resolveJoinDefault(state.data.chats, state.data.config);
+    if (joinWs) chat.workspace = joinWs;
+  }
   state.save();
   try { fs.unlinkSync(decisionPath(state, d.event_id)); } catch { /* best effort */ }
   if (profiles?.ensureMemory) {

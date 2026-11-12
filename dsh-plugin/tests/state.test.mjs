@@ -416,3 +416,13 @@ test("cmd pointers survive normalization and never count as pending", () => {
   assert.equal(state.pendingCount(chat), 1, "只有对面那条算待回");
   assert.equal(state.counts().unread, 1);
 });
+
+test("join_workspace only keeps a trimmed string and defaults to empty", () => {
+  assert.equal(normalizeConfig({}).join_workspace, "");
+  assert.equal(normalizeConfig({ join_workspace: "  /tmp/工作区  " }).join_workspace, "/tmp/工作区");
+  for (const bad of [null, true, 1, {}, []]) {
+    assert.equal(normalizeConfig({ join_workspace: bad }).join_workspace, "", String(bad));
+  }
+  assert.equal(publicConfig(normalizeConfig({ join_workspace: "/tmp/工作区" }), false).join_workspace,
+    "/tmp/工作区");
+});

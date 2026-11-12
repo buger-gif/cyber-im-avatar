@@ -5,13 +5,13 @@
 
 ## 更新时间
 
-2026-11-12（发送方式改为值班单点 + 新建默认（0043），待真机刷新面板验收；0042 / 0040 / 0039 / 0038 待真机）
+2026-11-12（0044 分诊值班跟随加入工作区已实施，待真机；0043 待真机刷新面板验收；0042 / 0040 / 0039 / 0038 待真机）
 
 ## 最近批次
 
 | 日期 | 主题 | 证据 |
 | --- | --- | --- |
-| 2026-11-12 | 发送方式（0043 / ADR 0013）：值班单点 `chats[].send_mode`（草稿 / 全自动）+ 新建默认 `send_mode_default`；「分身」卡片与详情各自可切，设置页只配新值班默认；首次加入值守固化默认，改默认不覆盖已有值班；每次唤醒/开场按值班声明并覆盖旧约定；心跳/值守台不注入；契约 01/02/03、SKILL、两份 README、架构 02/03、CHANGELOG 同步；Node 全绿、文档对账、gate quick 全绿 | `dsh-plugin/lib/{state,app,turns,duty}.js`、`dsh-plugin/web/panel.js`、`dsh-plugin/lib/client.js`、`dsh-plugin/tests/`、`docs/specs/active/0043-发送方式开关.md` |
+| 2026-11-12 | 分诊值班跟随加入工作区（0044）：新增 `config.join_workspace` 持久化面板「加入值守时绑定工作区」；自动分诊判定 watch / trial 后首个值班会话按「配置 → 最近在用 → DSH 默认」落 `chats[].workspace`（已有绑定不覆盖）；面板同序并同步配置；契约 03、README、CHANGELOG、测试同步；Node 全绿、文档对账、gate quick 全绿 | `dsh-plugin/lib/{state,workspaces,duty,app}.js`、`dsh-plugin/web/panel.js`、`dsh-plugin/lib/client.js`、`dsh-plugin/tests/`、`docs/specs/active/0044-分诊值班跟随加入工作区.md` |
 | 2026-11-10 | 启动竞态止损（0042）并发布 0.18.3：`dsh.client.immediately` + 宿主入口只静态依赖 Node 内置（导入 ~12ms→~4ms）；npm latest 与市场索引指向 0.18.3；诊断与 DSH 上游补丁草稿见 `docs/audits/2026-11-10-web-boot-audit-race.md` | `dsh-plugin/package.json`、`dsh-plugin/lib/index.js`、`dsh-plugin/market/index.json`、[run 42794468238](https://github.com/buger-gif/cyber-im-avatar/actions/runs/42794468238) |
 | 2026-11-09 | 值守分诊（0040 / ADR 0012）：新群基线、探针、私有值守台、决策文件 watch/trial/ignore（只 mention）、可选试用、两段式（新建一次 + 新 @ 再判）、Feishu `--is-at-me` 搜索 / DingTalk 回退、群成员 >10/未知硬门、API/面板/9 键/测试/契约；已验收归档；安装时写入 policy.md 初始版本 | `dsh-plugin/lib/duty.js`、`dsh-plugin/lib/poller.js`、`docs/specs/archive/0040-值守分诊.md` |
 | 2026-11-09 | 0.18.0 发布：值守分诊（0040）进 npm latest 与市场索引；CI Trusted Publishing 成功，`v0.18.0` tag；`market/index.json` 指向 0.18.0 | `CHANGELOG.md`、`dsh-plugin/package.json`、`dsh-plugin/market/index.json`、[run 42582621666](https://github.com/buger-gif/cyber-im-avatar/actions/runs/42582621666) |
@@ -57,6 +57,11 @@
 
 ## 当前断点
 
+- **0044 分诊值班跟随加入工作区已实施，待真机验收**：新增 `config.join_workspace`；
+  自动分诊判定 watch / trial 后，首个值班会话按「配置 → 最近在用 → DSH 默认」落
+  `chats[].workspace`，已有绑定不覆盖；面板「加入值守时绑定工作区」同步配置。
+  `node --test`、`gate --quick` 全绿。**剩余用户自验**：改一次加入默认 → 刷新面板仍显示；
+  等自动分诊拉起一个新值班，确认卡片工作区与会话 cwd 一致。真机通过后归档 0044。
 - **0043 发送方式已实施，待真机验收**：每个值守会话有独立 `send_mode`（草稿 / 全自动），
   「分身」卡片与会话详情各自可切；设置页只配「新建值守默认」`send_mode_default`，新值班首次
   加入时固化，之后改默认不覆盖已有值班。每次唤醒 / 开场按该值班声明发送方式；心跳与值守台
@@ -94,12 +99,13 @@
 
 ## 下一步
 
-1. 真机验 0043（单点开关 + 新建默认 + 自动模式载荷），通过后归档。
-2. 重启桌面 app 验 0042 冷启动审计；通过后归档。
-3. 0040 / 0039 / 0038 的真机项按上面断点逐条走；通过后归档。
-4. 等真实客户消息 / 媒体命中；只观察，不主动给真实客户发消息。
-5. 用户确认后清理历史待回；清理前不要当作用户已同意。
-6. 钉钉补完真人闭环：启用钉钉，跑「命中 → 草稿 → 发送 → 重挂」，先定 `--ai-tag` 口径。
+1. 真机验 0044（改加入默认 → 刷新仍显示；自动分诊拉起的新值班落在该工作区），通过后归档。
+2. 真机验 0043（单点开关 + 新建默认 + 自动模式载荷），通过后归档。
+3. 重启桌面 app 验 0042 冷启动审计；通过后归档。
+4. 0040 / 0039 / 0038 的真机项按上面断点逐条走；通过后归档。
+5. 等真实客户消息 / 媒体命中；只观察，不主动给真实客户发消息。
+6. 用户确认后清理历史待回；清理前不要当作用户已同意。
+7. 钉钉补完真人闭环：启用钉钉，跑「命中 → 草稿 → 发送 → 重挂」，先定 `--ai-tag` 口径。
 
 ## 规则性提醒
 

@@ -387,6 +387,11 @@ window.__ModuleLoader__.load({
     try { if (window.localStorage) window.localStorage.setItem(WS_MEM_KEY, v); }
     catch (e) { /* ignore */ }
   }
+  /** 显式选择「跟随 DSH 默认」时清掉本机记忆，避免下次加载又把它当默认值。 */
+  function clearWsMemory() {
+    try { if (window.localStorage) window.localStorage.removeItem(WS_MEM_KEY); }
+    catch (e) { /* ignore */ }
+  }
 
   /**
    * 右侧栏面板：只以停靠形态存在。宿主给一块高度，面板铺满；
@@ -799,8 +804,12 @@ window.__ModuleLoader__.load({
         S.chats = d.items || [];
         S.chatsLoaded = true;
         clearConnError("chats");
-        // 没有本地面板记忆时，默认沿用「最近在用的工作区」，而不是每次回 DSH 默认。
-        if (!S.addWs && !S.addWsPicked) S.addWs = lastUsedWs() || "";
+        // 默认工作区以配置为准；本机升级前只有 localStorage 记忆时补一次同步。
+        if (!S.addWsPicked) {
+          var memWs = S.addWs || readWsMemory();
+          S.addWs = ((S.cfg && S.cfg.join_workspace) || lastUsedWs() || "");
+          if (memWs && !(S.cfg || {}).join_workspace) saveJoinWorkspace(memWs);
+        }
         refreshFoot();
         if (S.tab === "service") paintBody();
       }).catch(function (e) {
@@ -1080,15 +1089,27 @@ window.__ModuleLoader__.load({
       return best;
     }
 
-    /** 新加入值守时的默认工作区：面板记忆 → 最近在用 → DSH 默认。 */
+    /** 新加入值守时的默认工作区：面板记忆 → 配置的加入默认 → 最近在用 → DSH 默认。 */
     function joinWorkspace() {
-      return S.addWs || lastUsedWs() || S.defaultWs || "";
+      var cfgWs = (S.cfg && S.cfg.join_workspace) || "";
+      return S.addWs || cfgWs || lastUsedWs() || S.defaultWs || "";
     }
 
     function rememberWs(v) {
       if (!v) return;
       S.addWs = v;
       writeWsMemory(v);
+      saveJoinWorkspace(v);
+    }
+
+    /** 把「加入值守时绑定工作区」的选择同步到后端配置：自动分诊开值班时按它落工作区。 */
+    function saveJoinWorkspace(v) {
+      var val = String(v || "").trim();
+      if (((S.cfg || {}).join_workspace || "") === val) return Promise.resolve(null);
+      return api("/api/config", { body: { join_workspace: val } }).then(function (c) {
+        if (c && !c.error) S.cfg = c;
+        return c;
+      }).catch(function () { return null; });
     }
 
     /** 展示用：显式绑定优先，否则说明「跟随 DSH 默认」。 */
@@ -2044,6 +2065,7 @@ window.__ModuleLoader__.load({
           h("span", { class: "ims-hint", text: "加入值守时绑定工作区" }),
           wsOptions(joinWorkspace(), function (v) {
             S.addWs = v; S.addWsPicked = true; rememberWs(v);
+            if (!v) { clearWsMemory(); saveJoinWorkspace(""); }  // 显式「跟随 DSH 默认」要清干净
           }, true)),
         result,
         wcForm,

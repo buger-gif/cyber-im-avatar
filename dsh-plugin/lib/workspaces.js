@@ -114,6 +114,35 @@ export function effectivePath(chat) {
   return resolveForChat(chat).path || "";
 }
 
+/**
+ * 面板「最近在用的工作区」的服务端等价：有没有显式绑定过工作区的会话里，
+ * 取 `session_bound_at || added_at || last_sync` 最大者的工作区。
+ * 口径必须与 `web/panel.js` 的 lastUsedWs() 一致；分诊不读浏览器本地记忆。
+ */
+export function lastUsedPath(chats) {
+  let best = "";
+  let at = -1;
+  for (const chat of Object.values(chats || {})) {
+    const p = normalize(chat && chat.workspace);
+    if (!p) continue;
+    const t = Number(chat.session_bound_at) || Number(chat.added_at) || Number(chat.last_sync) || 0;
+    if (t > at) {
+      at = t;
+      best = p;
+    }
+  }
+  return best;
+}
+
+/**
+ * 自动分诊开首个值班会话时用的工作区：显式配置 → 最近在用 → 空（跟随 DSH 默认）。
+ * 与面板「加入值守时绑定工作区」同序；返回空表示不要写绑定。
+ */
+export function resolveJoinDefault(chats, config) {
+  const configured = normalize(config && config.join_workspace);
+  return configured || lastUsedPath(chats) || "";
+}
+
 /** 展示用：给会话行补 workspace_* 字段。 */
 export function decorateChat(chat) {
   const info = resolveForChat(chat);

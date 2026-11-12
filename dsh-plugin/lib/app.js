@@ -697,6 +697,17 @@ export class App {
         merged[k] = { ...(this.state.data.config[k] || {}), ...body[k] };
       }
     }
+    // 加入值守默认工作区：非空必须是真实存在的绝对路径，否则整次保存拒绝，不写坏值。
+    if (body && Object.prototype.hasOwnProperty.call(body, "join_workspace")) {
+      const raw = String(body.join_workspace || "").trim();
+      if (raw) {
+        const ws = workspaces.normalize(raw);
+        if (!ws) return { ok: false, reason: "工作区不存在或不是绝对路径：" + raw };
+        merged.join_workspace = ws;
+      } else {
+        merged.join_workspace = "";
+      }
+    }
     const ignored = Array.isArray(body?.platforms)
       ? body.platforms.filter((p) => !SUPPORTED_PLATFORMS.includes(String(p)))
       : [];
