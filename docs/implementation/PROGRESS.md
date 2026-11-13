@@ -11,6 +11,7 @@
 
 | 日期 | 主题 | 证据 |
 | --- | --- | --- |
+| 2026-11-13 | 0.20.0 发布（0046 自 @ 启动指令 + 手动停盯不再复检旧 @）：全量 gate 全绿；CI Trusted Publishing 发布成功并带 provenance，`v0.20.0` tag；npm latest / tarball / 市场索引都指向 0.20.0；版本自检 3 分钟判红（registry 3 分 8 秒才可见），重跑后绿，窗口已放宽到 5 分钟 | `CHANGELOG.md`、`dsh-plugin/package.json`、`dsh-plugin/market/index.json`、`docs/implementation/runbooks/publish.md`、[run 43360663970](https://github.com/buger-gif/cyber-im-avatar/actions/runs/43360663970) |
 | 2026-11-13 | 手动停盯后旧 @ 不再重新分诊：`recordUserDuty(..., "ignore")` 把 `duty.sweep_epoch` 推到停盯时刻、清 `event_id` 并删未应用决策文件；sweep 另按 `by=user` + `decided_at` 兜老 state；Node 287 绿、gate 全量绿 | `dsh-plugin/lib/{app,poller}.js`、`dsh-plugin/tests/{app,poller}.test.mjs` |
 | 2026-11-12 | 自 @ 关键词启动值班（0046）：`config.command.enabled/start_keyword`；已值守会话快车道即时识别，未值守飞书会话每分钟一条 `+messages-search`（本人发送 + @本人，只取一页）发现；同一 `platform:chat_id` 只允许一个值班（已有会话 / 正在启动 → `already`）；命中关键词的 `cmd` 被开关消费，开场载荷说明不要回复；面板设置卡 + 会话详情结果；ADR 0015；契约 01/02/03、架构 02/03、README、SKILL、references 同步；Node 全绿、gate 全量绿；待真机 | `dsh-plugin/lib/{command,im,poller,turns,state,app}.js`、`dsh-plugin/web/panel.js`、`dsh-plugin/lib/client.js`、`dsh-plugin/tests/`、`docs/specs/active/0046-自at关键词启动值班.md` |
 | 2026-11-12 | 0.19.0 发布（0043 / 0044 / 0045）：三条未发布特性进版；npm 包描述与市场索引描述同步当前形态（值守私聊 / 群聊、@ 或新消息唤醒、关注程度三态、新群自动分诊、值班单点草稿 / 全自动、消息只留本机）；CI Trusted Publishing 成功，`v0.19.0` tag；npm latest 与市场索引指向 0.19.0 | `CHANGELOG.md`、`dsh-plugin/package.json`、`dsh-plugin/market/index.json`、[run 43186222163](https://github.com/buger-gif/cyber-im-avatar/actions/runs/43186222163) |
