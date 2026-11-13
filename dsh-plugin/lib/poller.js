@@ -1480,6 +1480,10 @@ export class Poller {
               if (chat.blocked || chat.watching) continue;
               if (!["none", "ignore", "failed"].includes(chat.duty?.state || "none")) continue;
               if ((Number(m.ts_epoch) || 0) <= (Number(chat.duty?.sweep_epoch) || 0)) continue;
+              // 用户手动停盯过：停盯时刻之前的 @ 视为已看过，不再重复入队。
+              const dismissed = Number(chat.duty?.decided_at) || 0;
+              if (chat.duty?.state === "ignore" && chat.duty?.by === "user"
+                && dismissed > 0 && (Number(m.ts_epoch) || 0) <= dismissed) continue;
               if (!byChat.has(m.chat_id)) byChat.set(m.chat_id, { chat, newest: 0 });
               byChat.get(m.chat_id).newest = Math.max(byChat.get(m.chat_id).newest,
                 Number(m.ts_epoch) || 0);
@@ -1511,6 +1515,10 @@ export class Poller {
             const ts = Number(m.ts_epoch) || 0;
             if (!isMention(m, ident.self_id, names) || ts < floor) continue;
             if (ts <= (Number(chat.duty?.sweep_epoch) || 0)) continue;
+            // 同上：手动停盯时刻之前的 @ 不重复分诊。
+            const dismissed = Number(chat.duty?.decided_at) || 0;
+            if (chat.duty?.state === "ignore" && chat.duty?.by === "user"
+              && dismissed > 0 && ts <= dismissed) continue;
             newest = Math.max(newest, ts);
           }
           if (newest) {

@@ -24,6 +24,19 @@
 - **兼容**：老 state 补 `chats[].command` 默认，不升 `STATE_VERSION`；老配置无 `command`
   键按默认开启。未发真实 IM 消息；真机验收项见 PROGRESS。
 
+### 未发布：手动停盯后旧 @ 不再重新分诊
+
+- **停盯即翻篇**：面板点「不盯」、把关注程度切回「不盯」或屏蔽会话时，把该会话的定期
+  @ 清查水位（`chats[].duty.sweep_epoch`）推到停盯时刻；下一轮清查只认停盯之后的新 @，
+  不会再把停盯前的旧 @ 翻出来分诊、把刚停掉的值班又判回去。
+- **未应用的分诊一并作废**：清空 `duty.event_id` 并删掉对应的决策文件；agent 晚到的
+  `watch` 决策不再生效（`by=user` 本来就拦 superseded，这里是第二道）。
+- **兼容老 state**：升级前手动停盯过的会话 `sweep_epoch` 可能还是 0，清查在水位之外再看
+  `duty.by=user` 与 `decided_at`，停盯时刻之前的 @ 直接跳过，不需要迁移。
+- **接线**：`lib/app.js`（`recordUserDuty(..., "ignore")`）、`lib/poller.js`（飞书 @ 搜索与
+  钉钉逐群回退两条清查路径）、`tests/app.test.mjs`、`tests/poller.test.mjs`；口径与
+  `docs/specs/archive/0040-值守分诊.md §3.1` 的「用户手动 watch/off 同样推进」一致。
+
 ## 0.19.0 — 2026-11-12
 
 ### 0.19.0：载荷只声明变化（spec 0045）

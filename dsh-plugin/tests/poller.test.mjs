@@ -1153,6 +1153,33 @@ test("feishu sweep uses one at-me search and ignores existing groups/@all", asyn
   assert.equal(old.duty.state, "none");
 });
 
+test("sweep skips @s older than a manual stop but still queues newer ones", async () => {
+  const { state, poller, adapter } = setup();
+  const now = Date.now() / 1000;
+  state.data.desk.baseline_at = now - 1000;
+  const chat = state.ensureChat("feishu", "oc_ignored", { name: "停盯群", kind: "group" });
+  chat.added_at = now - 500;
+  chat.duty.state = "ignore";
+  chat.duty.by = "user";
+  chat.duty.decided_at = now - 60;
+  chat.duty.sweep_epoch = 0;
+  const mention = (epoch) => ({
+    msg_id: "om_1", sender_id: "ou_x", sender_name: "同事", content: "求开权限",
+    ts_epoch: epoch, mentions: [{ id: "ou_me" }], chat_id: "oc_ignored", chat_name: "停盯群",
+  });
+  adapter.atMe = [mention(now - 300)];
+  await poller.maybeSweep();
+  assert.equal(chat.duty.state, "ignore", "停盯前的旧 @ 不应重新入队");
+  assert.equal(chat.duty.event_id, "");
+  assert.equal(chat.duty.sweep_epoch, 0);
+
+  state.data.desk.last_sweep_at = 0;
+  adapter.atMe = [mention(now + 10)];
+  await poller.maybeSweep();
+  assert.equal(chat.duty.state, "queued", "停盯之后的新 @ 仍要分诊");
+  assert.equal(chat.duty.trigger, "sweep");
+});
+
 test("probe stores member count and the desk facts include it", async () => {
   const { state, poller, adapter } = setup();
   const chat = state.ensureChat("feishu", "oc_g", { name: "项目群", kind: "group" });

@@ -221,6 +221,25 @@ test("watch creates target + profile; unwatch cancels without deleting the targe
   assert.deepEqual(calls.cancel, ["oc_abc"]);
 });
 
+test("unwatch marks prior @s as handled so the sweep cannot re-triage them", async () => {
+  const { app, state } = makeApp();
+  const chat = state.ensureChat("feishu", "oc_grp", { name: "项目群", kind: "group" });
+  chat.watching = true;
+  chat.last_epoch = 1000;
+  chat.duty.state = "watch";
+  chat.duty.event_id = "d-pending";
+  chat.duty.event_at = 900;
+  chat.duty.sweep_epoch = 0;
+  const before = Math.floor(Date.now() / 1000);
+  const out = await app.handle("/api/unwatch", "POST", null, { platform: "feishu", chat_id: "oc_grp" });
+  assert.equal(out.body.ok, true);
+  assert.equal(chat.duty.state, "ignore");
+  assert.equal(chat.duty.by, "user");
+  assert.ok(chat.duty.sweep_epoch >= before, "水位推到停盯时刻");
+  assert.ok(chat.duty.sweep_epoch > 1000);
+  assert.equal(chat.duty.event_id, "", "未落地的分诊事件一并清掉");
+});
+
 test("inbox groups derive previews from recent only", async () => {
   const { app, state } = makeApp();
   const chat = state.ensureChat("feishu", "oc_abc", { name: "示例对象 A", kind: "p2p" });
