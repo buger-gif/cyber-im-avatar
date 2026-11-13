@@ -197,7 +197,69 @@ export function redact(value, limit = 600) {
   let s = value == null ? "" : String(value);
   s = s.replace(/(token|secret|api[_-]?key|password)["']?\s*[:=]\s*["']?[\w\-./+]{8,}/gi, "$1=***");
   s = s.replace(/sk-[A-Za-z0-9_\-]{8,}/g, "sk-***");
+  // 错误原文里的会话 / 用户 ID 打码：面板与日志只留定位用的头尾。
+  s = s.replace(/\b(oc|ou|om)_([0-9a-z]{6})[0-9a-z]+([0-9a-z]{4})\b/gi, "$1_$2…$3");
+  s = s.replace(/\b(aib[A-Za-z0-9_-]{6})[A-Za-z0-9_-]+/g, "$1…");
+  s = s.replace(/\b(cidr[A-Za-z0-9_+/=-]{4})[A-Za-z0-9_+/=-]{12,}/g, "$1…");
+  s = s.replace(/\b(wo[A-Za-z0-9_-]{4})[A-Za-z0-9_-]{8,}\b/g, "$1…");
   return s.slice(0, limit);
+}
+
+const NET_ERROR_RE = /timeout|timed out|dial tcp|connection reset|connection refused|no such host|tls handshake|context deadline exceeded|\btransport\b|network is unreachable|i\/o timeout/i;
+const AUTH_ERROR_CODES = new Set([99991663, 99991664, 99991668]);
+const PERM_ERROR_RE = /permission|scope|forbidden|权限|not authorized to/i;
+
+function cleanCause(text, limit = 120) {
+  let s = String(text || "");
+  s = s.replace(/https?:\/\/[^\s<>"')\]\\]+/gi, "<URL>");
+  s = s.replace(/[\r\n\t]+/g, " ").replace(/\s{2,}/g, " ").trim();
+  return redact(s, 1000).slice(0, limit);
+}
+
+/**
+ * CLI 错误输出 → { kind, summary }。kind: network / auth / permission / schema / api / other。
+ * 只认结构化 error.type 与明确的超时关键字；判断用于重试与面板展示，不猜。
+ */
+export function describeCliError(raw) {
+  const s = String(raw || "");
+  if (s.includes("SCHEMA_MISMATCH")) {
+    return { kind: "schema", summary: `字段漂移：${cleanCause(s.replace("SCHEMA_MISMATCH", ""))}` };
+  }
+  const json = firstJson(s);
+  const err = json && typeof json === "object" && json.error && typeof json.error === "object"
+    ? json.error : {};
+  const type = String(err.type || "").toLowerCase();
+  const subtype = String(err.subtype || "").toLowerCase();
+  const msg = String(err.message || "");
+  const code = Number(err.code) || 0;
+  const low = `${type} ${subtype} ${msg || s}`;
+  let kind = "other";
+  let head = "拉取失败";
+  if (type === "network" || NET_ERROR_RE.test(low)) {
+    kind = "network";
+    head = "网络传输失败";
+  } else if (type === "auth" || AUTH_ERROR_CODES.has(code)
+    || /token invalid|token expired|unauthorized|未登录/i.test(low)) {
+    kind = "auth";
+    head = "授权已失效";
+  } else if (PERM_ERROR_RE.test(low)) {
+    kind = "permission";
+    head = "缺少权限";
+  } else if (code) {
+    kind = "api";
+    head = `接口报错 ${code}`;
+  }
+  const cause = cleanCause(msg || s);
+  return { kind, summary: cause ? `${head}：${cause}` : head };
+}
+
+/** 只重试传输层抖动；授权 / 权限 / 字段漂移重试无意义。 */
+export function isTransientError(kind) {
+  return kind === "network";
+}
+
+function sleepMs(ms) {
+  return new Promise((resolve) => { setTimeout(resolve, ms); });
 }
 
 export function parseTs(value) {
@@ -487,6 +549,22 @@ export class Adapter {
   }
 
   /**
+   * 读请求：传输层失败重试一次（500ms）。写操作一律走 run()，不重试，避免重复发送。
+   * rc=124 是本进程超时杀的，不再重试，避免把等待翻倍。
+   */
+  async runRead(args, timeout = 45) {
+    let r = await this.run(args, timeout);
+    if (r.rc !== 0 && r.rc !== 124) {
+      const { kind } = describeCliError(r.raw);
+      if (isTransientError(kind)) {
+        await sleepMs(500);
+        r = await this.run(args, timeout);
+      }
+    }
+    return r;
+  }
+
+  /**
    * 下载一条消息里的适配媒体。只在 Turns.wake 命中时调用。
    * @returns {{ok:boolean, files:Array, error:string, unsupported?:boolean, sticker?:boolean}}
    */
@@ -754,8 +832,21 @@ export class Adapter {
     } else if (this.platform === "dingtalk" && !dingtalkIsConversation(id) && this.ad.cmd_list_user) {
       tmpl = this.ad.cmd_list_user;
     }
-    const { rc, json, raw } = await this.run(this.argv(tmpl, kw));
-    if (rc !== 0 || !json) return { ok: false, messages: [], error: redact(raw || `rc=${rc}`) };
+    const { rc, json, raw } = await this.runRead(this.argv(tmpl, kw));
+    if (rc !== 0 || !json) {
+      const err = describeCliError(raw || `rc=${rc}`);
+      return {
+        ok: false, messages: [], error: err.summary,
+        error_detail: redact(raw || `rc=${rc}`),
+      };
+    }
+    if (json.ok === false) {
+      const err = describeCliError(raw);
+      return {
+        ok: false, messages: [], error: err.summary,
+        error_detail: redact(raw),
+      };
+    }
     const items = dig(json, this.ad.f_items);
     if (items === undefined || items === null) {
       const cnt = dig(json, this.ad.f_count);

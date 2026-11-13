@@ -247,6 +247,46 @@ if args[:1] == ["profile"]:
 j({"ok": True})
 '''
 
+# 可变桩：doctor 的检查项可换；__IM__ 位置可注入真实拉取失败。
+STUB_FLEX = '''#!/usr/bin/env python3
+import json, os, sys
+args = sys.argv[1:]
+def j(o): print(json.dumps(o))
+if "--version" in args or args[:1] == ["version"]:
+    print("lark-cli version 9.9.9"); sys.exit(0)
+if args[:1] == ["doctor"]:
+    j(__CHECKS__); sys.exit(0)
+if args[:2] == ["auth", "status"]:
+    j({"authenticated": True,
+       "identities": {"user": {"tokenStatus": "valid", "openId": "ou_stub0001x"}}}); sys.exit(0)
+if args[:2] == ["auth", "show"]:
+    print("Status: authorized\\nBot ID: FAKEBOTID"); sys.exit(0)
+if args[:1] == ["profile"]:
+    j({"profiles": [{"userId": "stubuser"}]}); sys.exit(0)
+__IM__
+j({"ok": True})
+'''
+
+STUB_IM_NETWORK = '''if args[:1] == ["im"]:
+    with open(os.path.join(os.environ["IM_STANDIN_DIR"], "calls.txt"), "a") as f:
+        f.write("im\\n")
+    print(json.dumps({"ok": False, "identity": "user", "error": {
+        "type": "network", "subtype": "transport",
+        "message": 'API call failed: Get "https://open.feishu.cn/open-apis/im/v1/messages?container_id=oc_c56748207171a8ce2744e7826f6ed313": dial tcp 1.2.3.4:443: i/o timeout'}}), file=sys.stderr)
+    sys.exit(1)
+'''
+
+
+def write_flex_stub(bindir, cli, checks=None, im_block=""):
+    """写一个可变桩 CLI：doctor 检查项可定制，可注入拉取失败。"""
+    checks = checks or [{"name": "auth", "status": "pass", "message": "ok"}]
+    body = (STUB_FLEX.replace("__CHECKS__", json.dumps({"checks": checks}))
+            .replace("__IM__", im_block))
+    p = os.path.join(bindir, cli)
+    with open(p, "w") as f:
+        f.write(body)
+    os.chmod(p, 0o755)
+
 
 def test_doctor():
     """doctor.py 在纯桩环境下自洽：全绿、JSON 合法、退出 0。"""
@@ -1058,6 +1098,141 @@ def test_doctor_missing_cli():
     shutil.rmtree(d, ignore_errors=True)
 
 
+def test_doctor_update_warn_not_fail():
+    """CLI 自己的 warn（有新版本）不是故障：只报 warn，平台仍可用。"""
+    print("\n[体检] cli_update=warn 不阻塞平台")
+    d = tempfile.mkdtemp(prefix="standin_warn_")
+    bindir = os.path.join(d, "bin")
+    os.makedirs(bindir)
+    checks = [{"name": "auth", "status": "pass", "message": "ok"},
+              {"name": "cli_update", "status": "warn",
+               "message": "9.9.9 → 9.9.10 available", "hint": "run: lark-cli update"}]
+    for cli in ("lark-cli", "wecom-cli", "dws"):
+        write_flex_stub(bindir, cli, checks)
+    with open(os.path.join(d, "env.json"), "w") as f:
+        json.dump({"version": 1,
+                   "platforms": {k: {"self_id": f"self_{k}"}
+                                 for k in ("feishu", "wecom", "dingtalk")},
+                   "targets": {}}, f)
+    env = dict(os.environ, IM_STANDIN_DIR=d,
+               PATH=bindir + os.pathsep + os.environ.get("PATH", ""))
+    r = subprocess.run([PY, os.path.join(SCRIPTS, "doctor.py"), "--json"],
+                       capture_output=True, text=True, env=env, timeout=120)
+    try:
+        data = json.loads(r.stdout)
+    except Exception:
+        data = {}
+    stats = {p: v["status"] for p, v in data.get("platforms", {}).items()}
+    check("有新版本时 doctor 退出 0", r.returncode == 0, f"rc={r.returncode} {r.stdout[:200]}")
+    check("cli_update 只算 warn", stats.get("feishu") == "warn", str(stats))
+    check("warn 不计入 fail", data.get("summary", {}).get("fail") == 0,
+          str(data.get("summary")))
+    shutil.rmtree(d, ignore_errors=True)
+
+
+def test_doctor_only_enabled_platforms():
+    """全平台体检只看启用平台：没启用的平台不跑检查、不进 broken。"""
+    print("\n[体检] 只检查启用的平台")
+    d = tempfile.mkdtemp(prefix="standin_enabled_")
+    bindir = os.path.join(d, "bin")
+    os.makedirs(bindir)
+    write_flex_stub(bindir, "lark-cli")  # 只装飞书；企微/钉钉故意不装
+    with open(os.path.join(d, "state.json"), "w") as f:
+        json.dump({"version": 1, "config": {"platforms": ["feishu"]}}, f)
+    env = dict(os.environ, IM_STANDIN_DIR=d,
+               PATH=bindir + os.pathsep + os.environ.get("PATH", ""))
+    r = subprocess.run([PY, os.path.join(SCRIPTS, "doctor.py"), "--json"],
+                       capture_output=True, text=True, env=env, timeout=120)
+    try:
+        data = json.loads(r.stdout)
+    except Exception:
+        data = {}
+    summary = data.get("summary", {})
+    check("只查启用平台时退出 0", r.returncode == 0, f"rc={r.returncode} {r.stdout[:200]}")
+    check("未启用平台不进 broken", summary.get("broken") == [], str(summary))
+    check("healthy 只有飞书", summary.get("healthy") == ["feishu"], str(summary))
+    check("未启用平台进 skipped",
+          set(summary.get("skipped") or []) == {"wecom", "dingtalk"}, str(summary))
+    check("未启用平台不查 CLI", set(data.get("platforms", {})) == {"feishu"},
+          str(list(data.get("platforms", {}))))
+    shutil.rmtree(d, ignore_errors=True)
+
+
+def test_doctor_path_network_retry():
+    """通路自检：传输层失败重试一次，仍失败时给可读原因且 ID 打码。"""
+    print("\n[体检] 通路自检的网络重试与可读原因")
+    d = tempfile.mkdtemp(prefix="standin_path_")
+    bindir = os.path.join(d, "bin")
+    os.makedirs(bindir)
+    write_flex_stub(bindir, "lark-cli", im_block=STUB_IM_NETWORK)
+    os.makedirs(os.path.join(d, "states"))
+    target = "oc_a1b2c3d4e5f67890"
+    with open(os.path.join(d, "states", f"feishu_{target}.pos"), "w") as f:
+        json.dump({"last_id": "om_x", "ts": 1}, f)
+    env = dict(os.environ, IM_STANDIN_DIR=d,
+               PATH=bindir + os.pathsep + os.environ.get("PATH", ""))
+    r = subprocess.run([PY, os.path.join(SCRIPTS, "doctor.py"), "feishu",
+                        "--chat-id", target, "--show-ids"],
+                       capture_output=True, text=True, env=env, timeout=120)
+    out = (r.stdout or "") + (r.stderr or "")
+    try:
+        with open(os.path.join(d, "calls.txt")) as f:
+            calls = f.read().count("im")
+    except Exception:
+        calls = 0
+    check("通路自检真的调了 CLI", calls >= 2, f"calls={calls}")
+    check("重试一次后才判失败", "已重试 1 次" in out, out[:300])
+    check("通路失败给出可读原因", "网络传输失败" in out and "i/o timeout" in out, out[:300])
+    check("通路失败不再吞成空原因",
+          "初始化水位失败: \n" not in out and "[fail] 通路: ERROR" not in out, out[:300])
+    check("错误原文里的会话 ID 打码",
+          "oc_c56748207171a8ce2744e7826f6ed313" not in out, out[:300])
+    check("两次都失败仍判 fail（退出 2）", r.returncode == 2, f"rc={r.returncode}")
+    shutil.rmtree(d, ignore_errors=True)
+
+
+def test_probe_path_retry_policy():
+    """probe_path：只有 network 类重试一次；auth / schema 直接失败，不多跑一轮。"""
+    print("\n[体检] 通路探针的重试策略")
+    sys.path.insert(0, SCRIPTS)
+    import bootstrap as bs
+
+    def fake(kind, msg):
+        payload = json.dumps({"ok": False, "error": {"type": kind, "message": msg}})
+        return 2, "", "ERROR: 初始化水位失败: " + payload
+
+    orig = bs.listen_probe
+    try:
+        calls = []
+
+        def network(*_a, **_k):
+            calls.append(1)
+            return fake("network", "dial tcp: i/o timeout")
+
+        bs.listen_probe = network
+        r = bs.probe_path("feishu", "oc_test", retry=True)
+        check("network 失败重试一次", len(calls) == 2 and r["retried"] is True, f"calls={len(calls)}")
+        check("两次都失败才判不可用", r["ok"] is False and r["kind"] == "network", str(r))
+
+        calls.clear()
+
+        def auth(*_a, **_k):
+            calls.append(1)
+            return fake("auth", "token invalid")
+
+        bs.listen_probe = auth
+        r = bs.probe_path("feishu", "oc_test", retry=True)
+        check("auth 失败不重试", len(calls) == 1 and r["retried"] is False, f"calls={len(calls)}")
+        check("auth 失败仍判不可用", r["ok"] is False and r["kind"] == "auth", str(r))
+
+        calls.clear()
+        bs.listen_probe = lambda *_a, **_k: (calls.append(1) or (3, "", ""))
+        r = bs.probe_path("feishu", "oc_test", retry=True)
+        check("超时未命中不算失败", r["ok"] is True and len(calls) == 1, str(r))
+    finally:
+        bs.listen_probe = orig
+
+
 def test_safety_docs():
     """公开 skill 必须包含注入边界与不可重置的临时值守说明。"""
     skill = open(os.path.join(ROOT, "SKILL.md"), encoding="utf-8").read()
@@ -1117,6 +1292,10 @@ if __name__ == "__main__":
     test_safety_docs()
     test_doctor()
     test_doctor_missing_cli()
+    test_doctor_update_warn_not_fail()
+    test_doctor_only_enabled_platforms()
+    test_doctor_path_network_retry()
+    test_probe_path_retry_policy()
     test_reauth()
     test_plugin_polling()
     test_doc_contracts()

@@ -90,6 +90,8 @@ class Report:
 
     def worst(self):
         st = {i["status"] for i in self.items}
+        if st and st == {"skip"}:
+            return "skip"
         return "fail" if "fail" in st else ("warn" if "warn" in st else "ok")
 
     def has_fail(self):
@@ -135,7 +137,11 @@ def check_cli(rep):
 
 
 def check_cli_doctor(rep):
-    """优先用 CLI 自带体检——它比我们更清楚自己该检查什么。"""
+    """优先用 CLI 自带体检——它比我们更清楚自己该检查什么。
+
+    CLI 自己的 `warn`（例如「有新版本」）不是故障：报 warn，不阻塞平台。
+    只有 fail 与未知状态才算不可用。
+    """
     if rep.platform == "wecom":
         rep.add("cli doctor", "skip", "wecom-cli 无 doctor 子命令",
                 fix="用 auth show + 手动拉一条消息代替", ref="b")
@@ -148,15 +154,25 @@ def check_cli_doctor(rep):
                 fix=f"{rep.cli} doctor", ref="a")
         return
     checks = obj.get("checks") or []
-    bad = [c for c in checks if c.get("status") not in ("pass", "ok", "skip")]
-    if not bad:
+
+    def level(c):
+        st = str(c.get("status") or "").lower()
+        if st in ("pass", "ok", "skip"):
+            return "ok"
+        return "warn" if st == "warn" else "fail"
+
+    bad = [c for c in checks if level(c) == "fail"]
+    warned = [c for c in checks if level(c) == "warn"]
+    if not bad and not warned:
         rep.add("cli doctor", "ok", f"{len(checks)} 项全过")
         return
+    picked = bad or warned
     detail = "; ".join(f"{c.get('name')}={c.get('status')}({c.get('message') or ''})"[:90]
-                       for c in bad)
-    hint = next((c.get("hint") for c in bad if c.get("hint")), "")
-    rep.add("cli doctor", "fail", detail,
-            fix=hint or f"{rep.cli} doctor 看完整输出", ref="b" if "auth" in detail.lower() else "a")
+                       for c in picked)
+    hint = next((c.get("hint") for c in picked if c.get("hint")), "")
+    rep.add("cli doctor", "fail" if bad else "warn", detail,
+            fix=hint or f"{rep.cli} doctor 看完整输出",
+            ref="b" if bad and "auth" in detail.lower() else "a")
 
 
 def _fmt_eta(dt):
@@ -331,30 +347,56 @@ def check_state(rep, repair=False):
         rep.add("state files", "ok", f"{len(files)} 个水位文件正常")
 
 
+def enabled_platforms(env):
+    """全平台体检查哪些平台：state.json 的启用开关 > env.json 登记 > 全部。
+
+    DSH 插件形态以 state.json 的 config.platforms 为准（用户真正启用的）；
+    skill 形态没有启用开关，按 env.json 里 logged_in 为真的平台判断；
+    两者都读不到时才全查——没有依据就不擅自缩小范围。
+    """
+    try:
+        with open(os.path.join(ENV_DIR, "state.json"), encoding="utf-8") as f:
+            plats = (json.load(f).get("config") or {}).get("platforms")
+        if isinstance(plats, list):
+            picked = [p for p in bs.PLATFORMS if p in plats]
+            if picked:
+                return picked
+    except Exception:
+        pass
+    reg = env.get("platforms") if isinstance(env.get("platforms"), dict) else {}
+    logged = [p for p in bs.PLATFORMS if (reg.get(p) or {}).get("logged_in")]
+    return logged or list(bs.PLATFORMS)
+
+
 def check_path(rep, chat_id="", user_id=""):
     target = chat_id or user_id
     if not target:
         rep.add("通路", "skip", "未给 --chat-id/--user-id",
                 fix="加 --chat-id <目标> 可跑 3 秒真实自检", ref="k")
         return
-    cfg = bs.PLATFORMS[rep.platform]
-    script = os.path.join(HERE, cfg["listen_script"])
-    argv = [sys.executable, script,
-            "--chat-id" if chat_id else "--user-id", target,
-            "--interval", "2", "--timeout", "3"]
     try:
-        p = subprocess.run(argv, capture_output=True, text=True, timeout=90)
-    except subprocess.TimeoutExpired:
-        rep.add("通路", "fail", "自检超时（>90s）",
-                fix="检查网络/CLI 卡死；单独跑一次该 CLI 命令看耗时", ref="d")
+        r = bs.probe_path(rep.platform, target, by_user=bool(user_id))
+    except Exception as e:
+        rep.add("通路", "fail", f"{e.__class__.__name__}: {e}",
+                fix="单独跑一次监听脚本看输出", ref="d")
         return
-    if p.returncode in (0, 3):
-        rep.add("通路", "ok", "3 秒内拉取正常" + ("（命中存量）" if p.returncode == 0 else "，无新消息"))
-    else:
-        err = (p.stderr or "").strip().splitlines()
-        first = err[0][:160] if err else f"rc={p.returncode}"
-        ref = "c" if "SCHEMA_MISMATCH" in (p.stderr or "") else "b"
-        rep.add("通路", "fail", first, fix=f"python3 scripts/bootstrap.py --probe {rep.platform}", ref=ref)
+    if r["ok"]:
+        rep.add("通路", "ok", "3 秒内拉取正常" + ("（命中存量）" if r["hit"] else "，无新消息"))
+        return
+    suffix = "（已重试 1 次）" if r["retried"] else ""
+    detail = f"{r['summary']}{suffix}"
+    if r["rc"] == 124:
+        detail = f"自检超时（>90s，CLI 卡死？）{suffix}"
+    ref = {"network": "d", "schema": "c", "auth": "b", "permission": "b3"}.get(r["kind"], "d")
+    fix = {
+        "network": "检查网络 / 代理 / DNS 后重跑；"
+                   "curl -sS -o /dev/null https://open.feishu.cn 看是否可达",
+        "auth": f"python3 scripts/reauth.py {rep.platform}" if rep.platform == "feishu"
+                else f"{rep.cli} 重新授权",
+        "permission": "python3 scripts/reauth.py feishu --policy minimal --allow-add",
+        "schema": f"python3 scripts/bootstrap.py --probe {rep.platform}",
+    }.get(r["kind"], f"python3 scripts/bootstrap.py --probe {rep.platform} 看真实输出")
+    rep.add("通路", "fail", detail, fix=fix, ref=ref)
 
 
 def check_update(rep):
@@ -402,8 +444,12 @@ def main():
     args = ap.parse_args()
 
     env = bs.load_env()
-    targets = [args.platform] if args.platform else ["feishu", "wecom", "dingtalk"]
-    reps, explicit = [], bool(args.platform)
+    if args.platform:
+        targets, skipped = [args.platform], []
+    else:
+        targets = enabled_platforms(env)
+        skipped = [p for p in bs.PLATFORMS if p not in targets]
+    reps = []
 
     for name in targets:
         cfg = bs.PLATFORMS[name]
@@ -431,14 +477,15 @@ def main():
     healthy = [r.platform for r in reps if not r.has_fail()]
     broken = [r.platform for r in reps if r.has_fail()]
     # 退出码语义 = 「现在能不能用」：
-    #   指定平台 → 该平台必须全绿；全量体检 → 只要有一个平台可用就不阻塞
-    blocking = bool(args.platform and broken) or (not healthy)
+    #   指定平台 → 该平台必须全绿；全量体检 → 只要有一个平台可用就不阻塞；
+    #   未启用的平台不检查、不参与判定（用户不用的平台不该把体检拉红）。
+    blocking = bool(args.platform and broken) or (not healthy and bool(reps))
     if args.json:
         print(json.dumps({
             "ok": not blocking,
             "platforms": {r.platform: {"status": r.worst(), "checks": r.items} for r in reps},
             "summary": {"fail": len(fails), "warn": len(warns),
-                        "healthy": healthy, "broken": broken},
+                        "healthy": healthy, "broken": broken, "skipped": skipped},
         }, ensure_ascii=False, indent=2))
     else:
         print("\n== 结论 ==")
@@ -469,6 +516,9 @@ def main():
                         print(f"      手册: {TS}#{it['ref']}")
             if warns:
                 print(f"  [warn] {len(warns)} 项提醒（不阻塞）")
+            if skipped:
+                print(f"  [skip] 未启用: {', '.join(skipped)}"
+                      f"（不检查；需要时跑 python3 scripts/doctor.py {skipped[0]}）")
         print(f"\n  分诊表: {TS}#triage    回归清单: {TS}#k")
         if broken:
             print("  提示: 任何一项 fail 都不要在该平台上挂监听——会静默失效（能拉取但永不命中）。")

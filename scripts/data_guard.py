@@ -64,7 +64,7 @@ def redact_sensitive(text):
     value = str(text or "")
     value = re.sub(r"-----BEGIN [^-]+-----.*?-----END [^-]+-----",
                    "<PRIVATE_KEY>", value, flags=re.S)
-    value = re.sub(r"https?://[^\s<>\"')\]]+", "<URL>", value, flags=re.I)
+    value = re.sub(r"https?://[^\s<>\"')\]\\]+", "<URL>", value, flags=re.I)
     value = re.sub(r"\bBearer\s+[A-Za-z0-9._~+/=-]+", "Bearer <REDACTED>",
                    value, flags=re.I)
     value = re.sub(

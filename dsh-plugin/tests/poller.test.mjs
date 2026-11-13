@@ -87,7 +87,7 @@ class FakeTurns {
   }
 }
 
-function setup() {
+function setup(logger = { warn() {}, info() {}, error() {} }) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "im-poll-"));
   const state = new State(dir);
   state.load();
@@ -95,7 +95,7 @@ function setup() {
   state.data.config.poll.cooldown_sec = 0;
   const im = { adapter: () => adapter };
   const adapter = new FakeAdapter();
-  const poller = new Poller({ state, im, logger: { warn() {}, info() {}, error() {} } });
+  const poller = new Poller({ state, im, logger });
   const turns = new FakeTurns();
   poller.turns = turns;
   return { state, poller, adapter, turns };
@@ -1406,4 +1406,25 @@ test("auto triage with unknown member count also skips the desk turn", async () 
   assert.equal(chat.duty.state, "ignore");
   assert.match(chat.duty.reason, /未知/);
   assert.equal(deskCalls, 0);
+});
+
+test("fetch failure keeps last_error one line and puts the raw detail in the host log", async () => {
+  const warns = [];
+  const { state, poller, adapter } = setup({
+    warn: (...args) => warns.push(args.join(" ")), info() {}, error() {},
+  });
+  adapter.fetchMessages = async () => ({
+    ok: false,
+    messages: [],
+    error: "网络传输失败：dial tcp: i/o timeout",
+    error_detail: '{"ok":false,"error":{"type":"network"}} oc_abc123…7890',
+  });
+  const chat = state.ensureChat("feishu", "oc_dm", { kind: "p2p" });
+  chat.watching = true;
+  const r = await poller.pollChat("feishu", "oc_dm");
+  assert.equal(r.fetched, false);
+  assert.equal(chat.last_error, "网络传输失败：dial tcp: i/o timeout");
+  assert.equal(chat.last_error.includes("\n"), false);
+  assert.ok(poller.errors.every((e) => !e.msg.includes("\n")));
+  assert.ok(warns.some((w) => w.includes("fetch feishu/oc_dm") && w.includes("network")));
 });

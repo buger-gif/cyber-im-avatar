@@ -4,7 +4,10 @@ import os from "node:os";
 import path from "node:path";
 import test from "node:test";
 
-import { Adapter, IM, dig, parseTs, redact, isMention, feishuResources } from "../lib/im.js";
+import {
+  Adapter, IM, dig, parseTs, redact, isMention, feishuResources,
+  describeCliError, isTransientError,
+} from "../lib/im.js";
 import { MediaStore } from "../lib/media.js";
 
 test("dig follows candidate paths and falls back", () => {
@@ -330,4 +333,97 @@ test("feishu full baseline list uses page-all and page-size 100", async () => {
   assert.equal(seen[seen.indexOf("--types") + 1], "group");
   assert.ok(seen.includes("--page-limit"));
   assert.ok(seen.includes("100"));
+});
+
+test("describeCliError classifies transport failures and masks IDs", () => {
+  const raw = [
+    "ERROR: 初始化水位失败:",
+    JSON.stringify({
+      ok: false, identity: "user",
+      error: {
+        type: "network", subtype: "transport",
+        message: 'API call failed: Get "https://open.feishu.cn/open-apis/im/v1/messages'
+          + '?container_id=oc_c56748207171a8ce2744e7826f6ed313": dial tcp 1.2.3.4:443: i/o timeout',
+      },
+    }),
+  ].join("\n");
+  const r = describeCliError(raw);
+  assert.equal(r.kind, "network");
+  assert.equal(isTransientError(r.kind), true);
+  assert.match(r.summary, /^网络传输失败：/);
+  assert.equal(r.summary.includes("\n"), false);
+  assert.equal(r.summary.includes("oc_c56748207171a8ce2744e7826f6ed313"), false);
+  assert.equal(r.summary.includes("https://open.feishu.cn"), false);
+});
+
+test("describeCliError keeps API codes and does not retry them", () => {
+  const r = describeCliError(JSON.stringify({
+    ok: false,
+    error: { type: "api", code: 230001, message: "invalid container_id: oc_abc123def4567890" },
+  }));
+  assert.equal(r.kind, "api");
+  assert.equal(isTransientError(r.kind), false);
+  assert.match(r.summary, /接口报错 230001/);
+  assert.equal(r.summary.includes("oc_abc123def4567890"), false);
+});
+
+test("fetchMessages retries one transport failure and succeeds", async () => {
+  const a = new Adapter("feishu", { dir: "/nonexistent-im-test" });
+  let calls = 0;
+  a.run = async () => {
+    calls += 1;
+    if (calls === 1) {
+      return {
+        rc: 1, json: null,
+        raw: JSON.stringify({
+          ok: false,
+          error: { type: "network", subtype: "transport", message: "dial tcp: i/o timeout" },
+        }),
+      };
+    }
+    return {
+      rc: 0, raw: "",
+      json: { data: { messages: [{ message_id: "om_1", sender: { id: "ou_a" }, content: "hi", create_time: "2026-11-13 15:00" }] } },
+    };
+  };
+  const r = await a.fetchMessages("oc_chat", { limit: 3 });
+  assert.equal(calls, 2);
+  assert.equal(r.ok, true);
+  assert.equal(r.messages.length, 1);
+  assert.equal(r.error, "");
+});
+
+test("fetchMessages does not retry API errors and returns a readable cause", async () => {
+  const a = new Adapter("feishu", { dir: "/nonexistent-im-test" });
+  let calls = 0;
+  a.run = async () => {
+    calls += 1;
+    return {
+      rc: 1, json: null,
+      raw: JSON.stringify({
+        ok: false,
+        error: { type: "api", code: 230001, message: "invalid container_id: oc_abc123def4567890" },
+      }),
+    };
+  };
+  const r = await a.fetchMessages("oc_chat", { limit: 3 });
+  assert.equal(calls, 1);
+  assert.equal(r.ok, false);
+  assert.match(r.error, /接口报错 230001/);
+  assert.equal(r.error.includes("\n"), false);
+  assert.equal(r.error.includes("oc_abc123def4567890"), false);
+  assert.match(r.error_detail, /oc_abc123…7890/);
+});
+
+test("fetchMessages does not retry our own timeout kill (rc 124)", async () => {
+  const a = new Adapter("feishu", { dir: "/nonexistent-im-test" });
+  let calls = 0;
+  a.run = async () => {
+    calls += 1;
+    return { rc: 124, json: null, raw: "\ntimeout" };
+  };
+  const r = await a.fetchMessages("oc_chat", { limit: 3 });
+  assert.equal(calls, 1);
+  assert.equal(r.ok, false);
+  assert.match(r.error, /网络传输失败/);
 });

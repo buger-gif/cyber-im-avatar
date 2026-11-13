@@ -594,6 +594,105 @@ def run(cli, args, timeout=20):
         return p.returncode, None, raw
 
 
+def first_json(text):
+    """从可能夹着前导文本的输出里取第一个 JSON 对象。"""
+    s = str(text or "")
+    for i, ch in enumerate(s):
+        if ch != "{":
+            continue
+        try:
+            obj, _ = json.JSONDecoder().raw_decode(s[i:])
+        except Exception:
+            continue
+        if isinstance(obj, dict):
+            return obj
+    return None
+
+
+def _clean_cause(text, limit=120):
+    """错误原文 → 一行短原因：去 URL、压空白、ID 打码、截断。"""
+    value = redact_sensitive(str(text or ""))
+    value = re.sub(r"[\r\n\t]+", " ", value)
+    value = re.sub(r"\s{2,}", " ", value).strip(" ：:。，,")
+    return value[:limit]
+
+
+_AUTH_CODES = {99991663, 99991664, 99991668}
+_NET_HINTS = ("timeout", "timed out", "dial tcp", "connection reset", "connection refused",
+              "no such host", "tls handshake", "context deadline exceeded", "transport",
+              "network is unreachable", "i/o timeout")
+_PERM_HINTS = ("permission", "scope", "forbidden", "权限", "not authorized to")
+
+
+def classify_cli_error(text):
+    """CLI 错误输出 → (kind, 一行中文结论)。
+
+    kind: network / auth / permission / schema / api / other。
+    判定只认结构化 error.type 与明确的超时关键字，不猜。
+    """
+    raw = str(text or "")
+    if "SCHEMA_MISMATCH" in raw:
+        return "schema", "字段漂移：" + _clean_cause(raw.replace("SCHEMA_MISMATCH", "", 1))
+    obj = first_json(raw)
+    err = obj.get("error") if isinstance(obj, dict) else None
+    err = err if isinstance(err, dict) else {}
+    etype = str(err.get("type") or "").lower()
+    sub = str(err.get("subtype") or "").lower()
+    msg = str(err.get("message") or "")
+    try:
+        code = int(err.get("code"))
+    except (TypeError, ValueError):
+        code = 0
+    low = " ".join((etype, sub, msg or raw)).lower()
+    if etype == "network" or any(h in low for h in _NET_HINTS):
+        kind, head = "network", "网络传输失败"
+    elif etype == "auth" or code in _AUTH_CODES or any(
+            h in low for h in ("token invalid", "token expired", "unauthorized", "未登录")):
+        kind, head = "auth", "授权已失效"
+    elif any(h in low for h in _PERM_HINTS):
+        kind, head = "permission", "缺少权限"
+    elif code:
+        kind, head = "api", f"接口报错 {code}"
+    else:
+        kind, head = "other", "拉取失败"
+    cause = _clean_cause(msg or raw)
+    return kind, (f"{head}：{cause}" if cause else head)
+
+
+def is_transient_error(kind):
+    """只重试传输层抖动；授权 / 权限 / 字段漂移重试无意义。"""
+    return kind == "network"
+
+
+def listen_probe(platform, target, by_user=False, window=3, wait=90):
+    """跑一轮真实监听（默认 3 秒窗口），返回 (rc, stdout, stderr)。"""
+    cfg = PLATFORMS[platform]
+    script = os.path.join(os.path.dirname(os.path.abspath(__file__)), cfg["listen_script"])
+    argv = [sys.executable, script, "--user-id" if by_user else "--chat-id", target,
+            "--interval", "2", "--timeout", str(window)]
+    try:
+        p = subprocess.run(argv, capture_output=True, text=True, timeout=wait)
+    except FileNotFoundError:
+        return 127, "", f"listener not found: {script}"
+    except subprocess.TimeoutExpired:
+        return 124, "", f"自检超时（>{wait}s，CLI 卡死？）"
+    return p.returncode, (p.stdout or "").strip(), (p.stderr or "").strip()
+
+
+def probe_path(platform, target, by_user=False, retry=True):
+    """3 秒通路自检 + 传输层失败重试一次。返回结论字典（ok/rc/hit/kind/summary）。"""
+    rc, out, err = listen_probe(platform, target, by_user)
+    kind, summary = classify_cli_error(err or out)
+    retried = False
+    if rc not in (0, 3) and retry and is_transient_error(kind):
+        time.sleep(0.5)
+        retried = True
+        rc, out, err = listen_probe(platform, target, by_user)
+        kind, summary = classify_cli_error(err or out)
+    return {"ok": rc in (0, 3), "rc": rc, "hit": rc == 0, "kind": kind,
+            "summary": summary, "retried": retried, "stdout": out}
+
+
 def fmt(tmpl, **kw):
     """模板展开：未提供的占位键保留原样，不会抛异常。"""
     out = []
@@ -881,23 +980,27 @@ def probe(platform, chat_id="", user_id=""):
 
 
 def selftest(platform, chat_id):
-    """跑一轮真实监听（3 秒），用退出码判断通路是否成立。"""
-    cfg = PLATFORMS[platform]
-    script = os.path.join(os.path.dirname(os.path.abspath(__file__)),
-                          cfg["listen_script"])
-    p = subprocess.run([sys.executable, script, "--chat-id", chat_id,
-                        "--interval", "2", "--timeout", "3"],
-                       capture_output=True, text=True, timeout=60)
-    if p.returncode == 3:
+    """跑一轮真实监听（3 秒），用退出码判断通路是否成立；传输层失败重试一次。"""
+    r = probe_path(platform, chat_id)
+    suffix = "（已重试 1 次）" if r["retried"] else ""
+    if r["hit"]:
+        print(f"[ok] {platform} 自检通过：命中存量消息（--init zero 效果）")
+        print("     " + (r["stdout"] or "")[:300])
+        return True
+    if r["ok"]:
         print(f"[ok] {platform} 自检通过：拉取通路正常，3 秒内无新消息")
         return True
-    if p.returncode == 0:
-        print(f"[ok] {platform} 自检通过：命中存量消息（--init zero 效果）")
-        print("     " + (p.stdout or "").strip()[:300])
-        return True
-    print(f"[fail] {platform} 自检失败 rc={p.returncode}", file=sys.stderr)
-    print((p.stderr or "")[:1500], file=sys.stderr)
-    print(f"提示: 先用 --probe {platform} <会话ID> 对照实际字段，再写 overrides", file=sys.stderr)
+    print(f"[fail] {platform} 自检失败 rc={r['rc']}{suffix}", file=sys.stderr)
+    print(r["summary"], file=sys.stderr)
+    if r["kind"] == "network":
+        print("提示: 检查网络 / 代理 / DNS 后重跑；可先 curl -sS -o /dev/null "
+              "https://open.feishu.cn 看是否可达", file=sys.stderr)
+    elif r["kind"] == "schema":
+        print(f"提示: 先用 --probe {platform} <会话ID> 对照实际字段，再写 overrides",
+              file=sys.stderr)
+    else:
+        print(f"提示: 先用 --probe {platform} <会话ID> 看真实输出；"
+              f"分项排查跑 python3 scripts/doctor.py {platform}", file=sys.stderr)
     return False
 
 

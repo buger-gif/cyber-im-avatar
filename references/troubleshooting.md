@@ -19,6 +19,7 @@
 | `command not found` / `CLI not found: xxx` | CLI 没装或不在 PATH | `which lark-cli wecom-cli dws` | [A](#a-cli-缺失-版本漂移命令改名字段消失) |
 | `unrecognized subcommand` / `unknown flag` | CLI 升级后命令改名 | `lark-cli update --check` / `dws upgrade --check` | [A](#a-cli-缺失-版本漂移命令改名字段消失) |
 | `SCHEMA_MISMATCH keys: ...` | 返回字段路径变了 | `python3 scripts/bootstrap.py --probe <平台>` | [C](#c-schemamismatch返回字段路径漂移) |
+| `type: network, subtype: transport` / `API call failed: Get …` | 瞬时断网 / DNS / 代理 | 自检与拉取已自动重试一次；仍失败再查网络 | [D](#d-拉取成功但拿不到消息) |
 | `ERROR: 无法获取本人 ID` | 未登录 / 授权过期 / whoami 改字段 | `lark-cli doctor` / `dws doctor` / `wecom-cli auth show` | [B](#b-授权到期-未登录要引导用户授权) |
 | 体检报 `tokenStatus` 非 `valid`、`authenticated:false`、`Status: unauthorized` | 授权到期 | 见 §B.2 重新授权 | [B](#b-授权到期-未登录要引导用户授权) |
 | 授权同意页出现你**没用过**的权限（如「妙搭」） | 续期命令漏了 `--scope`，默认 `--domain all` 全量申请 | `python3 scripts/reauth.py feishu --show-scope` 核对，应为「新增 0」 | [B.3](#b3-权限范围只续期不扩权自适应所有人) |
@@ -42,7 +43,9 @@ python3 scripts/doctor.py --check-update           # 额外查各 CLI 是否有�
 python3 scripts/doctor.py --json                   # 机器可读，便于 agent 决策
 ```
 
-`doctor.py` 每一项失败都会打印 `→ 修复:` 一行，可直接照抄。
+`doctor.py` 每一项失败都会打印 `→ 修复:` 一行，可直接照抄。全平台体检只查
+`state.json` 的 `config.platforms` 里启用的平台；CLI 自己的 `warn`（例如有新版本）
+只算提醒、不阻塞。通路自检遇到传输层失败会自动重试一次，两次都失败才判 `fail`。
 
 CLI 自带的体检（**优先用它们，它们知道自己的检查项**）：
 
@@ -339,6 +342,19 @@ python3 scripts/bootstrap.py --selftest wecom <目标>
 | 间歇性空 + 偶发 429 | 触发限流 | 降频（`--interval 60+`）、禁止全量拉、飞书加 `--page-limit` |
 | 消息在但正文为空 | 富文本/卡片/系统消息，正文路径不同 | probe 看该条原文字段；飞到 `cmd_mget` 补全 |
 | 只能看到 bot 消息 | 用了 bot 身份 | 全部读写加 `--as user` |
+| `type: network, subtype: transport`、`API call failed: Get …` | 断网 / DNS / 代理 / TLS | 见下方「传输层失败」 |
+
+
+### D.1 传输层失败（network / transport）
+
+一次失败不等于链路坏了：自检与读请求都会重试一次，仍失败才判 `fail`。
+
+```bash
+curl -sS -o /dev/null -w '%{http_code}\n' https://open.feishu.cn/open-apis/im/v1/messages
+python3 scripts/doctor.py feishu --chat-id <ID>   # 会重试一次并给出归一原因
+```
+
+curl 有响应（401 / 403 也算网络通）→ 看授权 / 权限；curl 超时 → 查代理、DNS、VPN。
 
 <a id="e"></a>
 

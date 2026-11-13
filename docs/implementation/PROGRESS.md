@@ -5,12 +5,13 @@
 
 ## 更新时间
 
-2026-11-13（0.20.0 已发布：0046 自 @ 关键词启动值班待真机；手动停盯后旧 @ 不再重新分诊；0045 已归档；0044 / 0043 / 0042 / 0040 / 0039 / 0038 待真机）
+2026-11-13（0.20.0 已发布：0046 自 @ 关键词启动值班待真机；手动停盯后旧 @ 不再重新分诊；0045 已归档；0044 / 0043 / 0042 / 0040 / 0039 / 0038 待真机；自检分诊 0047 已验收归档）
 
 ## 最近批次
 
 | 日期 | 主题 | 证据 |
 | --- | --- | --- |
+| 2026-11-13 | 自检分诊（0047）：拉取与通路自检对 `network` 类失败重试一次；CLI 错误归一为一行中文（网络 / 授权 / 权限 / 字段漂移 / 接口报错）并给 ID 打码，原文进宿主日志；`cli doctor` 的 warn 不再阻塞、全平台体检只查启用平台；3 秒自检窗口内全部拉取失败按失败退出，不再被超时掩盖；skill 213 绿、Node 293 绿 | `dsh-plugin/lib/{im,poller}.js`、`scripts/{bootstrap,doctor,listen_core,data_guard}.py`、`tests/run_tests.py`、`dsh-plugin/tests/`、`docs/specs/archive/0047-自检分诊.md` |
 | 2026-11-13 | 0.20.0 发布（0046 自 @ 启动指令 + 手动停盯不再复检旧 @）：全量 gate 全绿；CI Trusted Publishing 发布成功并带 provenance，`v0.20.0` tag；npm latest / tarball / 市场索引都指向 0.20.0；版本自检 3 分钟判红（registry 3 分 8 秒才可见），重跑后绿，窗口已放宽到 5 分钟 | `CHANGELOG.md`、`dsh-plugin/package.json`、`dsh-plugin/market/index.json`、`docs/implementation/runbooks/publish.md`、[run 43360663970](https://github.com/buger-gif/cyber-im-avatar/actions/runs/43360663970) |
 | 2026-11-13 | 手动停盯后旧 @ 不再重新分诊：`recordUserDuty(..., "ignore")` 把 `duty.sweep_epoch` 推到停盯时刻、清 `event_id` 并删未应用决策文件；sweep 另按 `by=user` + `decided_at` 兜老 state；Node 287 绿、gate 全量绿 | `dsh-plugin/lib/{app,poller}.js`、`dsh-plugin/tests/{app,poller}.test.mjs` |
 | 2026-11-12 | 自 @ 关键词启动值班（0046）：`config.command.enabled/start_keyword`；已值守会话快车道即时识别，未值守飞书会话每分钟一条 `+messages-search`（本人发送 + @本人，只取一页）发现；同一 `platform:chat_id` 只允许一个值班（已有会话 / 正在启动 → `already`）；命中关键词的 `cmd` 被开关消费，开场载荷说明不要回复；面板设置卡 + 会话详情结果；ADR 0015；契约 01/02/03、架构 02/03、README、SKILL、references 同步；Node 全绿、gate 全量绿；待真机 | `dsh-plugin/lib/{command,im,poller,turns,state,app}.js`、`dsh-plugin/web/panel.js`、`dsh-plugin/lib/client.js`、`dsh-plugin/tests/`、`docs/specs/active/0046-自at关键词启动值班.md` |

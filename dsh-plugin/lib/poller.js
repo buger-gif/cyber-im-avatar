@@ -532,6 +532,10 @@ export class Poller {
       chat.last_sync = now;
       this.state.save();
       this.logError(platform, chat.name, msg);
+      // 面板只放一行结论；CLI 原文进宿主日志，排障时看日志。
+      if (r.error_detail) {
+        this.logger?.warn?.(`[im-standin] fetch ${platform}/${chatId}: ${r.error_detail}`);
+      }
       return { fetched: false, error: msg };
     }
     chat.last_error = "";

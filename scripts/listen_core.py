@@ -379,17 +379,24 @@ def main(platform, adapter):
         save_watermark(state_file, wm)
 
     fail_streak = 0
+    seen_ok = False
+    last_error = ""
 
     while True:
         # 闲置退出优先于续期：到点就不要再用一次重挂把值守拉起来。
         if idle_deadline is not None and time.time() >= idle_deadline:
             idle_exit()
         if deadline and time.time() > deadline:
+            # 短窗口自检里一次都没拉成功：超时必须算失败，不能报成「超时未命中」。
+            if not seen_ok and fail_streak and last_error:
+                print(f"ERROR: 自检窗口内拉取全部失败: {last_error}", file=sys.stderr)
+                sys.exit(2)
             timeout_exit()
         ln.window = time_window(args.lookback_min)
         ok, res = ln.fetch_messages(target, by_user)
         if not ok:
             fail_streak += 1
+            last_error = res
             if fail_streak >= 5:
                 print(f"ERROR: 连续 5 轮拉取失败（登录态/权限/schema 漂移）: {res}",
                       file=sys.stderr)
@@ -397,6 +404,7 @@ def main(platform, adapter):
             sleep_capped(args.interval, next_deadline())
             continue
         fail_streak = 0
+        seen_ok = True
 
         new_msgs = []
         for m in res:  # 已统一为最新在前

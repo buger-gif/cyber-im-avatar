@@ -1,5 +1,26 @@
 # Changelog
 
+## 未发布
+
+### 未发布：自检分诊（spec 0047）
+
+- **瞬时网络失败不再留红**：拉取消息与通路自检遇到 `network` / `transport` 失败会重试一次
+  （0.5 秒退避）；重试成功即恢复，两次都失败才判不可用。发送等写操作不重试，避免重复消息。
+- **错误变成一行结论**：CLI 的 `{error:{type,subtype,message,code}}` 归一为
+  「网络传输失败 / 授权已失效 / 缺少权限 / 字段漂移 / 接口报错 <code>」；URL 收敛为 `<URL>`，
+  会话 / 用户 ID 打码。面板只放这一行，CLI 原文进宿主日志。
+- **体检不再误判**：`lark-cli doctor` 自己的 `warn`（有新版本）只算提醒，不再把平台判成
+  不可用、不再以退出码 2 拦截；全平台体检只查 `config.platforms` 里启用的平台，
+  未安装 CLI 的企微 / 钉钉不再报 fail。
+- **通路自检能看见真原因**：不再只取 stderr 第一行（原来只会显示
+  `ERROR: 初始化水位失败:`）；3 秒窗口里一次都没拉成功时按失败退出，不再被
+  「超时未命中」掩盖成成功。
+- **接线**：`dsh-plugin/lib/im.js`（归一 + 读请求重试 + ID 打码）、`dsh-plugin/lib/poller.js`、
+  `scripts/bootstrap.py`、`scripts/doctor.py`、`scripts/listen_core.py`、
+  `scripts/data_guard.py`（转义 URL 不再破坏 JSON）；测试与
+  `references/troubleshooting.md` 同步。
+- **兼容**：无新配置键、无路由 / 数据结构变化，不需要迁移。
+
 ## 0.20.0 — 2026-11-13
 
 ### 0.20.0：自 @ 关键词启动值班（spec 0046）

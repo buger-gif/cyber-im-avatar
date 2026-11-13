@@ -117,11 +117,12 @@ poller 发现新群 / sweep 命中 @
 | --- | --- |
 | 轮询在干什么、有没有报错 | `~/.dsh/web.log`（宿主 stdout）+ 面板「体检」页 |
 | 单个接口返回什么 | 面板同源 fetch；没有端口可 curl，也没有 rpc.py |
-| 体检（CLI / 授权 / 通路 / DSH / skill） | 面板「体检」按钮 → `GET /api/doctor` |
+| 体检（CLI / 授权 / 通路 / DSH / skill） | 面板「体检」按钮 → `GET /api/doctor`；只查 `config.platforms` 里启用的平台 |
 | 面板白屏 / 401 / 宿主没起来 | `docs/implementation/runbooks/troubleshoot.md` |
 
 运行期不写轮询日志文件：`poller.errors` 只在内存里留最近 40 条，重启清零；
-正文与凭据不进日志。
+面板与 `poller.errors` 只放归一后的一行结论（网络 / 授权 / 权限 / 字段漂移），
+CLI 脱敏原文写宿主 stdout；正文与凭据不进日志。
 
 ## 升级
 

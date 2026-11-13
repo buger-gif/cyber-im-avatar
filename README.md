@@ -180,7 +180,8 @@ python3 scripts/doctor.py feishu --chat-id oc_xxx  # 附带 3 秒真实通路自
 python3 scripts/doctor.py --check-update           # 各 CLI 是否有新版
 ```
 
-每项失败都给 `→ 修复:` 一行和手册锚点。完整故障索引在
+每项失败都给 `→ 修复:` 一行和手册锚点。体检只查启用的平台；CLI 的新版本提醒只算
+warning，不会把平台判成不可用；网络类失败会先自动重试一次。完整故障索引在
 **[`references/troubleshooting.md`](references/troubleshooting.md)**，按症状查：
 
 | 症状 | 处理 |
