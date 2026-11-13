@@ -13,7 +13,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
-import { COMMAND_RESULTS, normalizeKeyword } from "./command.js";
+import { COMMAND_RESULTS, normalizeKeyword, normalizeReplyText } from "./command.js";
 
 export const MIN_INTERVAL_MIN = 10;
 export const MAX_INTERVAL_MIN = 240;
@@ -47,8 +47,13 @@ export const DEFAULT_CONFIG = {
   send_mode_default: "draft",
   // 面板「加入值守时绑定工作区」的持久化选择；空 = 未显式选择，分诊按最近在用→DSH 默认推断。
   join_workspace: "",
-  // 本人 @ 自己 + 关键词 = 在当前会话启动值班（spec 0046）。
-  command: { enabled: true, start_keyword: "启动" },
+  // 本人 @ 自己 + 关键词 = 在当前会话启动值班（spec 0046）；真正拉起值班后回一句话（0048）。
+  command: {
+    enabled: true,
+    start_keyword: "启动",
+    reply_enabled: true,
+    reply_text: "支持用户自定义，默认就是 24 小时值班，上线 @ 我即可触发。",
+  },
   dsh: { timeout: 600, turn_cap_sec: 3600, full_access: false, warm_min: 55, ack_reaction: true },
   duty: {
     enabled: true,
@@ -168,10 +173,19 @@ export function normalizeConfig(input) {
   cfg.join_workspace = typeof cfg.join_workspace === "string" ? cfg.join_workspace.trim() : "";
   // 启动指令：关键词空 = 关闭；开关只认真实 false/0/"false" 一类显式关闭值。
   const rawCmd = cfg.command || {};
-  const cmd = { enabled: rawCmd.enabled, start_keyword: rawCmd.start_keyword };
+  const cmd = {
+    enabled: rawCmd.enabled,
+    start_keyword: rawCmd.start_keyword,
+    reply_enabled: rawCmd.reply_enabled,
+    reply_text: rawCmd.reply_text,
+  };
   cmd.enabled = !(cmd.enabled === false || cmd.enabled === 0 ||
     ["false", "no", "off", "0", ""].includes(String(cmd.enabled).trim().toLowerCase()));
   cmd.start_keyword = normalizeKeyword(cmd.start_keyword);
+  // 启动回执（spec 0048）：默认开；文案空 = 不发。
+  cmd.reply_enabled = !(cmd.reply_enabled === false || cmd.reply_enabled === 0 ||
+    ["false", "no", "off", "0", ""].includes(String(cmd.reply_enabled).trim().toLowerCase()));
+  cmd.reply_text = normalizeReplyText(cmd.reply_text);
   cfg.command = cmd;
   // 退役键：不让它们从旧 panel.json 混进运行配置。
   for (const k of RETIRED_KEYS) delete cfg[k];
@@ -194,6 +208,21 @@ export function publicConfig(cfg, hostReady = false) {
     label: hostReady ? "跟随 DSH 配置" : "DSH 宿主未就绪",
   };
   return out;
+}
+
+/** 启动回执的落盘形状（spec 0048）；at=0 表示还没发过。 */
+export function emptyCommandReply() {
+  return { at: 0, ok: false, msg_id: "", error: "" };
+}
+
+function normalizeCommandReply(input) {
+  if (!input || typeof input !== "object") return emptyCommandReply();
+  return {
+    at: Number(input.at) || 0,
+    ok: input.ok === true,
+    msg_id: String(input.msg_id || ""),
+    error: String(input.error || "").slice(0, 160),
+  };
 }
 
 function safeReadJson(file) {
@@ -397,8 +426,9 @@ export class State {
             msg_id: String(input.command.msg_id || ""),
             result: COMMAND_RESULTS.includes(input.command.result) ? input.command.result : "",
             reason: String(input.command.reason || "").slice(0, 160),
+            reply: normalizeCommandReply(input.command.reply),
           }
-        : { at: 0, keyword: "", msg_id: "", result: "", reason: "" },
+        : { at: 0, keyword: "", msg_id: "", result: "", reason: "", reply: emptyCommandReply() },
     };
     const seen = new Set();
     for (const m of (Array.isArray(input.recent) ? input.recent : [])) {

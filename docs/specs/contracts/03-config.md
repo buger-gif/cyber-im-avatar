@@ -27,6 +27,8 @@
 | `join_workspace` | `""` | 空或存在的绝对路径 | 面板「加入值守时绑定工作区」选择的持久化副本。自动分诊判定 `watch` / `trial` 后，给新值班会话按它落 `chats[].workspace`（已有显式绑定的不覆盖）。空 = 未显式选择：先取现有会话「最近在用」的工作区，再回落 DSH 默认。`POST /api/config` 对非空路径做真实目录校验，不存在则整次拒绝、不落库 |
 | `command.enabled` | `true` | true / false | 「本人 @ 自己 + 关键词 = 在当前会话启动值班」总开关（spec 0046）。关闭后自 @ 仍按普通 `cmd` 唤醒，不启动值班、不扫描 |
 | `command.start_keyword` | `"启动"` | 1–20 个字符；空串 = 关闭 | 启动关键词。去掉首尾空白、压缩空白、去控制字符后匹配；ASCII 大小写不敏感。设置接口拒绝超长与「启用 + 空关键词」，不静默截断 |
+| `command.reply_enabled` | `true` | true / false | 启动指令真正拉起新值班后，在该会话回一条纯文本回执（spec 0048）。只有 `result=started` 才发；`already` / `blocked` / `failed` 不发。关闭或文案为空都不发 |
+| `command.reply_text` | `"支持用户自定义，默认就是 24 小时值班，上线 @ 我即可触发。"` | 0–200 个字符；空串 = 不发 | 启动回执文案。去掉控制字符、压缩空白后发送；设置接口拒绝超长，不静默截断 |
 | `dsh.timeout` | `600` | 120–3600 秒 | **停滞**超时：这么久没有收到该会话的任何 `session/event`（工具/模型都没动静）才按卡死取消；有活动会不断重置，长任务不会被墙钟切掉 |
 | `dsh.turn_cap_sec` | `3600` | 0–86400 秒 | 单轮总时长兜底（从 turn 开始算，不随活动重置）；超时按失败处理并取消，`last_turn.reason` 记 `turn_cap`；`0` = 不设上限 |
 | `dsh.full_access` | `false` | true / false | 为 true 时把值守会话切到 DSH 内置 `danger-full-access`，agent 可直接写 `~/.im-standin/profiles`（人物档案；群还有会话工作本）；默认关闭，开启后 agent 能写整个 home |

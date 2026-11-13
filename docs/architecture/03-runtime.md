@@ -107,7 +107,8 @@ poller 发现新群 / sweep 命中 @
 - `send_mode_default` 是新建值守的默认发送方式（`draft` 仓库默认 / `auto`），面板设置页写入；
   已有值班的 `chats[].send_mode` 单独存，改默认不覆盖。老 state 缺键回 `draft`。
 - `command.enabled` / `command.start_keyword` 控制「本人 @ 自己 + 关键词启动值班」；关键词
-  空 = 关闭，启用时设置接口拒绝空值。改词立即生效，存量消息不回溯。
+  空 = 关闭，启用时设置接口拒绝空值。改词立即生效，存量消息不回溯。`reply_enabled` /
+  `reply_text` 控制启动成功后的那句回执；文案空 = 不发。
 - 平台白名单只有 `feishu` / `wecom`；`platforms` 里其他值被忽略，存量钉钉会话保留不拉取。
 - 风险拦截在 skill 铁律里（钱、承诺、外部群由 agent 停下等本人）；插件只持久化用户选择的发送方式，不做正文级闸门，也不恢复起草/审批管道。
 

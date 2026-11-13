@@ -6,7 +6,7 @@
  */
 import { publicConfig, normalizeConfig, SUPPORTED_PLATFORMS, SEND_MODES } from "./state.js";
 import { isMention } from "./im.js";
-import { keywordTooLong } from "./command.js";
+import { keywordTooLong, replyTooLong } from "./command.js";
 import * as workspaces from "./workspaces.js";
 import * as sessions from "./sessions.js";
 import { chatPersonId, excerpt } from "./profiles.js";
@@ -727,6 +727,11 @@ export class App {
     if (body?.command && Object.prototype.hasOwnProperty.call(body.command, "start_keyword") &&
         keywordTooLong(body.command.start_keyword)) {
       return { ok: false, reason: "启动关键词最多 20 个字符" };
+    }
+    // 回执文案同样不静默截断；空串允许（等价于关掉回执）。
+    if (body?.command && Object.prototype.hasOwnProperty.call(body.command, "reply_text") &&
+        replyTooLong(body.command.reply_text)) {
+      return { ok: false, reason: "启动回执最多 200 个字符" };
     }
     const next = normalizeConfig(merged);
     if (next.command.enabled && !next.command.start_keyword) {

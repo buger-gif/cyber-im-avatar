@@ -4,7 +4,7 @@ import os from "node:os";
 import path from "node:path";
 import test from "node:test";
 
-import { State } from "../lib/state.js";
+import { DEFAULT_CONFIG, State } from "../lib/state.js";
 import { Poller } from "../lib/poller.js";
 import * as duty from "../lib/duty.js";
 
@@ -36,6 +36,9 @@ class FakeAdapter {
     this.self = { ok: true, self_id: "ou_me", name: "我", detail: "" };
     this.supportsAtMe = true;
     this.canMention = true;
+    this.sent = [];
+    this.sendOk = true;
+    this.sendError = "";
   }
   async whoami() { return this.self; }
   async fetchMessages(chatId, { limit = 10 } = {}) {
@@ -52,7 +55,12 @@ class FakeAdapter {
     return { ok: true, items: this.selfMentions };
   }
   async chatMembers() { return { ok: true, known: this.memberKnown, count: this.memberCount }; }
-  async sendText() { return { ok: true, message_id: "om_sent" }; }
+  async sendText(chatId, text) {
+    this.sent.push({ chatId, text });
+    return this.sendOk
+      ? { ok: true, message_id: "om_sent" }
+      : { ok: false, error: this.sendError || "send failed" };
+  }
   async search() { return { ok: true, items: [] }; }
   async searchChats() { return { ok: true, items: [] }; }
 }
@@ -749,6 +757,7 @@ test("a start command never opens a second duty in an already-watched chat", asy
   assert.equal(chat.dsh_session, "session-existing");
   assert.equal(chat.command.msg_id, "b1");
   assert.match(chat.command.reason, /没有重复创建/);
+  assert.equal(adapter.sent.length, 0, "已有值班不发启动回执");
 });
 
 test("a start command in an unwatched DM starts duty and opens one session", async () => {
@@ -801,6 +810,101 @@ test("a start command in an unwatched group defaults to mention-only", async () 
   assert.equal(turns.opens.length, 1);
   assert.equal(turns.opens[0].chat.kind, "group");
   assert.equal(turns.wakes.length, 0);
+});
+
+test("a started duty replies once in the chat with the configured text", async () => {
+  const { state, poller, adapter } = setup();
+  const chat = state.ensureChat("feishu", "oc_reply_dm", { name: "客户", kind: "p2p" });
+  adapter.messages = [msg("q0", 14000)];
+  await poller.pollChat("feishu", "oc_reply_dm");
+  adapter.messages = [
+    msg("q1", 14010, {
+      sender_id: "ou_me", sender_name: "我", content: "@我 启动",
+      mentions: [{ id: { open_id: "ou_me" } }],
+    }),
+    msg("q0", 14000),
+  ];
+  const r = await poller.pollChat("feishu", "oc_reply_dm", { force: true });
+  assert.equal(r.command.result, "started");
+  assert.equal(adapter.sent.length, 1, "启动成功只回一条");
+  assert.equal(adapter.sent[0].chatId, "oc_reply_dm");
+  assert.equal(adapter.sent[0].text, DEFAULT_CONFIG.command.reply_text);
+  assert.equal(chat.command.reply.ok, true);
+  assert.equal(chat.command.reply.msg_id, "om_sent");
+  assert.ok(chat.command.reply.at > 0);
+
+  // 再发一次：只记 already，不重发，也不抹掉上一次回执记录。
+  adapter.messages = [
+    msg("q2", 14020, {
+      sender_id: "ou_me", sender_name: "我", content: "@我 启动",
+      mentions: [{ id: { open_id: "ou_me" } }],
+    }),
+    msg("q1", 14010, {
+      sender_id: "ou_me", sender_name: "我", content: "@我 启动",
+      mentions: [{ id: { open_id: "ou_me" } }],
+    }),
+    msg("q0", 14000),
+  ];
+  const again = await poller.pollChat("feishu", "oc_reply_dm", { force: true });
+  assert.equal(again.command.result, "already");
+  assert.equal(adapter.sent.length, 1, "已有值班不重复发回执");
+  assert.equal(chat.command.reply.ok, true, "already 不抹掉上次回执记录");
+});
+
+test("a started duty in a group replies too, and a send failure keeps the duty", async () => {
+  const { state, poller, adapter } = setup();
+  const chat = state.ensureChat("feishu", "oc_reply_grp", { name: "项目群", kind: "group" });
+  adapter.messages = [msg("s0", 14100)];
+  await poller.pollChat("feishu", "oc_reply_grp");
+  adapter.sendOk = false;
+  adapter.sendError = "im:message:send 无权限";
+  adapter.messages = [
+    msg("s1", 14110, {
+      sender_id: "ou_me", sender_name: "我", content: "@我 启动",
+      mentions: [{ id: { open_id: "ou_me" } }],
+    }),
+    msg("s0", 14100),
+  ];
+  const r = await poller.pollChat("feishu", "oc_reply_grp", { force: true });
+  assert.equal(r.command.result, "started", "回执失败不影响启动结果");
+  assert.equal(chat.watching, true, "回执失败不回滚值班");
+  assert.equal(adapter.sent.length, 1);
+  assert.equal(chat.command.reply.ok, false);
+  assert.match(chat.command.reply.error, /无权限/);
+});
+
+test("start reply is skipped when disabled or when the text is empty", async () => {
+  const { state, poller, adapter } = setup();
+  state.data.config.command.reply_enabled = false;
+  state.ensureChat("feishu", "oc_reply_off", { name: "客户", kind: "p2p" });
+  adapter.messages = [msg("t0", 14200)];
+  await poller.pollChat("feishu", "oc_reply_off");
+  adapter.messages = [
+    msg("t1", 14210, {
+      sender_id: "ou_me", sender_name: "我", content: "@我 启动",
+      mentions: [{ id: { open_id: "ou_me" } }],
+    }),
+    msg("t0", 14200),
+  ];
+  let r = await poller.pollChat("feishu", "oc_reply_off", { force: true });
+  assert.equal(r.command.result, "started");
+  assert.equal(adapter.sent.length, 0, "关掉回执后不发");
+
+  state.data.config.command.reply_enabled = true;
+  state.data.config.command.reply_text = "";
+  state.ensureChat("feishu", "oc_reply_empty", { name: "客户", kind: "p2p" });
+  adapter.messages = [msg("u0", 14300)];
+  await poller.pollChat("feishu", "oc_reply_empty");
+  adapter.messages = [
+    msg("u1", 14310, {
+      sender_id: "ou_me", sender_name: "我", content: "@我 启动",
+      mentions: [{ id: { open_id: "ou_me" } }],
+    }),
+    msg("u0", 14300),
+  ];
+  r = await poller.pollChat("feishu", "oc_reply_empty", { force: true });
+  assert.equal(r.command.result, "started");
+  assert.equal(adapter.sent.length, 0, "文案为空不发");
 });
 
 test("a read-only poll never starts duty from a start command", async () => {

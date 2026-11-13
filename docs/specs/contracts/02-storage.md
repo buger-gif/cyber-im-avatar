@@ -64,8 +64,9 @@
 | msg_id | string | 最近处理过的启动指令消息 ID；同 ID 幂等，不重复启动 |
 | result | string | `""` / `starting` / `started` / `already` / `blocked` / `failed`；`already`=已有值班或正在启动，没有新建第二个；`starting` 进程重启后清空以便重试 |
 | reason | string | 单行结果原因，≤160 字；不含消息正文 |
+| reply | object | 最近一次启动回执（spec 0048）：`at` / `ok` / `msg_id` / `error`；`at=0`=没发过，`ok`=最后一次是否成功，`error` 单行 ≤160 字。只在 `result=started` 时写 |
 
-老 state 缺该字段时补 `{at:0, keyword:"", msg_id:"", result:"", reason:""}`，不升 `STATE_VERSION`。
+老 state 缺该字段时补 `{at:0, keyword:"", msg_id:"", result:"", reason:"", reply:{at:0, ok:false, msg_id:"", error:""}}`，不升 `STATE_VERSION`。
 启动失败不回滚 `watching`；下一次新消息仍可照常唤醒。`starting` 在进程重启加载时清成空结果并清空
 `msg_id`，下一轮扫描 / 新消息可以重试。
 

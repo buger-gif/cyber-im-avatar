@@ -128,16 +128,19 @@ test("send_mode_default is exposed in status and writable through POST /api/conf
 
 test("command keyword is writable through config and exposed per chat", async () => {
   const { app, state } = makeApp();
+  const DEF_REPLY = "支持用户自定义，默认就是 24 小时值班，上线 @ 我即可触发。";
   let out = await app.handle("/api/config", "GET");
-  assert.deepEqual(out.body.command, { enabled: true, start_keyword: "启动" });
+  assert.deepEqual(out.body.command,
+    { enabled: true, start_keyword: "启动", reply_enabled: true, reply_text: DEF_REPLY });
 
   out = await app.handle("/api/config", "POST", null, {
     command: { enabled: true, start_keyword: "  开工  " },
   });
   assert.equal(out.status, 200);
-  assert.deepEqual(out.body.command, { enabled: true, start_keyword: "开工" });
+  assert.deepEqual(out.body.command,
+    { enabled: true, start_keyword: "开工", reply_enabled: true, reply_text: DEF_REPLY });
   assert.deepEqual((await app.handle("/api/config", "GET")).body.command,
-    { enabled: true, start_keyword: "开工" });
+    { enabled: true, start_keyword: "开工", reply_enabled: true, reply_text: DEF_REPLY });
 
   out = await app.handle("/api/config", "POST", null, {
     command: { enabled: true, start_keyword: "   " },
@@ -155,16 +158,44 @@ test("command keyword is writable through config and exposed per chat", async ()
     command: { enabled: false, start_keyword: "" },
   });
   assert.equal(out.status, 200);
-  assert.deepEqual(out.body.command, { enabled: false, start_keyword: "" });
+  assert.deepEqual(out.body.command,
+    { enabled: false, start_keyword: "", reply_enabled: true, reply_text: DEF_REPLY });
 
   const chat = state.ensureChat("feishu", "oc_cmd_api", { name: "客户", kind: "p2p" });
   chat.command = {
-    at: 123, keyword: "开工", msg_id: "m1", result: "already", reason: "已有值班",
+    at: 123, keyword: "开工", msg_id: "m1", result: "started", reason: "已启动值班",
+    reply: { at: 124, ok: true, msg_id: "om_reply", error: "" },
   };
   out = await app.handle("/api/chats", "GET");
   assert.deepEqual(out.body.items.find((x) => x.chat_id === "oc_cmd_api").command, {
-    at: 123, keyword: "开工", msg_id: "m1", result: "already", reason: "已有值班",
+    at: 123, keyword: "开工", msg_id: "m1", result: "started", reason: "已启动值班",
+    reply: { at: 124, ok: true, msg_id: "om_reply", error: "" },
   });
+});
+
+test("command reply text is writable, capped and never silently truncated", async () => {
+  const { app, state } = makeApp();
+  let out = await app.handle("/api/config", "POST", null, {
+    command: { reply_text: "  上线 @我  " },
+  });
+  assert.equal(out.status, 200);
+  assert.equal(out.body.command.reply_text, "上线 @我");
+
+  out = await app.handle("/api/config", "POST", null, { command: { reply_enabled: false } });
+  assert.equal(out.body.command.reply_enabled, false);
+  assert.equal(out.body.command.reply_text, "上线 @我", "关回执不动文案");
+
+  out = await app.handle("/api/config", "POST", null, {
+    command: { reply_text: "回".repeat(201) },
+  });
+  assert.equal(out.body.ok, false, "超长不静默截断");
+  assert.equal(state.data.config.command.reply_text, "上线 @我");
+
+  out = await app.handle("/api/config", "POST", null, {
+    command: { reply_enabled: true, reply_text: "   " },
+  });
+  assert.equal(out.status, 200, "空文案允许：等价于不发");
+  assert.equal(out.body.command.reply_text, "");
 });
 
 test("per-watch send mode is fixed on first watch and survives default changes", async () => {

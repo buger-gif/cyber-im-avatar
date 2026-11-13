@@ -2,6 +2,19 @@
 
 ## 未发布
 
+### 未发布：启动值守回执（spec 0048）
+
+- **启动后在会话里回一句**：本人 @ 自己 + 「启动」真正拉起新值班后，插件在该会话发一条
+  纯文本回执（默认「支持用户自定义，默认就是 24 小时值班，上线 @ 我即可触发。」）；
+  群聊 / 私聊都发，不用再回面板确认。
+- **可改可关**：设置页「IM 启动指令」新增回执开关与文案（最多 200 字，留空 = 不发），
+  写 `config.command.reply_enabled` / `command.reply_text`；老配置缺键按默认开。
+- **只发一次**：只认 `command.result=started`；已有值班（`already`）、被屏蔽、启动失败都不发。
+  发送失败不回滚值班，`chats[].command.reply` 记录 `ok / msg_id / error`，会话详情可见。
+- **接线**：`dsh-plugin/lib/{command,state,poller,app}.js`、`web/panel.js` + `lib/client.js`；
+  契约 01/02/03、架构 02/03、`README.md`、`SKILL.md`、`dsh-plugin/README.md`。
+- **兼容**：只新增配置键与 `chats[].command.reply`，不升 `STATE_VERSION`；降级到旧版时被忽略。
+
 ### 未发布：自检分诊（spec 0047）
 
 - **瞬时网络失败不再留红**：拉取消息与通路自检遇到 `network` / `transport` 失败会重试一次

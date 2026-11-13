@@ -7,6 +7,7 @@
 import { isMention } from "./im.js";
 
 export const MAX_KEYWORD_CHARS = 20;
+export const MAX_REPLY_CHARS = 200;
 const CONTROL = /[\u0000-\u001f\u007f\u200b-\u200f\u202a-\u202e\u2060\ufeff]/g;
 const SPACES = /[\u00a0\u1680\u2000-\u200a\u202f\u205f\u3000]/g;
 const AT_BOUNDARY = /[\s，。！？、；：,.!?;:）)\]】}"'“”‘’]/;
@@ -36,6 +37,39 @@ export function keywordTooLong(raw) {
     .replace(/\s+/g, " ")
     .trim();
   return Array.from(text).length > MAX_KEYWORD_CHARS;
+}
+
+/** 启动回执文案归一：去控制字符、压缩空白、最多 200 个字符；空串 = 不发。 */
+export function normalizeReplyText(raw) {
+  const text = String(raw == null ? "" : raw)
+    .replace(CONTROL, " ")
+    .replace(SPACES, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+  if (!text) return "";
+  return Array.from(text).slice(0, MAX_REPLY_CHARS).join("");
+}
+
+/** 回执文案超长（设置接口拒绝，不静默截断）。 */
+export function replyTooLong(raw) {
+  const text = String(raw == null ? "" : raw)
+    .replace(CONTROL, " ")
+    .replace(SPACES, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+  return Array.from(text).length > MAX_REPLY_CHARS;
+}
+
+/** 启动成功后要不要回一条：开关没关且文案非空。 */
+export function replyEnabled(cfg) {
+  const c = cfg?.command || cfg || {};
+  return c.reply_enabled !== false && !!normalizeReplyText(c.reply_text);
+}
+
+/** 实际要发的回执文案；不需要发时返回空串。 */
+export function replyText(cfg) {
+  const c = cfg?.command || cfg || {};
+  return replyEnabled(cfg) ? normalizeReplyText(c.reply_text) : "";
 }
 
 /** 去掉 @ 自己留下的占位符 / 显示名，只留下正文给关键词匹配。 */

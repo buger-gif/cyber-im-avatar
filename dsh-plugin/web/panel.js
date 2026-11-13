@@ -1413,6 +1413,16 @@
           text: cmdLabel + (chat.command.reason ? " · " + chat.command.reason : "") +
             (chat.command.at ? " · " + fmtTime(chat.command.at) : ""),
         }));
+        var cmdReply = chat.command.reply;
+        if (cmdReply && cmdReply.at) {
+          wrap.appendChild(h("div", {
+            class: "ims-hint" + (cmdReply.ok ? "" : " ims-err"),
+            style: "padding:0 var(--pad)",
+            text: "启动回执：" + (cmdReply.ok
+              ? "已发" : "发送失败 · " + (cmdReply.error || "unknown")) +
+              " · " + fmtTime(cmdReply.at),
+          }));
+        }
       }
       if (chat.kind !== "group" && chat.watching && chat.wake_mode === "mention") {
         wrap.appendChild(h("div", { class: "ims-hint", style: "padding:2px var(--pad) 0",
@@ -2838,6 +2848,12 @@
       });
       kwInp.value = c.start_keyword || "";
       var box = h("input", { type: "checkbox", checked: enabled });
+      var replyOn = h("input", { type: "checkbox", checked: c.reply_enabled !== false });
+      var replyInp = h("input", {
+        class: "ims-inp", type: "text", maxlength: "200",
+        placeholder: "启动成功后回一句…",
+      });
+      replyInp.value = c.reply_text || "";
       var card = h("div", { class: "ims-card" },
         h("div", { class: "ims-card-h" },
           h("span", { class: "ims-ico", html: icon("play", 15) }),
@@ -2853,21 +2869,35 @@
           h("span", { class: "ims-grow" }),
           h("button", { class: "ims-btn primary", type: "button", onclick: function () {
             var kw = String(kwInp.value || "").trim();
+            var replyTxt = String(replyInp.value || "").trim();
             if (box.checked && !kw) {
               say("启用启动指令时关键词不能为空");
               return;
             }
+            if (Array.from(replyTxt).length > 200) {
+              say("启动回执最多 200 个字符");
+              return;
+            }
             api("/api/config", { body: { command: {
               enabled: !!box.checked, start_keyword: kw,
+              reply_enabled: !!replyOn.checked, reply_text: replyTxt,
             } } }).then(function (out) {
               S.cfg = out;
               say(box.checked ? "已保存：@ 自己 +「" + kw + "」启动值班" : "已关闭 IM 启动指令");
               paint();
             }).catch(function (e) { say("保存失败：" + shortReason(e)); });
           } }, "保存指令")),
+        h("div", { class: "ims-rowline" },
+          h("span", { class: "ims-hint", text: "启动后回一条" }), replyOn,
+          h("span", { class: "ims-field", style: "flex:1;min-width:200px" },
+            h("span", { class: "ims-hint", text: "回执文案" }), replyInp),
+          h("span", { class: "ims-grow" }),
+          h("span", { class: "ims-hint", text: "留空 = 不发" })),
         h("div", { class: "ims-hint", text: "在飞书私聊 / 群里 @ 自己并带上关键词，就在当前会话" +
           "加入值守并开一场会话；飞书每分钟用一条跨会话搜索发现未值守的会话（只取一页，" +
           "约 1440 次/天），企微 / 钉钉只认已值守会话里到达的指令。" }),
+        h("div", { class: "ims-hint", text: "回执只在真正拉起新值班时发一条（群聊 / 私聊都发），" +
+          "已有值班、会话被屏蔽或启动失败都不发；发送失败只记在面板，不影响值班。" }),
         h("div", { class: "ims-hint", text: "同一会话同一时间只允许一个值班：已有值班时只记冲突，" +
           "不会再开第二个；命中关键词的这条消息由开关消费，不再作为本人指令交给 agent。" }),
         scanHint());

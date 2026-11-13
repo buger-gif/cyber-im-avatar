@@ -133,6 +133,8 @@ Markdown，都不在 `state.json` 里。**群两层，单聊一份**：
 - 同一 `platform:chat_id` 只允许一个值班：已有 `dsh_session` → `already`，正在启动 →
   本次不重复启动；`watching` 但绑定为空只补开。企微 / 钉钉没有跨会话搜索，只在已值守
   会话里即时识别。
+- 启动成功后插件在该会话回一条 `config.command.reply_text`（默认开，空 = 不发）：只认
+  `started`，`already / blocked / failed` 不发；失败只写 `chats[].command.reply`，不回滚值班。
 - 成本：飞书每分钟 1 条窄搜索（本人发送 + @本人，关键词本地复核；只取一页），不逐会话轮询；搜索失败
   只记 `lastCommandScan`，不影响轮询。
 

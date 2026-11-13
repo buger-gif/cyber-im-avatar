@@ -2,8 +2,9 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import {
-  MAX_KEYWORD_CHARS, commandEnabled, commandRow, isStartCommand,
-  keywordTooLong, normalizeKeyword, stripMentions,
+  MAX_KEYWORD_CHARS, MAX_REPLY_CHARS, commandEnabled, commandRow, isStartCommand,
+  keywordTooLong, normalizeKeyword, normalizeReplyText, replyEnabled, replyText,
+  replyTooLong, stripMentions,
 } from "../lib/command.js";
 
 test("normalizeKeyword trims, compresses whitespace, drops control chars and caps length", () => {
@@ -67,4 +68,26 @@ test("commandRow keeps only the pointer fields the opening context needs", () =>
     ts: "t1", ts_epoch: 100, kind: "cmd", state: "new", msg_type: "text",
     app_link: "link", media_id: "mid", media_paths: ["/tmp/a.png"],
   });
+});
+
+test("normalizeReplyText compresses whitespace, drops control chars and caps length", () => {
+  assert.equal(normalizeReplyText("  支持用户自定义，默认 24 小时  "), "支持用户自定义，默认 24 小时");
+  assert.equal(normalizeReplyText("a\u0000\u200b  b"), "a b");
+  assert.equal(normalizeReplyText("\n\n"), "");
+  assert.equal(normalizeReplyText(null), "");
+  const long = "回".repeat(MAX_REPLY_CHARS + 1);
+  assert.equal(normalizeReplyText(long), "回".repeat(MAX_REPLY_CHARS));
+  assert.equal(replyTooLong(long), true);
+  assert.equal(replyTooLong("回".repeat(MAX_REPLY_CHARS)), false);
+});
+
+test("replyEnabled/replyText require the switch and a non-empty text", () => {
+  const cfg = { command: { reply_enabled: true, reply_text: "上线 @ 我即可触发" } };
+  assert.equal(replyEnabled(cfg), true);
+  assert.equal(replyText(cfg), "上线 @ 我即可触发");
+  assert.equal(replyEnabled({ command: { reply_enabled: false, reply_text: "x" } }), false);
+  assert.equal(replyText({ command: { reply_enabled: false, reply_text: "x" } }), "");
+  assert.equal(replyEnabled({ command: { reply_enabled: true, reply_text: "  " } }), false);
+  assert.equal(replyEnabled({ reply_enabled: true, reply_text: "x" }), true, "也接受裸 command 对象");
+  assert.equal(replyText({}), "");
 });

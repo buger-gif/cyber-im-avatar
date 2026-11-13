@@ -14,11 +14,11 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { isMention, PLATFORM_META } from "./im.js";
-import { chatKey, RECENT_LIMIT, SUPPORTED_PLATFORMS } from "./state.js";
+import { chatKey, emptyCommandReply, RECENT_LIMIT, SUPPORTED_PLATFORMS } from "./state.js";
 import * as duty from "./duty.js";
 import * as workspaces from "./workspaces.js";
 import {
-  commandEnabled, commandRow, isStartCommand, normalizeKeyword,
+  commandEnabled, commandRow, isStartCommand, normalizeKeyword, replyText,
 } from "./command.js";
 
 /**
@@ -749,13 +749,44 @@ export class Poller {
 
   /** 记一条命令结果；`starting` 不算终态，重启或下一轮可以重试。 */
   writeCommand(chat, msg, keyword, result, reason) {
+    // 回执记录跨命令保留：下一条 already 不该把上一次「已发」的状态抹掉。
+    const reply = chat.command?.reply && typeof chat.command.reply === "object"
+      ? { ...emptyCommandReply(), ...chat.command.reply } : emptyCommandReply();
     chat.command = {
       at: nowSec(),
       keyword: normalizeKeyword(keyword),
       msg_id: String(msg?.msg_id || ""),
       result,
       reason: String(reason || "").slice(0, 160),
+      reply,
     };
+  }
+
+  /**
+   * 启动成功后在本会话回一条回执（spec 0048）。只在真正拉起值班时调用；
+   * 失败不回滚 watching，只把原因记进 command.reply 并留一行日志。
+   */
+  async sendStartReply(chat) {
+    const text = replyText(this.cfg.command);
+    if (!text) return { ok: true, skipped: true };
+    let out;
+    try {
+      out = await this.im.adapter(chat.platform).sendText(chat.chat_id, text);
+    } catch (e) {
+      out = { ok: false, error: `${e?.name || "Error"}: ${e?.message || e}` };
+    }
+    chat.command.reply = {
+      at: nowSec(),
+      ok: !!out?.ok,
+      msg_id: String(out?.message_id || ""),
+      error: out?.ok ? "" : String(out?.error || "send failed").slice(0, 160),
+    };
+    try { this.state.save(); } catch { /* 记录失败不影响值班 */ }
+    if (!out?.ok) {
+      this.logger.warn?.(`[im-standin] start reply ${chat.platform}:${chat.chat_id}: ` +
+        chat.command.reply.error);
+    }
+    return out;
   }
 
   /**
@@ -933,6 +964,8 @@ export class Poller {
             current.platform, current, this.identity[current.platform]?.self_id || "");
         } catch { /* best effort */ }
         this.state.save();
+        // 回执只在这里发：already / blocked / failed 都不该在会话里多一条消息。
+        await this.sendStartReply(current);
         return { ok: true, result: "started", reason: current.command.reason, open: r };
       }
       const reason = String(r?.reason || "start_failed").slice(0, 160);

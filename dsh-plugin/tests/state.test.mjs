@@ -97,7 +97,12 @@ test("loading an old global send_mode fixes watched chats and leaves unwatched e
 
 test("command config defaults on, normalizes the keyword and keeps an empty keyword off", () => {
   const base = normalizeConfig({});
-  assert.deepEqual(base.command, { enabled: true, start_keyword: "启动" });
+  assert.deepEqual(base.command, {
+    enabled: true,
+    start_keyword: "启动",
+    reply_enabled: true,
+    reply_text: "支持用户自定义，默认就是 24 小时值班，上线 @ 我即可触发。",
+  });
   assert.equal(normalizeConfig({ command: { enabled: false } }).command.enabled, false);
   assert.equal(normalizeConfig({ command: { enabled: "false" } }).command.enabled, false);
   assert.equal(normalizeConfig({ command: { enabled: 0 } }).command.enabled, false);
@@ -112,10 +117,31 @@ test("command config defaults on, normalizes the keyword and keeps an empty keyw
     .command.start_keyword, "一二三四五六七八九十一二三四五六七八九十");
 });
 
+test("command reply defaults on, keeps an explicit off, and an empty text means no reply", () => {
+  const base = normalizeConfig({}).command;
+  assert.equal(base.reply_enabled, true);
+  assert.match(base.reply_text, /24 小时值班/);
+  assert.equal(normalizeConfig({ command: { reply_enabled: false } }).command.reply_enabled, false);
+  assert.equal(normalizeConfig({ command: { reply_enabled: "off" } }).command.reply_enabled, false);
+  assert.equal(normalizeConfig({ command: { reply_enabled: "yes" } }).command.reply_enabled, true);
+  assert.equal(normalizeConfig({ command: { reply_text: "   " } }).command.reply_text, "");
+  assert.equal(normalizeConfig({ command: { reply_text: "a\u0000\u200b  b" } })
+    .command.reply_text, "a b");
+  assert.equal(normalizeConfig({ command: { reply_text: "回".repeat(201) } })
+    .command.reply_text.length, 200);
+  // 老 state 只有两个键：合并默认后回执默认开，存量行为不被静默关掉。
+  const legacy = normalizeConfig({ command: { enabled: true, start_keyword: "开工" } });
+  assert.equal(legacy.command.reply_enabled, true);
+  assert.equal(legacy.command.start_keyword, "开工");
+});
+
 test("chat command records default safely and a restart clears a half-open start", () => {
   const { dir, state } = tempState();
   const chat = state.ensureChat("feishu", "oc_cmd_state", { kind: "p2p" });
-  assert.deepEqual(chat.command, { at: 0, keyword: "", msg_id: "", result: "", reason: "" });
+  assert.deepEqual(chat.command, {
+    at: 0, keyword: "", msg_id: "", result: "", reason: "",
+    reply: { at: 0, ok: false, msg_id: "", error: "" },
+  });
   chat.command = {
     at: 123, keyword: "  启动 ", msg_id: "m1", result: "watched", reason: "x".repeat(200),
   };
