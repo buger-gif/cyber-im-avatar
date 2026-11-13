@@ -5,12 +5,13 @@
 
 ## 更新时间
 
-2026-11-13（0048 启动值守回执已实施、待真机；0.20.0 已发布：0046 自 @ 关键词启动值班待真机；手动停盯后旧 @ 不再重新分诊；0045 已归档；0044 / 0043 / 0042 / 0040 / 0039 / 0038 待真机；自检分诊 0047 已验收归档）
+2026-11-13（0.21.0 已发布：启动值守回执 0048 待真机、自检分诊 0047 已验收归档；0046 自 @ 关键词启动值班待真机；手动停盯后旧 @ 不再重新分诊；0045 已归档；0044 / 0043 / 0042 / 0040 / 0039 / 0038 待真机）
 
 ## 最近批次
 
 | 日期 | 主题 | 证据 |
 | --- | --- | --- |
+| 2026-11-13 | 0.21.0 发布（0048 启动回执 + 0047 自检分诊）：全量 gate 全绿；CI Trusted Publishing 发布成功并带 provenance，`v0.21.0` tag；npm latest / tarball / 市场索引都指向 0.21.0；npm 包描述与市场索引描述同步「自 @ 开值班 + 可配回执」 | `CHANGELOG.md`、`dsh-plugin/package.json`、`dsh-plugin/market/index.json`、`dsh-plugin/scripts/make-market-index.mjs`、[run 43394316608](https://github.com/buger-gif/cyber-im-avatar/actions/runs/43394316608) |
 | 2026-11-13 | 启动值守回执（0048）：`command.reply_enabled` / `reply_text`（默认开，默认「支持用户自定义，默认就是 24 小时值班，上线 @ 我即可触发。」）；只在 `result=started` 时由插件直接发一条纯文本，群聊 / 私聊都发，`already / blocked / failed` 不发；失败只记 `chats[].command.reply`、不回滚值班；设置页可改可关、会话详情看结果；契约 01/02/03、架构 02/03、README、SKILL、插件 README 同步；Node 300 绿、gate quick 绿；待真机 | `dsh-plugin/lib/{command,state,poller,app}.js`、`dsh-plugin/web/panel.js`、`dsh-plugin/lib/client.js`、`dsh-plugin/tests/`、`docs/specs/active/0048-启动值守回执.md` |
 | 2026-11-13 | 自检分诊（0047）：拉取与通路自检对 `network` 类失败重试一次；CLI 错误归一为一行中文（网络 / 授权 / 权限 / 字段漂移 / 接口报错）并给 ID 打码，原文进宿主日志；`cli doctor` 的 warn 不再阻塞、全平台体检只查启用平台；3 秒自检窗口内全部拉取失败按失败退出，不再被超时掩盖；skill 213 绿、Node 293 绿 | `dsh-plugin/lib/{im,poller}.js`、`scripts/{bootstrap,doctor,listen_core,data_guard}.py`、`tests/run_tests.py`、`dsh-plugin/tests/`、`docs/specs/archive/0047-自检分诊.md` |
 | 2026-11-13 | 0.20.0 发布（0046 自 @ 启动指令 + 手动停盯不再复检旧 @）：全量 gate 全绿；CI Trusted Publishing 发布成功并带 provenance，`v0.20.0` tag；npm latest / tarball / 市场索引都指向 0.20.0；版本自检 3 分钟判红（registry 3 分 8 秒才可见），重跑后绿，窗口已放宽到 5 分钟 | `CHANGELOG.md`、`dsh-plugin/package.json`、`dsh-plugin/market/index.json`、`docs/implementation/runbooks/publish.md`、[run 43360663970](https://github.com/buger-gif/cyber-im-avatar/actions/runs/43360663970) |
