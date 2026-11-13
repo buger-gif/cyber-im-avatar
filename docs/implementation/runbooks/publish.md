@@ -65,11 +65,13 @@
    "Temporary package placeholder for staged publishing"。**这不是失败**，真版本正在入库：
    包页面已经显示 0.1.0，`dist-tags.latest` 在一两分钟内翻到 `0.1.0`，`versions` 变成两个。
    用 `curl "https://registry.npmjs.org/<pkg>?t=$(date +%s)"` 绕开 CDN 缓存再确认即可。
-3. **`+ pkg@ver` 不等于立刻可查（0.9.0 实测）。**
+3. **`+ pkg@ver` 不等于立刻可查（0.9.0 / 0.20.0 实测）。**
    Trusted Publishing 下 `npm publish` 返回 0、打印 `+ dsh-cyber-im-avatar@0.9.0` 之后，
-   公开 packument 仍可能只有旧版本，约 **2 分钟**后才出现（`time[ver]`、tarball 200、
-   `dist-tags.latest` 同批翻新）。期间 `npm view <pkg>@<ver>` 报 `404 No match found`。
-   CI 的「版本自检」已改成最多轮询 3 分钟；本地确认用带 `?t=` 的 curl，别只看一次。
+   公开 packument 仍可能只有旧版本，约 **2–3 分钟**后才出现（`time[ver]`、tarball 200、
+   `dist-tags.latest` 同批翻新；0.20.0 实测 3 分 8 秒）。期间 `npm view <pkg>@<ver>` 报
+   `404 No match found`。CI 的「版本自检」最多轮询 5 分钟；本地确认用带 `?t=` 的 curl，
+   别只看一次。自检红了先看 npm 包页：确认版本已上架后 `gh run rerun <run-id> --failed`
+   重跑即可（发布步骤看到版本已存在会跳过，不会重发）。
 
 > 往后：npm 计划 **2027 年 1 月起**让 bypass token 只能「暂存发布」，真正发布要维护者用 2FA 批准。
 > 长期方案是把发版迁到 GitHub Actions + **trusted publishing（OIDC）**：不需要任何长期 token、
@@ -160,7 +162,7 @@ git add market/index.json && git commit -m "chore(market): 索引指向 <version
 ```
 
 CI 里还带了四道闸：tag/package.json 版本一致性、`tests/run_tests.py`、`npm pack --dry-run`，
-以及发布后最多 3 分钟的 `npm view` 轮询自检。
+以及发布后最多 5 分钟的 `npm view` 轮询自检。
 `workflow_dispatch` 手动触发时默认只打包不发布（`dry_run` 默认 true）。
 
 ### B. 手动兜底（本机应急，0.1.0 就是这么发的）
