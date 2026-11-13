@@ -66,8 +66,8 @@ const index = {
   format: 1,
   title: { en: "cyber-im-avatar", "zh-cn": "赛博办公 IM 分身" },
   description: {
-    en: "Open-source cyber office IM stand-in for DSH: watch Feishu / WeCom / DingTalk, wake the agent only when needed, and handle chats as you. Message bodies stay local.",
-    "zh-cn": "开源赛博办公 IM 分身：在 DSH 里替你值守飞书 / 企业微信 / 钉钉，需要你时才唤醒 agent 并以本人身份处理；消息正文只留本机。",
+    en: "Open-source cyber office IM stand-in for DSH: watch Feishu / WeCom / DingTalk, start duty in place by @-ing yourself with a keyword, and wake the agent only when needed to handle chats as you. Message bodies stay local.",
+    "zh-cn": "开源赛博办公 IM 分身：在 DSH 里替你值守飞书 / 企业微信 / 钉钉，@ 自己 + 关键词就地开值班，需要你时才唤醒 agent 并以本人身份处理；消息正文只留本机。",
   },
   metadata: {
     categories: {
@@ -84,9 +84,9 @@ const index = {
       name: pkg.name,
       title: { en: "IM Stand-in", "zh-cn": "IM 值守" },
       description: {
-        en: "Sidebar stand-in for Feishu / WeCom / DingTalk: wakes the agent only when a chat needs attention, then lets it research and reply in your voice. Watch-level control, automatic triage for new groups, per-seat draft/auto send mode, and local-first message bodies.",
+        en: "Sidebar stand-in for Feishu / WeCom / DingTalk: wakes the agent only when a chat needs attention, then lets it research and reply in your voice. Watch-level control, automatic triage for new groups, per-seat draft/auto send mode, self-@ keywords that start duty in place with a configurable reply, and local-first message bodies.",
         "zh-cn":
-          "在 DSH 侧边栏常驻的赛博办公 IM 分身：盯飞书 / 企业微信 / 钉钉的私聊与群聊，命中 @我 或新消息才唤醒 agent，由它按你的语气起草、调研并回复；支持关注程度三态、新群自动分诊、按值班单点切换草稿审批 / 全自动发送。消息正文只在本机，复用本机 IM CLI 登录态。",
+          "在 DSH 侧边栏常驻的赛博办公 IM 分身：盯飞书 / 企业微信 / 钉钉的私聊与群聊，命中 @我 或新消息才唤醒 agent，由它按你的语气起草、调研并回复；支持关注程度三态、新群自动分诊、按值班单点切换草稿审批 / 全自动发送；在 IM 里 @ 自己 + 关键词即可就地开值班，并回一条可配回执。消息正文只在本机，复用本机 IM CLI 登录态。",
       },
       icon,
       author: pkg.author,
