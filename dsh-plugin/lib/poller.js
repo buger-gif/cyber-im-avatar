@@ -790,8 +790,11 @@ export class Poller {
   }
 
   /**
-   * 从一批消息里消费启动指令。命中关键词的 cmd 全部从唤醒批次移除；
+   * 从一批消息里消费启动指令。真正开了会话的那条从唤醒批次移除；
    * 只处理最新一条未处理过的，重复消息按 msg_id 幂等。
+   *
+   * `already` 不消费：会话本来就在值班时，「我自己 @ 自己」仍然是一次 @ 命中，
+   * 该照常交给 agent（spec 0039 的对替身说话），不能因为没新建会话就连正文一起吞掉。
    */
   async consumeStartCommands(chat, batch, { source = "poll" } = {}) {
     const cfg = this.cfg.command || {};
@@ -803,14 +806,21 @@ export class Poller {
       .filter((m) => m && m.kind === "cmd" &&
         isStartCommand(m, { selfId, selfNames: names, keyword }))
       .sort((a, b) => (Number(b.ts_epoch) || 0) - (Number(a.ts_epoch) || 0));
-    const consumed = new Set(hits.map((m) => String(m.msg_id)));
+    const consumed = new Set();
     const results = [];
     let started = false;
     for (const m of hits) {
       const r = await this.startDutyFromCommand(chat, m, { source, keyword });
-      if (r?.deduped) continue;
+      if (r?.deduped) {
+        // 真开过会话的重复（扫描先命中、下一轮又捞到）不能再叫醒一次；
+        // already 的重复没有副作用，照常往下交给 agent。
+        if (r?.result === "started") consumed.add(String(m.msg_id));
+        continue;
+      }
       results.push(r);
       if (r?.result === "started") started = true;
+      // already = 本来就在值班，没有可开的东西：这条不进 consumed，继续往下交给 agent。
+      if (r?.result !== "already") consumed.add(String(m.msg_id));
       break;
     }
     return { consumed, results, started };

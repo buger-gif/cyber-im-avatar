@@ -736,7 +736,7 @@ test("command wake has a circuit breaker (5 per 10 minutes)", async () => {
   assert.match(chat.last_error, /本人指令.*暂停唤醒/);
 });
 
-test("a start command never opens a second duty in an already-watched chat", async () => {
+test("a start command in an already-watched chat wakes the agent but opens no second duty", async () => {
   const { state, poller, adapter, turns } = setup();
   const chat = state.ensureChat("feishu", "oc_start_busy", { name: "客户", kind: "p2p" });
   chat.watching = true;
@@ -750,10 +750,12 @@ test("a start command never opens a second duty in an already-watched chat", asy
     msg("b0", 13000),
   ];
   const r = await poller.pollChat("feishu", "oc_start_busy", { force: true });
-  assert.equal(r.woke, false);
+  assert.equal(r.woke, true, "本来就在值班：不建会话，但这条 @ 命中照常叫醒 agent");
   assert.equal(r.command.result, "already");
   assert.equal(turns.opens.length, 0, "不能有第二个会话");
-  assert.equal(turns.wakes.length, 0, "启动开关不再交给 agent");
+  assert.equal(turns.wakes.length, 1, "已值班时命令正文照样交给 agent");
+  assert.equal(turns.wakes[0].opts.batch.length, 1);
+  assert.match(turns.wakes[0].opts.batch[0].content, /启动值班/);
   assert.equal(chat.dsh_session, "session-existing");
   assert.equal(chat.command.msg_id, "b1");
   assert.match(chat.command.reason, /没有重复创建/);
