@@ -6,7 +6,10 @@ on:
 
 jobs:
   regression:
-    runs-on: ubuntu-latest
+    # README 承诺 Python 3.9+，而 ubuntu-latest 已迁到 26.04、镜像里没有 3.9
+    # （setup-python 报 The version '3.9' ... was not found for Ubuntu 26.04）。
+    # 兼容性下限要靠这一条腿守住，所以矩阵钉在还有 3.9 的 24.04。
+    runs-on: ubuntu-24.04
     strategy:
       fail-fast: false
       matrix:
