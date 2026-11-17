@@ -5,12 +5,13 @@
 
 ## 更新时间
 
-2026-11-17（0049 值守静默可解释待真机：`recent[].skip` + 面板「最近 N 条没有唤醒」；已值班时「@ 自己」不再被启动开关吞掉，待真机；0.21.0 已发布，0048 / 0046 仍待真机）
+2026-11-17（0.22.0 已发布：0049 值守静默可解释 + 已值班时「@ 自己」不再被吞；两者待真机；回归矩阵钉 ubuntu-24.04 修 Python 3.9 腿；0048 / 0046 仍待真机）
 
 ## 最近批次
 
 | 日期 | 主题 | 证据 |
 | --- | --- | --- |
+| 2026-11-17 | 0.22.0 发布：0049 值守静默可解释 + 已值班「@ 自己」修复；Trusted Publishing 发布成功，`v0.22.0` tag；npm 公开 packument 约 6 分钟后才可见，CI 的 5 分钟自检判红，按 runbook 重跑后绿；`ubuntu-latest` 迁到 26.04 后回归矩阵的 3.9 腿起不来，钉 `ubuntu-24.04`；市场索引指向 0.22.0 | `CHANGELOG.md`、`dsh-plugin/package.json`、`dsh-plugin/market/index.json`、`.github/workflows/test.yml`、[run 44007864572](https://github.com/buger-gif/cyber-im-avatar/actions/runs/44007864572) |
 | 2026-11-17 | 值守静默可解释（0049）：`recent[].skip` 记 `baseline` / `no-mention` / `you-replied`，面板值守卡片与会话详情直接写「最近 N 条没有唤醒：没 @ 你」；`/api/chats` 加 `silent`、`/api/thread` items 带 `skip`；`baseline` 不计汇总；Node 305 绿、gate quick 绿；待真机 | `dsh-plugin/lib/{state,poller,app}.js`、`dsh-plugin/web/panel.js`、`dsh-plugin/lib/client.js`、`docs/specs/active/0049-值守静默可解释.md`、契约 01/02 |
 | 2026-11-17 | 已值班时「@ 自己」不再被吞：`consumeStartCommands` 只在真开了会话（`started`）时消费，`already` 继续进唤醒批次交给 agent；扫描先命中导致的重复 `started` 仍消费，避免重复叫醒；Node 301 绿、gate quick 绿；待真机 | `dsh-plugin/lib/poller.js`、`dsh-plugin/tests/poller.test.mjs` |
 | 2026-11-16 | skill 可分发打包：SKILL.md 加「用户想装 DSH 插件时」安装指引（只指导、不自动装）；`scripts/package_skill.py` 生成 `dist/cyber-im-avatar/` + zip，并按技能市场上传校验预检 frontmatter；`dist/` 不进版本库；未发版 | `SKILL.md`、`scripts/package_skill.py`、`README.md`、`.gitignore`、`CHANGELOG.md` |
