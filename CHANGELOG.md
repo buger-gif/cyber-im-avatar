@@ -1,5 +1,37 @@
 # Changelog
 
+## 0.22.0 — 2026-11-17
+
+### 0.22.0：值守静默可解释（spec 0049）
+
+- **能看出「为什么没叫醒」**：`recent[]` 新增 `skip` 原因码——`baseline`（首次基线）/
+  `no-mention`（只盯 @我，这条没 @ 你）/ `you-replied`（你在这条之后自己回过了）。
+- **面板直接说**：值守卡片出现「最近 N 条没有唤醒：没 @ 你」，会话详情里每条未唤醒消息的
+  meta 后挂同样一句；`baseline` 不计入汇总，避免刚加入值守就误报。
+- **接口**：`GET /api/chats` 每行加 `silent: {count, skip}`；`GET /api/thread` 的 items 带 `skip`。
+- **接线**：`dsh-plugin/lib/{state,poller,app}.js`、`web/panel.js` + `lib/client.js`；
+  契约 01/02；不升 `STATE_VERSION`，老数据缺键按空串。
+
+### 0.22.0：已值班时「@ 自己」不再被启动开关吞掉
+
+- **现象**：会话本来就在值班时，本人 @ 自己 + 启动关键词那条被判 `already`，整条从唤醒批次里
+  摘掉——不建会话、不交给 agent、也不发回执，正文等于静默丢弃。
+- **改法**：只有真正开了会话（`started`）才消费该条；`already` 不再消费，继续进唤醒批次交给
+  agent，按「@ 自己 = 对替身说话」处理。已有值班仍不会建第二个会话、不会重复发回执。
+- **接线**：`dsh-plugin/lib/poller.js`（`consumeStartCommands`）、`dsh-plugin/tests/poller.test.mjs`。
+
+### 0.22.0：skill 可分发打包与 DSH 插件安装说明
+
+- **SKILL.md 补 DSH 安装指引**：新增「用户想装 DSH 插件时」——只给 npm 安装指引
+  （`dsh plugin --profile web add dsh-cyber-im-avatar`），不替用户执行、不主动推荐；
+  说明插件会自带 skill、装好后按「DSH 插件壳」一节执行（不再挂监听）。
+- **可分发打包**：`python3 scripts/package_skill.py` 生成 `dist/cyber-im-avatar/` 与同名 zip
+  （SKILL.md / README / CHANGELOG / LICENSE / references / scripts / tests 子集），
+  并按技能市场的上传校验预检 frontmatter（根目录 SKILL.md、name 合法、description 非空）。
+  产物在 `dist/`，不进版本库。
+- **接线**：`SKILL.md`、`README.md`、`scripts/package_skill.py`、`.gitignore`、
+  `scripts/doc_budgets.json`；未改运行时行为与版本号。
+
 ## 0.21.0 — 2026-11-13
 
 ### 0.21.0：启动值守回执（spec 0048）
