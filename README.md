@@ -129,6 +129,7 @@ npm install -g dingtalk-workspace-cli   # 钉钉，dws
 
 python3 scripts/bootstrap.py            # 探测环境、抓本人 ID、写 ~/.im-standin/env.json
 python3 tests/run_tests.py              # 安装后自检，不碰真实账号
+python3 scripts/package_skill.py        # 要发给别人 / 传技能市场：生成 dist/cyber-im-avatar/ 与 zip
 ```
 
 ## 30 秒上手

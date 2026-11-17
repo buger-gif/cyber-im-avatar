@@ -11,6 +11,18 @@ description: 赛博办公 IM 分身——以用户本人身份值守飞书 / 企
 等待期进程停在 `sleep`，不跑模型；每 55 分钟主动退出一次续上下文缓存，连续 3 小时没有
 新消息命中就结束值守。只有命中才处理消息。值守 8 小时的成本仍远低于定时任务。
 
+## 用户想装 DSH 插件时
+
+用户**主动问**怎么装 DSH 插件时，只给安装指引，不要替他执行：
+
+```bash
+dsh plugin --profile web add dsh-cyber-im-avatar   # npm 包，装完自己重启 DSH
+```
+
+重启后侧边栏出现「IM 值守」：轮询、水位、唤醒与面板都由插件负责，本 skill 由插件自动装到
+`~/.agents/skills/cyber-im-avatar/`；唤醒载荷会带「运行形态：DSH 插件壳」，按下一节执行。
+用户没提插件时不要主动推荐，按「快速开始」用独立形态。
+
 ## 在 DSH 插件壳里（首轮唤醒载荷带「运行形态：DSH 插件壳」）
 
 插件已经负责轮询、水位与唤醒。看到这个标记时：
@@ -439,6 +451,9 @@ python3 scripts/bootstrap.py --delete-data --yes   # 删除画像、语料、per
 
 ```
 SKILL.md                 本文件
+README.md                安装方式、两种形态与成本模型
+CHANGELOG.md             版本记录
+LICENSE                  MIT
 references/
   {feishu,wecom,dingtalk}.md   平台差异与坑位（按需只读一份）
   troubleshooting.md           故障索引：分诊表 → 症状 → 修复 → 回归
@@ -449,6 +464,10 @@ scripts/
   bootstrap.py           环境探测 / 学风格 / 找目标 / 记忆文件（单聊人物档案、群工作本）/ probe / selftest / 删除数据
   listen_core.py         通用监听引擎（无平台分支）
   {feishu,wecom,dingtalk}_listen_cli.py  三平台适配器
+tests/
+  run_tests.py           自检（假 CLI，不碰真实账号）
+  mock_cli.py            三平台假 CLI
 ```
 
-仓库开发结构（`AGENTS.md` / `docs/` / `tests/` / `dsh-plugin/`）不在 skill 包内，见仓库根 `AGENTS.md`。
+仓库开发结构（`AGENTS.md` / `docs/` / `dsh-plugin/` / `tests/test_docs.py` 等）不在 skill 包内，
+见仓库根 `AGENTS.md`。

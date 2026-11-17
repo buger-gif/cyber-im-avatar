@@ -20,6 +20,9 @@ dsh-plugin/**/panel.json
 # npm prepack 生成的 skill 副本（源在仓库根目录）
 dsh-plugin/skill/
 
+# 可分发 skill 包（scripts/package_skill.py 生成）
+dist/
+
 # 本地私有痕迹（会话日志 / 计划草稿），不进版本库
 .workbuddy/
 .zcode/
