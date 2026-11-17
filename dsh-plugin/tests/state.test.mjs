@@ -315,9 +315,10 @@ test("old state without last_msg_id / media fields loads with safe defaults", ()
   const chat = state.getChat("feishu", "oc_old");
   assert.equal(chat.last_msg_id, "");
   assert.deepEqual(Object.keys(chat.recent[0]), [
-    "msg_id", "sender_id", "sender_name", "content", "ts", "ts_epoch", "kind", "state",
+    "msg_id", "sender_id", "sender_name", "content", "ts", "ts_epoch", "kind", "state", "skip",
     "msg_type", "app_link", "media_id", "media_paths",
   ]);
+  assert.equal(chat.recent[0].skip, "", "老数据没有 skip，读出来是空串");
   assert.equal(chat.recent[0].msg_type, "");
   assert.deepEqual(chat.recent[0].media_paths, []);
 });
@@ -494,4 +495,17 @@ test("join_workspace only keeps a trimmed string and defaults to empty", () => {
   }
   assert.equal(publicConfig(normalizeConfig({ join_workspace: "/tmp/工作区" }), false).join_workspace,
     "/tmp/工作区");
+});
+
+test("recent rows keep only known skip reasons", () => {
+  const { state } = tempState();
+  const chat = state.ensureChat("feishu", "oc_skip", { name: "客户", kind: "p2p" });
+  state.mergeRecent(chat, [
+    msg("s1", 1, { kind: "fyi", state: "ignored", skip: "no-mention" }),
+    msg("s2", 2, { kind: "fyi", state: "ignored", skip: "made-up" }),
+    msg("s3", 3, { kind: "dm", state: "new" }),
+  ]);
+  assert.equal(chat.recent.find((m) => m.msg_id === "s1").skip, "no-mention");
+  assert.equal(chat.recent.find((m) => m.msg_id === "s2").skip, "", "未知原因归空，不污染聚合");
+  assert.equal(chat.recent.find((m) => m.msg_id === "s3").skip, "", "进批次的行没有原因码");
 });

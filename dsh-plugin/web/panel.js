@@ -1196,6 +1196,10 @@
       return hit || null;
     }
 
+    /* 一条消息没叫醒的原因：与 lib/state.js 的 SKIP_REASONS 一一对应（spec 0049）。 */
+    var SKIP_LABEL = { baseline: "首次基线", "no-mention": "没 @ 你", "you-replied": "你先回过了" };
+    function skipText(skip) { return SKIP_LABEL[skip] || "未唤醒"; }
+
     /* 历史消息的正文不在本地：已处理/知会/已发的行只留指针。 */
     function msgText(content, state, kind, msgType) {
       if (content) return content.replace(/\s+/g, " ");
@@ -1424,9 +1428,17 @@
           }));
         }
       }
+      var sil = chat.silent || {};
+      var hintParts = [];
       if (chat.kind !== "group" && chat.watching && chat.wake_mode === "mention") {
+        hintParts.push("只盯 @我：对方 @ 你（或正文写 @你的名字）才唤醒 agent；其它消息只记知会、不算待回。");
+      }
+      if (sil.count) {
+        hintParts.push("最近 " + sil.count + " 条没有唤醒：" + skipText(sil.skip) + "。");
+      }
+      if (hintParts.length) {
         wrap.appendChild(h("div", { class: "ims-hint", style: "padding:2px var(--pad) 0",
-          text: "只盯 @我：对方 @ 你（或正文写 @你的名字）才唤醒 agent；其它消息只记知会、不算待回。" }));
+          text: hintParts.join(" ") }));
       }
 
       // 工作区常显：没值守也能先选好，加入时直接带上，避免「先跑默认、再改」。
@@ -1598,6 +1610,11 @@
         var body = msgText(m.content, m.state, m.kind, m.msg_type) || "（本地只有指针）";
         var meta = h("div", { class: "ims-msg-meta",
           text: (me ? "我" : (m.sender_name || "对方")) + " · " + (m.ts || fmtTime(m.ts_epoch)) });
+        if (m.skip && m.state !== "new") {
+          meta.appendChild(h("span", { class: "ims-link",
+            title: "这条没有叫醒 agent：" + skipText(m.skip),
+            text: " · 未唤醒：" + skipText(m.skip) }));
+        }
         if (m.app_link) {
           meta.appendChild(h("a", { class: "ims-link", href: m.app_link,
             target: "_blank", rel: "noreferrer", text: "在飞书打开" }));
@@ -1809,6 +1826,11 @@
                 });
               }
             }, "屏蔽")),
+          (c.silent && c.silent.count
+            ? h("div", { class: "ims-hint", style: "padding:0 2px 2px",
+                title: "这些消息收到了，但没进唤醒批次；点「打开」看每条原因",
+                text: "最近 " + c.silent.count + " 条没有唤醒：" + skipText(c.silent.skip) })
+            : null),
           h("div", { class: "ims-rowline" },
             h("span", { class: "ims-hint", text: "工作区" }),
             wsOptions(c.workspace || "", function (v) {

@@ -175,8 +175,25 @@ export class App {
       (chat.kind === "group" ? Number(chat.timer) === 1 : Number(chat.timer) !== -1);
     out.poll_at = chat.last_sync || 0;
     out.duty = chat.duty ? { ...chat.duty } : null;
+    out.silent = this.silentOf(chat);
     delete out.recent;
     return out;
+  }
+
+  /**
+   * 本地指针里「没叫醒」的条数与主因（spec 0049）。只统计 `ignored` 且带原因码的行，
+   * 排除 `baseline`——刚加入值守时的历史消息本来就该被忽略，报出来只是噪音。
+   * 上限就是 RECENT_LIMIT，所以文案必须说「最近」，不能说总量。
+   */
+  silentOf(chat) {
+    const rows = (Array.isArray(chat?.recent) ? chat.recent : [])
+      .filter((m) => m.state === "ignored" && m.skip && m.skip !== "baseline");
+    const tally = new Map();
+    for (const m of rows) tally.set(m.skip, (tally.get(m.skip) || 0) + 1);
+    let skip = "";
+    let top = 0;
+    for (const [k, v] of tally) if (v > top) { skip = k; top = v; }
+    return { count: rows.length, skip };
   }
 
   decorateItem(m) {
@@ -324,6 +341,7 @@ export class App {
           ...m,
           kind: row.kind || m.kind || "",
           state: row.state || "",
+          skip: row.skip || "",
           msg_type: row.msg_type || m.msg_type || "",
           app_link: row.app_link || m.app_link || "",
           media_paths: row.media_paths || [],
@@ -338,6 +356,7 @@ export class App {
       ...fresh,
       turn_state: ti.state, last_ok: ti.last_ok, last_reason: ti.last_reason,
       pending: this.state.pendingCount(fresh),
+      silent: this.silentOf(fresh),
     };
     workspaces.decorateChat(outChat);
     delete outChat.recent;

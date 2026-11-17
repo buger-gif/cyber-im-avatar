@@ -853,6 +853,63 @@ test("a started duty replies once in the chat with the configured text", async (
   assert.equal(chat.command.reply.ok, true, "already 不抹掉上次回执记录");
 });
 
+test("consume keeps an already command but drops a repeated started one", async () => {
+  const { state, poller } = setup();
+  const chat = state.ensureChat("feishu", "oc_consume_unit", { name: "客户", kind: "p2p" });
+  poller.identity.feishu = { ok: true, self_id: "ou_me", name: "我", checked_at: 1 };
+  const batch = [{
+    msg_id: "c1", kind: "cmd", sender_id: "ou_me", sender_name: "我",
+    content: "@我 启动", ts_epoch: 15010, mentions: [{ id: { open_id: "ou_me" } }],
+  }];
+
+  // already：会话本来就在值班，没有可开的东西，这条要留着交给 agent。
+  poller.startDutyFromCommand = async () => ({ ok: true, result: "already", reason: "x" });
+  const r1 = await poller.consumeStartCommands(chat, batch, { source: "poll" });
+  assert.equal(r1.consumed.size, 0, "already 不能把正文吞掉");
+
+  // 扫描先开过会话、下一轮又捞到同一条：不能再叫醒一次。
+  poller.startDutyFromCommand = async () => ({ ok: true, result: "started", deduped: true });
+  const r2 = await poller.consumeStartCommands(chat, batch, { source: "poll" });
+  assert.deepEqual([...r2.consumed], ["c1"]);
+});
+
+test("messages that do not wake record why", async () => {
+  const { state, poller, adapter } = setup();
+
+  // 私聊「只盯 @我」：基线一条，随后对方没 @ 我 一条。
+  const chat = state.ensureChat("feishu", "oc_skip_mention", { name: "客户", kind: "p2p" });
+  chat.watching = true;
+  chat.wake_mode = "mention";
+  adapter.messages = [msg("k0", 16000)];
+  await poller.pollChat("feishu", "oc_skip_mention");
+  assert.equal(chat.recent.find((m) => m.msg_id === "k0").skip, "baseline");
+
+  adapter.messages = [msg("k1", 16010), msg("k0", 16000)];
+  await poller.pollChat("feishu", "oc_skip_mention", { force: true });
+  const row = chat.recent.find((m) => m.msg_id === "k1");
+  assert.equal(row.state, "ignored");
+  assert.equal(row.skip, "no-mention", "没 @ 我要写明原因");
+
+  // 全部消息：本人自己回过之后，前面的待回改成 you-replied。
+  const all = state.ensureChat("feishu", "oc_skip_all", { name: "客户2", kind: "p2p" });
+  all.watching = true;
+  all.wake_mode = "all";
+  adapter.messages = [msg("a0", 16100)];
+  await poller.pollChat("feishu", "oc_skip_all");
+  adapter.messages = [msg("a1", 16110), msg("a0", 16100)];
+  await poller.pollChat("feishu", "oc_skip_all", { force: true });
+  assert.equal(all.recent.find((m) => m.msg_id === "a1").state, "new");
+
+  adapter.messages = [
+    msg("a2", 16120, { sender_id: "ou_me", sender_name: "我", content: "我回过了" }),
+    msg("a1", 16110), msg("a0", 16100),
+  ];
+  await poller.pollChat("feishu", "oc_skip_all", { force: true });
+  const earlier = all.recent.find((m) => m.msg_id === "a1");
+  assert.equal(earlier.state, "replied");
+  assert.equal(earlier.skip, "you-replied");
+});
+
 test("a started duty in a group replies too, and a send failure keeps the duty", async () => {
   const { state, poller, adapter } = setup();
   const chat = state.ensureChat("feishu", "oc_reply_grp", { name: "项目群", kind: "group" });

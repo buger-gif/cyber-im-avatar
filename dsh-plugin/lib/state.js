@@ -235,6 +235,11 @@ function safeReadJson(file) {
 
 const RECENT_KINDS = ["dm", "mention", "service", "fyi", "out", "cmd"];
 const RECENT_STATES = ["new", "opened", "replied", "ignored"];
+/**
+ * 一条消息没进唤醒批次的原因。只留可枚举的三种，面板按它聚合成一句话；
+ * 进批次的行 skip 为空串。老数据没有这个键，读出来就是空串，不需要迁移。
+ */
+export const SKIP_REASONS = ["baseline", "no-mention", "you-replied"];
 
 /**
  * 一条消息指针的归一化。字段顺序就是契约 02 的顺序：新字段只能往后追加。
@@ -255,6 +260,7 @@ function normalizeMessage(m) {
     ts_epoch: Number(m.ts_epoch) || 0,
     kind,
     state,
+    skip: SKIP_REASONS.includes(m.skip) ? m.skip : "",
     msg_type: String(m.msg_type || ""),
     app_link: String(m.app_link || ""),
     media_id: String(m.media_id || ""),
@@ -563,6 +569,7 @@ export class State {
       if (!(m.kind === "dm" || m.kind === "mention" || m.kind === "service")) continue;
       if (!(m.state === "new" || m.state === "opened")) continue;
       m.state = "replied";
+      m.skip = "you-replied";
       m.content = "";
       n += 1;
     }

@@ -117,6 +117,7 @@
 | ts_epoch | number | 归一 epoch |
 | kind | string | `dm` / `mention` / `fyi` / `out` / `cmd`（`service` 仅存量数据）；私聊只认 @ 时，非 @ 消息记 `fyi`，被 @ 的仍记 `dm`；`cmd` = 本人 @ 自己（私聊或群聊）、对替身说的话（进批次唤醒，但不算待回），其它自己发的仍记 `out` |
 | state | string | `new` / `opened` / `replied` / `ignored`；`cmd` 非 baseline 时记 `new`（进批次，但不进 `isPendingMessage`） |
+| skip | string | 没进唤醒批次的原因码，只在真的没叫醒时写：`baseline`（首次基线）/ `no-mention`（关注程度只盯 @我，这条没 @ 到本人）/ `you-replied`（这条之后本人自己发过话，视为已处理）；进批次的行为空串，老数据缺省为空串 |
 | msg_type | string | 平台消息类型（`text` / `image` / `file` / `post` …）；老数据缺省为空 |
 | app_link | string | 平台提供的“在 IM 客户端打开”链接（飞书 `message_app_link`）；没有为空 |
 | media_id | string | 平台结构化媒体键（企微 `media_id`；飞书从 content 解析出的 `img_`/`file_` key，多个逗号分隔） |

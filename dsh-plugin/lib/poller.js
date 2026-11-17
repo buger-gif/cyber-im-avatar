@@ -610,8 +610,10 @@ export class Poller {
       else if (dmMention) kind = isMention(m, selfId, names) ? "dm" : "fyi";
       else kind = "dm";
       let state;
+      let skip = "";
       if (baseline) {
         state = isSelf ? "replied" : "ignored";
+        skip = "baseline";
       } else if (kind === "cmd") {
         // 本人指令进批次，不当待回、不刷角标；正文保留给 agent 看。
         state = "new";
@@ -619,9 +621,11 @@ export class Poller {
         state = "replied";
       } else if (selfEpoch && (Number(m.ts_epoch) || 0) < selfEpoch) {
         state = kind === "fyi" ? "ignored" : "replied";
+        skip = "you-replied";
       } else if (kind === "fyi") {
         // 全量模式：群里的非 @ 消息也要叫醒 agent（只看不回），所以记 new。
         state = allMode ? "new" : "ignored";
+        skip = allMode ? "" : "no-mention";
       } else {
         state = "new";
       }
@@ -635,6 +639,7 @@ export class Poller {
         ts_epoch: Number(m.ts_epoch) || 0,
         kind,
         state,
+        skip,
         msg_type: String(m.msg_type || ""),
         app_link: String(m.app_link || ""),
         media_id: String(m.media_id || ""),

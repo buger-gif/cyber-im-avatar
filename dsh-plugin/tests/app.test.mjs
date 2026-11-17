@@ -1056,3 +1056,31 @@ test("join_workspace is exposed and validated through POST /api/config", async (
   assert.equal(out.body.join_workspace, "");
   assert.equal(state.data.config.join_workspace, "");
 });
+
+test("chat payload summarizes recent messages that did not wake", () => {
+  const { app, state } = makeApp();
+  const chat = state.ensureChat("feishu", "oc_silent", { name: "客户", kind: "p2p" });
+  chat.recent = [
+    { msg_id: "a", kind: "fyi", state: "ignored", skip: "no-mention", ts_epoch: 3, content: "" },
+    { msg_id: "b", kind: "fyi", state: "ignored", skip: "no-mention", ts_epoch: 2, content: "" },
+    { msg_id: "c", kind: "fyi", state: "ignored", skip: "baseline", ts_epoch: 1, content: "" },
+    { msg_id: "d", kind: "dm", state: "new", skip: "", ts_epoch: 4, content: "在吗" },
+  ];
+  const out = app.publicChat(chat);
+  assert.deepEqual(out.silent, { count: 2, skip: "no-mention" },
+    "baseline 不算静默：刚加入值守的历史消息本来就该忽略");
+  assert.equal(out.recent, undefined, "汇总不该把指针整批发给前端");
+});
+
+test("thread items carry the skip reason", async () => {
+  const { app, state } = makeApp();
+  const chat = state.ensureChat("feishu", "oc_thread_skip", { name: "客户", kind: "p2p" });
+  chat.recent = [{ msg_id: "m2", kind: "fyi", state: "ignored", skip: "no-mention",
+    ts_epoch: 102, content: "" }];
+  const out = await app.handle("/api/thread", "GET",
+    new URLSearchParams("platform=feishu&chat_id=oc_thread_skip&limit=5"));
+  assert.equal(out.status, 200);
+  const item = out.body.items.find((m) => m.msg_id === "m2");
+  assert.equal(item.skip, "no-mention");
+  assert.deepEqual(out.body.chat.silent, { count: 1, skip: "no-mention" });
+});
