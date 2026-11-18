@@ -5,12 +5,13 @@
 
 ## 更新时间
 
-2026-11-18（进行中：0051 发言权改为「默认口径 + 按群覆盖」，待发 0.24.1；0.24.0 已发布、市场索引指向它；0051 真机三项、0049 与「@ 自己」修复待真机；0048 / 0046 仍待真机）
+2026-11-18（0.24.1 已发布：0051 发言权默认口径 + 按群覆盖 + 没点名消息给条数；npm latest 与市场索引指向 0.24.1；0051 真机三项、0049 与「@ 自己」修复待真机；0048 / 0046 仍待真机）
 
 ## 最近批次
 
 | 日期 | 主题 | 证据 |
 | --- | --- | --- |
+| 2026-11-18 | 0.24.1 发布（0051 发言权默认口径 + C 型态）：功能提交 `8f60315` + 发布提交 `129f842` + 市场索引 `076b77b`；Trusted Publishing 发布成功（[run 44251140188](https://github.com/buger-gif/cyber-im-avatar/actions/runs/44251140188)，含版本自检）；tag / main 两套回归矩阵绿；公开 packument `time["0.24.1"]=2026-11-18T06:30:06Z`、`dist-tags.latest=0.24.1`，索引经 format-1 校验后指向它 | `CHANGELOG.md`、`dsh-plugin/package.json`、`dsh-plugin/market/index.json`、[run 44251140188](https://github.com/buger-gif/cyber-im-avatar/actions/runs/44251140188) |
 | 2026-11-18 | 发言权改成「内置默认口径 + 按群覆盖」（0051 / ADR 0017，未发版）：取消「未定义 → 强制草稿」；`RIGHTS_DEFAULT` 按「点名了谁」排序（点我名回 / 点了别人只当知会 / 谁都没点先判断 / 信息同步可发 / 判不准沉默），不落盘、不改发送方式；面板显示「默认口径 / 本群已改」+「恢复默认」，`/api/rights` 返回 `custom` / `default_text`；载荷给点名三分类统计；没点你名的消息给条数 + 按需在线拉（ADR 0018）；Node 322 绿、gate quick 绿 | `dsh-plugin/lib/{profiles,turns,app}.js`、`dsh-plugin/web/panel.js`、`dsh-plugin/lib/client.js`、`dsh-plugin/tests/{profiles,turns,app}.test.mjs`、`docs/specs/active/0051-发言权契约.md`、`docs/decisions/implemented/0017-发言权默认口径.md`、契约 01、架构 03、`SKILL.md` |
 | 2026-11-18 | 0.24.0 发布（0051 群发言权契约 + 启动回执默认文案）：功能提交 `a5d2fe5` + 文案提交 `b2998aa` + 发布提交 `02d64c5` + 市场索引 `c15ca15`；Trusted Publishing 发布成功（[run 44248159949](https://github.com/buger-gif/cyber-im-avatar/actions/runs/44248159949)，3m4s，含版本自检）；tag / main 两套回归矩阵全绿（tag [run 44248159872](https://github.com/buger-gif/cyber-im-avatar/actions/runs/44248159872)）；本地带 `?t=` 的 curl 确认 `0.24.0` 已在公开 packument（`time=2026-11-18T06:03:13Z`）、`npm view` latest 0.24.0，索引经 format-1 校验后指向它 | `CHANGELOG.md`、`dsh-plugin/package.json`、`dsh-plugin/market/index.json`、[run 44248159949](https://github.com/buger-gif/cyber-im-avatar/actions/runs/44248159949) |
 | 2026-11-18 | 群发言权契约（0051，待真机）：载荷加「本人：姓名 · open_id」、每条消息的被 @ 对象、「本批 N 条点你名」，删掉「只盯 @我…不需要处理」「非点名的群消息只看不回」「有该回的就按 skill 回」三句结论，改成默认沉默 + 判定该你出手才发言；群工作本新增 `## 我在这个群的发言权`，未定义时该群本轮强制草稿、定义后自动恢复；面板「发言权 → 编辑」只改这一段（`GET/POST /api/rights`，`base_mtime` 冲突回 `stale`，标题丢失自动补回）；Node 320 绿、gate quick 绿；待真机 | `dsh-plugin/lib/{profiles,turns,poller,app,duty}.js`、`dsh-plugin/web/panel.js`、`dsh-plugin/lib/client.js`、`dsh-plugin/tests/{profiles,turns,app}.test.mjs`、`docs/specs/active/0051-发言权契约.md`、`docs/decisions/implemented/0016-发言权契约.md`、契约 01、架构 03、`SKILL.md` |
