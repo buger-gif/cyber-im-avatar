@@ -5,12 +5,13 @@
 
 ## 更新时间
 
-2026-11-17（0.22.0 已发布；0050 关注页可直接编辑日报已实施并验收归档，待随下个版本发布；0049 与「@ 自己」修复待真机；0048 / 0046 仍待真机）
+2026-11-18（0.23.0 已发布：0050 关注页可直接编辑日报；npm latest 与市场索引指向 0.23.0；0049 与「@ 自己」修复待真机；0048 / 0046 仍待真机）
 
 ## 最近批次
 
 | 日期 | 主题 | 证据 |
 | --- | --- | --- |
+| 2026-11-18 | 0.23.0 发布（0050 关注页可直接编辑日报）：功能提交 `6ad511a` + 发布提交 `8995f9d` + 市场索引 `c78d58f`；Trusted Publishing 发布成功（[run 44222074577](https://github.com/buger-gif/cyber-im-avatar/actions/runs/44222074577)，3m38s），npm latest 0.23.0、tarball 200；tag / main 两套回归矩阵全绿；索引经 format-1 校验后指向 0.23.0 | `CHANGELOG.md`、`dsh-plugin/package.json`、`dsh-plugin/market/index.json`、[run 44222074577](https://github.com/buger-gif/cyber-im-avatar/actions/runs/44222074577) |
 | 2026-11-17 | 关注页可直接编辑日报（0050，已验收归档）：关注页加「编辑」；`POST /api/digest` 整份覆盖写（`base_mtime` stale、空内容删文件、超 256KB 拒绝、目录 700/文件 600/临时文件 + rename）；`GET` 加 `truncated`；编辑态冻结 3 秒 / 60 秒刷新，冲突保留草稿、二次确认覆盖；`SKILL.md` 补「当前文件是底稿、不补回用户删掉的行」；Node 309 绿、gate quick 绿；隔离 DSH + headless Chrome 全流程通过 | `dsh-plugin/lib/app.js`、`dsh-plugin/web/panel.js`、`dsh-plugin/lib/client.js`、`dsh-plugin/tests/app.test.mjs`、`dsh-plugin/scripts/demo/fixture.mjs`、`docs/specs/archive/0050-关注页可编辑日报.md`、契约 01、`docs/architecture/02-data.md`、`SKILL.md` |
 | 2026-11-17 | 0.22.0 发布：0049 值守静默可解释 + 已值班「@ 自己」修复；Trusted Publishing 发布成功，`v0.22.0` tag；npm 公开 packument 约 6 分钟后才可见，CI 的 5 分钟自检判红，按 runbook 重跑后绿；`ubuntu-latest` 迁到 26.04 后回归矩阵的 3.9 腿起不来，钉 `ubuntu-24.04`；市场索引指向 0.22.0 | `CHANGELOG.md`、`dsh-plugin/package.json`、`dsh-plugin/market/index.json`、`.github/workflows/test.yml`、[run 44007864572](https://github.com/buger-gif/cyber-im-avatar/actions/runs/44007864572) |
 | 2026-11-17 | 值守静默可解释（0049）：`recent[].skip` 记 `baseline` / `no-mention` / `you-replied`，面板值守卡片与会话详情直接写「最近 N 条没有唤醒：没 @ 你」；`/api/chats` 加 `silent`、`/api/thread` items 带 `skip`；`baseline` 不计汇总；Node 305 绿、gate quick 绿；待真机 | `dsh-plugin/lib/{state,poller,app}.js`、`dsh-plugin/web/panel.js`、`dsh-plugin/lib/client.js`、`docs/specs/active/0049-值守静默可解释.md`、契约 01/02 |
