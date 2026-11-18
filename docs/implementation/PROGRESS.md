@@ -5,12 +5,13 @@
 
 ## 更新时间
 
-2026-11-18（0.23.0 已发布：0050 关注页可直接编辑日报；npm latest 与市场索引指向 0.23.0；0049 与「@ 自己」修复待真机；0048 / 0046 仍待真机）
+2026-11-18（进行中：0051 群发言权契约待真机；0.23.0 已发布、市场索引指向它；0049 与「@ 自己」修复待真机；0048 / 0046 仍待真机）
 
 ## 最近批次
 
 | 日期 | 主题 | 证据 |
 | --- | --- | --- |
+| 2026-11-18 | 群发言权契约（0051，待真机）：载荷加「本人：姓名 · open_id」、每条消息的被 @ 对象、「本批 N 条点你名」，删掉「只盯 @我…不需要处理」「非点名的群消息只看不回」「有该回的就按 skill 回」三句结论，改成默认沉默 + 判定该你出手才发言；群工作本新增 `## 我在这个群的发言权`，未定义时该群本轮强制草稿、定义后自动恢复；面板「发言权 → 编辑」只改这一段（`GET/POST /api/rights`，`base_mtime` 冲突回 `stale`，标题丢失自动补回）；Node 320 绿、gate quick 绿；待真机 | `dsh-plugin/lib/{profiles,turns,poller,app,duty}.js`、`dsh-plugin/web/panel.js`、`dsh-plugin/lib/client.js`、`dsh-plugin/tests/{profiles,turns,app}.test.mjs`、`docs/specs/active/0051-发言权契约.md`、`docs/decisions/implemented/0016-发言权契约.md`、契约 01、架构 03、`SKILL.md` |
 | 2026-11-18 | 0.23.0 发布（0050 关注页可直接编辑日报）：功能提交 `6ad511a` + 发布提交 `8995f9d` + 市场索引 `c78d58f`；Trusted Publishing 发布成功（[run 44222074577](https://github.com/buger-gif/cyber-im-avatar/actions/runs/44222074577)，3m38s），npm latest 0.23.0、tarball 200；tag / main 两套回归矩阵全绿；索引经 format-1 校验后指向 0.23.0 | `CHANGELOG.md`、`dsh-plugin/package.json`、`dsh-plugin/market/index.json`、[run 44222074577](https://github.com/buger-gif/cyber-im-avatar/actions/runs/44222074577) |
 | 2026-11-17 | 关注页可直接编辑日报（0050，已验收归档）：关注页加「编辑」；`POST /api/digest` 整份覆盖写（`base_mtime` stale、空内容删文件、超 256KB 拒绝、目录 700/文件 600/临时文件 + rename）；`GET` 加 `truncated`；编辑态冻结 3 秒 / 60 秒刷新，冲突保留草稿、二次确认覆盖；`SKILL.md` 补「当前文件是底稿、不补回用户删掉的行」；Node 309 绿、gate quick 绿；隔离 DSH + headless Chrome 全流程通过 | `dsh-plugin/lib/app.js`、`dsh-plugin/web/panel.js`、`dsh-plugin/lib/client.js`、`dsh-plugin/tests/app.test.mjs`、`dsh-plugin/scripts/demo/fixture.mjs`、`docs/specs/archive/0050-关注页可编辑日报.md`、契约 01、`docs/architecture/02-data.md`、`SKILL.md` |
 | 2026-11-17 | 0.22.0 发布：0049 值守静默可解释 + 已值班「@ 自己」修复；Trusted Publishing 发布成功，`v0.22.0` tag；npm 公开 packument 约 6 分钟后才可见，CI 的 5 分钟自检判红，按 runbook 重跑后绿；`ubuntu-latest` 迁到 26.04 后回归矩阵的 3.9 腿起不来，钉 `ubuntu-24.04`；市场索引指向 0.22.0 | `CHANGELOG.md`、`dsh-plugin/package.json`、`dsh-plugin/market/index.json`、`.github/workflows/test.yml`、[run 44007864572](https://github.com/buger-gif/cyber-im-avatar/actions/runs/44007864572) |

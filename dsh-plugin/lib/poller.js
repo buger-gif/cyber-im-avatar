@@ -1293,6 +1293,9 @@ export class Poller {
       label: PLATFORM_META[chat.platform]?.label || chat.platform,
       name: chat.name || chat.chat_id,
       chat_id: chat.chat_id,
+      // 本人是谁：值守台要能分清「有人被点名」和「你被点名」（spec 0051）。
+      self_id: this.identity[chat.platform]?.self_id || "",
+      self_name: this.identity[chat.platform]?.name || "",
       trigger: d.trigger || "manual",
       member_count: Number(d.member_count) || 0,
       member_limit: Number(cfg.max_group_members) || 0,

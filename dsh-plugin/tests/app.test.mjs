@@ -128,7 +128,7 @@ test("send_mode_default is exposed in status and writable through POST /api/conf
 
 test("command keyword is writable through config and exposed per chat", async () => {
   const { app, state } = makeApp();
-  const DEF_REPLY = "支持用户自定义，默认就是 24 小时值班，上线 @ 我即可触发。";
+  const DEF_REPLY = "24 小时agent值班上线， @ 我即可触发服务";
   let out = await app.handle("/api/config", "GET");
   assert.deepEqual(out.body.command,
     { enabled: true, start_keyword: "启动", reply_enabled: true, reply_text: DEF_REPLY });
@@ -1197,4 +1197,64 @@ test("digest stale also covers a file appearing or vanishing between load and sa
   out = await app.handle("/api/digest", "POST", null, { date, text: "用户版本" });
   assert.equal(out.body.ok, true);
   assert.equal(fs.readFileSync(file, "utf8"), "用户版本\n");
+});
+
+test("rights: 群只读写发言权那一段，其余字节不变；stale 拒写；私聊不适用", async () => {
+  const { app, state, profiles } = makeApp();
+  const chat = state.ensureChat("feishu", "oc_grp", { name: "示例群", kind: "group", target: true });
+  profiles.ensureMemory("feishu", chat, "ou_me");
+
+  let out = await app.handle("/api/rights", "GET", { platform: "feishu", chat_id: "oc_grp" });
+  assert.equal(out.status, 200);
+  assert.equal(out.body.ok, true);
+  assert.equal(out.body.applicable, true);
+  assert.equal(out.body.defined, false, "新建工作本里的契约段是空的");
+  assert.equal(out.body.title, "## 我在这个群的发言权");
+
+  const file = profiles.pathFor("feishu", "oc_grp", "示例群");
+  const before = fs.readFileSync(file, "utf8");
+  const head = before.slice(0, before.indexOf("## 我在这个群的发言权"));
+  const tail = before.slice(before.indexOf("## 成员与角色"));
+
+  out = await app.handle("/api/rights", "POST", null, {
+    platform: "feishu", chat_id: "oc_grp", text: "- 我是谁：跟进人", base_mtime: 0,
+  });
+  assert.equal(out.body.ok, true);
+  assert.equal(out.body.defined, true);
+  const after = fs.readFileSync(file, "utf8");
+  assert.equal(after.slice(0, after.indexOf("## 我在这个群的发言权")), head, "标题之前一个字节不改");
+  assert.equal(after.slice(after.indexOf("## 成员与角色")), tail, "下一段之后一个字节不改");
+
+  // 过期 base_mtime -> stale，磁盘不动
+  out = await app.handle("/api/rights", "POST", null, {
+    platform: "feishu", chat_id: "oc_grp", text: "- 改", base_mtime: 1,
+  });
+  assert.equal(out.body.ok, false);
+  assert.equal(out.body.reason, "stale");
+  assert.equal(fs.readFileSync(file, "utf8"), after);
+
+  // 空正文 = 清空该段，回到未定义，标题还在
+  out = await app.handle("/api/rights", "POST", null, {
+    platform: "feishu", chat_id: "oc_grp", text: "  ", base_mtime: 0,
+  });
+  assert.equal(out.body.ok, true);
+  assert.equal(out.body.defined, false);
+  assert.match(fs.readFileSync(file, "utf8"), /^## 我在这个群的发言权$/m);
+
+  // targets 行带上契约状态
+  out = await app.handle("/api/targets", "GET");
+  const row = out.body.items.find((t) => t.chat_id === "oc_grp");
+  assert.equal(row.rights_defined, false);
+  assert.equal(row.rights, "");
+
+  // 私聊不适用：不设闸门，也不能通过这条路由改名下的工作本
+  state.ensureChat("feishu", "oc_dm", { name: "张三", kind: "p2p", target: true });
+  out = await app.handle("/api/rights", "GET", { platform: "feishu", chat_id: "oc_dm" });
+  assert.equal(out.body.applicable, false);
+  assert.equal(out.body.defined, true);
+  out = await app.handle("/api/rights", "POST", null, {
+    platform: "feishu", chat_id: "oc_dm", text: "- x", base_mtime: 0,
+  });
+  assert.equal(out.body.ok, false);
+  assert.equal(out.body.reason, "single_chat");
 });

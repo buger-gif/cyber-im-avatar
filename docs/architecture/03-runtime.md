@@ -56,6 +56,10 @@ poller 判定命中
   心跳轮与值守台不注入发送方式，边界是「不要发」。DSH 压缩会话
   （`compaction/summary` / 成功的 `compaction/end`）后清掉该会话的口径与人物档案指针，
   下一轮补一次。
+- **发言权契约**：群工作本的 `## 我在这个群的发言权` 是授权边界。插件只做结构判断（该小节
+  非空 = 已定义），未定义时把本轮发送方式强制降为 `draft` 并在载荷里写明原因；定义后自动
+  恢复 `chats[].send_mode`。私聊不参与。面板只读写这一段（`/api/rights`，spec 0051），
+  工作本其余字节不动。
 - 画像只给路径：单聊 `~/.im-standin/profiles/people/<platform>/<person_id>.md` 一份；
   群另有 `~/.im-standin/profiles/<platform>/<chat_id>.md`。都由 agent 自己读、自己改；
   插件不解析回复、不代写。`dsh.full_access=true` 时插件在 followup 前把会话切到

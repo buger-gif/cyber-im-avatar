@@ -11,8 +11,59 @@ import path from "node:path";
 import crypto from "node:crypto";
 
 export const MAX_PROFILE = 12 * 1024;
+/** 发言权小节的正文上限：它是授权边界，不是作文。 */
+export const MAX_RIGHTS = 8 * 1024;
+/** 发言权小节标题：插件建模板时就写进去，人填、agent 首任代笔；判定只看这段是否非空。 */
+export const RIGHTS_TITLE = "## 我在这个群的发言权";
 const PLATFORM_LABEL = { feishu: "飞书", wecom: "企业微信", dingtalk: "钉钉" };
 const SAFE = /[^0-9A-Za-z._\-\u4e00-\u9fff]+/g;
+const H2 = /^##\s+\S/;
+
+/**
+ * 取工作本里发言权小节的 body（标题行到下一个二级标题为止）。
+ * 只做结构切分，不解析语义：`defined` = body 去空白后非空；标题被删也算未定义（fail-closed）。
+ */
+export function rightsSection(text) {
+  const lines = String(text == null ? "" : text).replace(/\r\n/g, "\n").split("\n");
+  const at = lines.findIndex((l) => l.trim() === RIGHTS_TITLE);
+  if (at < 0) return { found: false, defined: false, body: "" };
+  let end = lines.length;
+  for (let i = at + 1; i < lines.length; i += 1) {
+    if (H2.test(lines[i])) { end = i; break; }
+  }
+  const body = lines.slice(at + 1, end).join("\n").trim();
+  return { found: true, defined: !!body, body };
+}
+
+/**
+ * 只替换发言权小节的 body：标题之前、下一个二级标题之后的字节原样保留。
+ * 标题缺失时在文末补回（插件是模板作者，能重建），不碰其它段落。
+ */
+export function setRightsSection(text, body) {
+  const src = String(text == null ? "" : text).replace(/\r\n/g, "\n");
+  const clean = String(body == null ? "" : body).replace(/\r\n/g, "\n").trim();
+  const block = clean ? `${RIGHTS_TITLE}\n\n${clean}\n` : `${RIGHTS_TITLE}\n`;
+  const lines = src.split("\n");
+  const at = lines.findIndex((l) => l.trim() === RIGHTS_TITLE);
+  if (at < 0) {
+    const head = src.trim() ? (src.endsWith("\n") ? src : `${src}\n`) : "";
+    return head + (head ? "\n" : "") + block;
+  }
+  let end = lines.length;
+  for (let i = at + 1; i < lines.length; i += 1) {
+    if (H2.test(lines[i])) { end = i; break; }
+  }
+  const before = lines.slice(0, at).join("\n");
+  const after = lines.slice(end).join("\n");
+  const parts = [];
+  if (before.trim()) parts.push(before);
+  parts.push(block);
+  if (after.trim()) parts.push(after);
+  let out = parts.join("\n");
+  if (!out.endsWith("\n")) out += "\n";
+  if (!after.trim()) out = out.replace(/\n+$/, "\n");
+  return out;
+}
 
 /** 与 scripts/bootstrap.py 的 _SAFE_RE 规则逐字节一致：golden 测试两边共享。 */
 function safePart(value) {
@@ -54,6 +105,8 @@ export function profileTemplate(name, platform, chatId, notes = []) {
     "## 这个会话是什么",
     "",
     "## 群内工作要求",
+    "",
+    RIGHTS_TITLE,
     "",
     "## 成员与角色",
     "",
@@ -361,6 +414,59 @@ export class Profiles {
     const body = text.trim() ? text : personTemplate(name, platform, personId);
     this.writeRaw(file, body.endsWith("\n") ? body : body + "\n");
     return { ok: true, path: file, text: this.readPath(file), mtime: this.mtime(file) };
+  }
+
+  /**
+   * 群的发言权（工作本里那一段）。私聊不适用，按「已定义」返回——对方的私聊没有授权边界可言。
+   * 只读文件、只做结构切分，不看语义（铁律 8）。
+   */
+  rightsFor(platform, chat, selfId = "") {
+    const memory = this.memoryFor(platform, chat, selfId);
+    const empty = {
+      path: memory.path || "", exists: false, defined: true, text: "",
+      title: RIGHTS_TITLE, mtime: 0, applicable: false,
+    };
+    if (!memory.path) return empty;
+    if (chat?.kind !== "group" || memory.single) return empty;
+    const exists = fs.existsSync(memory.path);
+    const text = exists ? this.readPath(memory.path) : "";
+    const sec = rightsSection(text);
+    return {
+      path: memory.path, exists, defined: sec.defined, text: sec.body,
+      title: RIGHTS_TITLE, mtime: this.mtime(memory.path), applicable: true,
+    };
+  }
+
+  /**
+   * 面板改发言权：只替换工作本里那一段，其余字节原样保留。
+   * baseMtime 给了且磁盘比它新时回 stale（沿用面板编辑模型的冲突语义），不静默覆盖。
+   */
+  writeRights(platform, chat, selfId, body, { baseMtime = 0 } = {}) {
+    if (!chat || chat.kind !== "group") return { ok: false, reason: "single_chat" };
+    if (typeof body !== "string") return { ok: false, reason: "text 必须是字符串" };
+    if (Buffer.byteLength(body, "utf8") > MAX_RIGHTS) {
+      return { ok: false, reason: "发言权超过 8KB" };
+    }
+    const memory = this.memoryFor(platform, chat, selfId);
+    if (!memory.path) return { ok: false, reason: "画像路径不合法" };
+    const base = Number(baseMtime) || 0;
+    if (base > 0 && fs.existsSync(memory.path) && this.mtime(memory.path) > base + 0.001) {
+      return { ok: false, reason: "stale" };
+    }
+    // 文件还不存在时按模板建一份（模板自带空小节），其余段落不凭空捏造。
+    const current = fs.existsSync(memory.path)
+      ? this.readPath(memory.path)
+      : profileTemplate(chat.name || "", platform, chat.chat_id || "");
+    const next = setRightsSection(current, body);
+    if (Buffer.byteLength(next, "utf8") > MAX_PROFILE) {
+      return { ok: false, reason: "画像超过 12KB" };
+    }
+    this.writeRaw(memory.path, next.endsWith("\n") ? next : `${next}\n`);
+    const sec = rightsSection(this.readPath(memory.path));
+    return {
+      ok: true, path: memory.path, defined: sec.defined, text: sec.body,
+      title: RIGHTS_TITLE, mtime: this.mtime(memory.path),
+    };
   }
 
   /** 扫目录列人物档案；只读、不建文件。platform 为空时扫全部平台。 */

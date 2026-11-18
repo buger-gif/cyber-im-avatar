@@ -5,7 +5,8 @@ import path from "node:path";
 import test from "node:test";
 
 import {
-  Profiles, MAX_PROFILE, chatPersonId, excerpt, memoryRel, personRefs, personRel, profileRel, titleOf,
+  Profiles, MAX_PROFILE, MAX_RIGHTS, RIGHTS_TITLE, chatPersonId, excerpt, memoryRel,
+  personRefs, personRel, profileRel, profileTemplate, rightsSection, setRightsSection, titleOf,
 } from "../lib/profiles.js";
 
 function tempProfiles() {
@@ -254,4 +255,80 @@ test("ensureMemory on a group still creates the workbook and never a person file
   assert.equal(got.path, profiles.pathFor("feishu", "oc_g", "示例群"));
   assert.match(got.text, /## 群内工作要求/);
   assert.equal(profiles.legacyBookFor("feishu", chat, "ou_me"), "", "群没有待并入概念");
+});
+
+test("发言权小节：模板自带空标题，body 非空才算已定义", () => {
+  const tpl = profileTemplate("示例群", "feishu", "oc_demo");
+  assert.match(tpl, new RegExp(`^${RIGHTS_TITLE}$`, "m"));
+  assert.equal(rightsSection(tpl).defined, false, "空 body = 未定义（fail-closed）");
+  assert.equal(rightsSection("").found, false);
+  assert.equal(rightsSection("# 只有标题\n\n什么都没有\n").defined, false);
+  const filled = setRightsSection(tpl, "- 我是谁：跟进人\n- 该我回：点我名");
+  const sec = rightsSection(filled);
+  assert.equal(sec.found, true);
+  assert.equal(sec.defined, true);
+  assert.match(sec.body, /^\- 我是谁：跟进人/);
+});
+
+test("发言权替换只动那一段，标题前后的字节一个不改", () => {
+  const tpl = profileTemplate("示例群", "feishu", "oc_demo");
+  const before = tpl.slice(0, tpl.indexOf(RIGHTS_TITLE));
+  const after = tpl.slice(tpl.indexOf("## 成员与角色"));
+  const out = setRightsSection(tpl, "- 该我回：点我名");
+  assert.equal(out.slice(0, out.indexOf(RIGHTS_TITLE)), before);
+  assert.equal(out.slice(out.indexOf("## 成员与角色")), after);
+  // 清空 = 回到未定义，标题还在（模板契约不破）
+  const cleared = setRightsSection(out, "   ");
+  assert.equal(rightsSection(cleared).defined, false);
+  assert.match(cleared, new RegExp(`^${RIGHTS_TITLE}$`, "m"));
+});
+
+test("发言权标题被删后能补回（插件是模板作者），且不覆盖其它段落", () => {
+  const text = "# 示例群\n\n## 群内工作要求\n\n- 只回点名\n";
+  const out = setRightsSection(text, "- 我是谁：跟进人");
+  assert.equal(out.startsWith(text.trimEnd()), true);
+  assert.equal(rightsSection(out).defined, true);
+  assert.match(out, /## 群内工作要求/);
+  assert.match(out, /- 只回点名/);
+});
+
+test("rightsFor：群适用，私聊不适用且不设闸门", () => {
+  const { profiles } = tempProfiles();
+  const group = { platform: "feishu", chat_id: "oc_g", name: "示例群", kind: "group" };
+  profiles.ensureMemory("feishu", group, "ou_self");
+  const r = profiles.rightsFor("feishu", group, "ou_self");
+  assert.equal(r.applicable, true);
+  assert.equal(r.exists, true);
+  assert.equal(r.defined, false);
+  const dm = { platform: "feishu", chat_id: "oc_dm", name: "张三", kind: "p2p" };
+  const d = profiles.rightsFor("feishu", dm, "ou_self");
+  assert.equal(d.applicable, false);
+  assert.equal(d.defined, true, "私聊没有授权边界可言，不能因此降级");
+});
+
+test("writeRights：段内写、stale 拒写、8KB 上限、清空回未定义", () => {
+  const { profiles } = tempProfiles();
+  const group = { platform: "feishu", chat_id: "oc_g", name: "示例群", kind: "group" };
+  const first = profiles.writeRights("feishu", group, "ou_self", "- 我是谁：跟进人", {});
+  assert.equal(first.ok, true);
+  assert.equal(first.defined, true);
+  const file = first.path;
+  const book = fs.readFileSync(file, "utf8");
+  assert.match(book, /## 群内工作要求/, "其它段落还在");
+  // base_mtime 落后 -> stale，磁盘不动
+  const stale = profiles.writeRights("feishu", group, "ou_self", "- 改", { baseMtime: 1 });
+  assert.equal(stale.ok, false);
+  assert.equal(stale.reason, "stale");
+  assert.equal(fs.readFileSync(file, "utf8"), book);
+  // 超过 8KB 拒写
+  const big = profiles.writeRights("feishu", group, "ou_self", "x".repeat(MAX_RIGHTS + 1), {});
+  assert.equal(big.ok, false);
+  // 清空该段 -> 未定义，标题仍在
+  const cleared = profiles.writeRights("feishu", group, "ou_self", "", {});
+  assert.equal(cleared.ok, true);
+  assert.equal(cleared.defined, false);
+  assert.match(fs.readFileSync(file, "utf8"), new RegExp(`^${RIGHTS_TITLE}$`, "m"));
+  // 私聊拒写
+  const dm = { platform: "feishu", chat_id: "oc_dm", name: "张三", kind: "p2p" };
+  assert.equal(profiles.writeRights("feishu", dm, "ou_self", "- x", {}).reason, "single_chat");
 });

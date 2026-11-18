@@ -416,7 +416,9 @@ window.__ModuleLoader__.load({
       personEdit: "", personDrafts: {},
       personSearch: { q: "", platform: "feishu", items: null, err: "", seq: 0, open: false },
       digest: null, digestDate: "", digestLoading: "", digestError: "", digestTimer: null,
-      digestEdit: false, digestDraft: "", digestEditBase: 0, digestSaving: false, digestConflict: 0
+      digestEdit: false, digestDraft: "", digestEditBase: 0, digestSaving: false, digestConflict: 0,
+      // 群发言权（spec 0051）：编辑态独立于会话详情，编辑期间不刷新详情，光标不会被顶掉。
+      rightsEdit: null, rightsSaving: false, rightsConflict: 0
     };
 
     var toastTimer = null;
@@ -466,9 +468,188 @@ window.__ModuleLoader__.load({
     }
 
     function chatSendModeHint(chat) {
+      var t = chat && chat.kind === "group" ? targetOfChat(chat.platform, chat.chat_id) : null;
+      if (t && t.rights_defined === false) {
+        return "发言权未定义，本群先出草稿；写清楚「我在这个群的发言权」后自动恢复";
+      }
       return chatSendModeValue(chat) === "auto"
         ? "这通值班直接发，不再逐条问你"
         : "这通值班留草稿，等你说「发」";
+    }
+
+    /**
+     * 群发言权（spec 0051）：人改的是「我在这个群的发言权」这一段，agent 的知识段不在这里。
+     * 未定义时该群只能出草稿——这是依赖关系，不是开关。
+     */
+    var RIGHTS_PLACEHOLDER =
+      "- 我是谁：跟进人，不是处理人\n" +
+      "- 该我回：点我名的消息；需要我表态或给结论的事\n" +
+      "- 不该我回：处理人被点名的催办、他的进展\n" +
+      "- 别人被点名时：不代答；确有补充用跟进人口吻单独说";
+
+    function rightsOf(d) {
+      if (!d || !d.chat || d.chat.kind !== "group") return null;
+      var t = targetOfChat(d.platform, d.chat_id);
+      return t && typeof t.rights_defined === "boolean" ? t : null;
+    }
+
+    function rightsHint(t) {
+      if (!t) return "读不到工作本；去「记忆文件 → 群聊」看这份会话";
+      if (t.rights_defined === false) return "未定义 · 全自动已暂停；写清楚这一段后自动恢复";
+      var first = String(t.rights || "").split("\n").filter(function (l) { return l.trim(); })[0] || "";
+      return first ? first.replace(/^\s*[-*]\s*/, "").replace(/^我是谁[：:]\s*/, "") : "已定义";
+    }
+
+    function openRightsEdit(d, btn) {
+      if (!d || S.rightsSaving) return;
+      if (btn) btn.disabled = true;
+      api("/api/rights?platform=" + encodeURIComponent(d.platform) +
+          "&chat_id=" + encodeURIComponent(d.chat_id))
+        .then(function (r) {
+          if (btn) btn.disabled = false;
+          if (S.dead) return;
+          if (!r || r.ok === false) return say("读发言权失败：" + ((r && r.reason) || "未知"));
+          if (!r.applicable) return say("私聊没有发言权契约（对方在跟你说话，不需要授权边界）");
+          S.rightsEdit = {
+            platform: d.platform, chat_id: d.chat_id, chat: d.chat || {},
+            text: r.text || "", base_mtime: Number(r.mtime) || 0, defined: !!r.defined
+          };
+          S.rightsConflict = 0;
+          S.rightsSaving = false;
+          paint();
+        })
+        .catch(function (e) { if (btn) btn.disabled = false; say("读发言权失败：" + shortReason(e)); });
+    }
+
+    function cancelRightsEdit() {
+      S.rightsEdit = null;
+      S.rightsConflict = 0;
+      S.rightsSaving = false;
+      paint();
+    }
+
+    /** 保存被 stale 拒了：保留草稿、取一次磁盘最新 mtime，再点一次保存才算覆盖。 */
+    function rightsConflictRefresh(btn) {
+      var e = S.rightsEdit;
+      if (!e) return;
+      return api("/api/rights?platform=" + encodeURIComponent(e.platform) +
+                 "&chat_id=" + encodeURIComponent(e.chat_id))
+        .then(function (latest) {
+          if (S.dead) return;
+          if (!latest || latest.ok === false) {
+            if (btn) btn.disabled = false;
+            return say("工作本刚被 agent 改过，但读不到最新版；先取消，刷新后再改");
+          }
+          S.rightsConflict = Number(latest.mtime) || 0;
+          S.rightsSaving = false;
+          say("工作本刚被 agent 改过；再点一次保存会覆盖它");
+          paint();
+        })
+        .catch(function (err) { if (btn) btn.disabled = false; say("读到最新版失败：" + shortReason(err)); });
+    }
+
+    function reloadRightsLatest() {
+      var e = S.rightsEdit;
+      if (!e) return;
+      return api("/api/rights?platform=" + encodeURIComponent(e.platform) +
+                 "&chat_id=" + encodeURIComponent(e.chat_id))
+        .then(function (latest) {
+          if (S.dead || !S.rightsEdit) return;
+          if (!latest || latest.ok === false) return say("读不到最新版，稍后再试");
+          S.rightsEdit.text = latest.text || "";
+          S.rightsEdit.base_mtime = Number(latest.mtime) || 0;
+          S.rightsEdit.defined = !!latest.defined;
+          S.rightsConflict = 0;
+          say("已载入最新版");
+          paint();
+        })
+        .catch(function (err) { say("载入失败：" + shortReason(err)); });
+    }
+
+    function saveRights(ta, btn) {
+      var e = S.rightsEdit;
+      if (!e || S.rightsSaving) return;
+      var base = S.rightsConflict ? S.rightsConflict : e.base_mtime;
+      S.rightsSaving = true;
+      btn.disabled = true;
+      btn.textContent = "保存中…";
+      api("/api/rights", { body: {
+        platform: e.platform, chat_id: e.chat_id, text: ta.value, base_mtime: base
+      } })
+        .then(function (r) {
+          S.rightsSaving = false;
+          if (S.dead) return;
+          if (!r) {
+            btn.disabled = false;
+            btn.textContent = "保存";
+            return say("保存失败：本地服务没响应");
+          }
+          if (r.ok === false) {
+            if (r.reason === "stale") return rightsConflictRefresh(btn);
+            btn.disabled = false;
+            btn.textContent = "保存";
+            return say("保存失败：" + (r.reason || "未知原因"));
+          }
+          var defined = !!r.defined;
+          S.rightsEdit = null;
+          S.rightsConflict = 0;
+          say(defined ? "发言权已保存" : "发言权已清空；这个群先出草稿，补上后自动恢复");
+          paint();
+          loadChats();
+          // 「发言权 / 发送方式」两行读的是 targets 行：等它回来再重画一次，
+          // 否则刚保存完还显示旧状态（发送方式那句「全自动已暂停」也不撤）。
+          loadTargets().then(function () {
+            if (!S.dead && S.detail) paintBody(true);
+          });
+        })
+        .catch(function (err) {
+          S.rightsSaving = false;
+          btn.disabled = false;
+          btn.textContent = "保存";
+          say("保存失败：" + shortReason(err));
+        });
+    }
+
+    /** 编辑态：只说清这一段是什么、影响什么；工作本其它段落不在这里编辑。 */
+    function rightsView() {
+      var e = S.rightsEdit || {};
+      var chat = e.chat || {};
+      var wrap = h("div", { class: "ims-detail" });
+      wrap.appendChild(h("div", { class: "ims-dhead" },
+        h("button", { class: "ims-btn ghost", type: "button", title: "返回",
+                      onclick: cancelRightsEdit },
+          h("span", { class: "ims-ico", html: icon("back", 15) })),
+        h("span", { class: "ims-name", text: "发言权 · " + (chat.name || e.chat_id || "") }),
+        h("span", { class: "ims-grow" })));
+      wrap.appendChild(h("div", { class: "ims-hint", style: "padding:2px var(--pad) 6px",
+        text: "这一段是你在本群的授权边界：我是谁、什么该我回、什么不该我回。" +
+              "没定义时这个群只能出草稿；保存后按面板的发送方式执行。" }));
+      wrap.appendChild(h("div", { class: "ims-hint", style: "padding:0 var(--pad) 6px",
+        text: "只改这一段，工作本其它内容（群内工作要求、成员与角色、结论）一个字节不动。" }));
+      var ta = h("textarea", { class: "ims-ta", placeholder: RIGHTS_PLACEHOLDER });
+      ta.value = String(e.text || "");
+      ta.style.minHeight = "180px";
+      ta.style.margin = "0 var(--pad)";
+      ta.addEventListener("input", function () { if (S.rightsEdit) S.rightsEdit.text = ta.value; });
+      wrap.appendChild(ta);
+      var bar = h("div", { class: "ims-rowline", style: "padding:6px var(--pad)" });
+      var btn = h("button", { class: "ims-btn", type: "button" },
+        S.rightsConflict ? "覆盖保存" : "保存");
+      btn.addEventListener("click", function () { saveRights(ta, btn); });
+      bar.appendChild(btn);
+      bar.appendChild(h("button", { class: "ims-btn ghost", type: "button",
+        onclick: cancelRightsEdit }, "取消"));
+      if (S.rightsConflict) {
+        bar.appendChild(h("button", { class: "ims-btn ghost", type: "button",
+          onclick: reloadRightsLatest }, "载入最新版"));
+        bar.appendChild(h("span", { class: "ims-hint ims-err",
+          text: "工作本刚被 agent 改过" }));
+      } else {
+        bar.appendChild(h("span", { class: "ims-hint",
+          text: e.defined ? "已在用" : "空 = 未定义" }));
+      }
+      wrap.appendChild(bar);
+      return wrap;
     }
 
     function defaultSendModeHint() {
@@ -892,6 +1073,8 @@ window.__ModuleLoader__.load({
       S.thread = []; S.threadOffline = false; S.threadError = "";
       S.detailWs = ""; S.wsPicked = false;
       paint();
+      // 发言权那一行读的是 targets 行：顺手取一次，别让用户看到上一次缓存的状态。
+      loadTargets();
       // fetch=1：点开时补拉这一次。群聊平时不进定时轮询，就靠这一下拿最新消息。
       api("/api/thread?platform=" + encodeURIComponent(platform) + "&chat_id=" + encodeURIComponent(chatId) +
           "&limit=30&fetch=1")
@@ -1041,6 +1224,7 @@ window.__ModuleLoader__.load({
     function body() {
       var wrap = h("div", { class: "ims-body" });
       if (S.connError) wrap.appendChild(connBanner());
+      if (S.detail && S.rightsEdit) { wrap.appendChild(rightsView()); return wrap; }
       if (S.detail) { wrap.appendChild(detailView()); return wrap; }
       if (S.tab === "attention") wrap.appendChild(attentionView());
       else if (S.tab === "service") wrap.appendChild(serviceView());
@@ -1235,6 +1419,7 @@ window.__ModuleLoader__.load({
     function refreshDetail() {
       var d = S.detail;
       if (!d) return Promise.resolve(null);
+      if (S.rightsEdit) return Promise.resolve(null);
       return api("/api/thread?platform=" + encodeURIComponent(d.platform) +
                  "&chat_id=" + encodeURIComponent(d.chat_id) + "&limit=30")
         .then(function (r) {
@@ -1497,6 +1682,25 @@ window.__ModuleLoader__.load({
           sendModeControl(chat),
           h("span", { class: "ims-hint", text: chatSendModeHint(chat) }),
           h("span", { class: "ims-grow" })));
+        // 发言权：群才有；未定义时全自动已暂停，点一下就能定义（spec 0051）。
+        if (chat.kind === "group") {
+          var rt = rightsOf(d);
+          var rDefined = rt ? rt.rights_defined !== false : null;
+          wrap.appendChild(h("div", { class: "ims-rowline", style: "padding:0 var(--pad) 6px" },
+            h("span", { class: "ims-hint", text: "发言权" }),
+            h("span", {
+              class: rDefined === false ? "ims-hint ims-err" : "ims-hint",
+              text: rDefined === null ? "未知" : (rDefined ? "已定义" : "未定义")
+            }),
+            h("span", { class: "ims-hint" + (rDefined === false ? " ims-err" : ""),
+                        text: rightsHint(rt) }),
+            h("span", { class: "ims-grow" }),
+            h("button", {
+              class: "ims-btn mini", type: "button",
+              title: "只编辑工作本里的「我在这个群的发言权」这一段",
+              onclick: function (ev) { openRightsEdit(d, ev.currentTarget); }
+            }, rDefined === false ? "定义" : "编辑")));
+        }
         if (chat.last_warm_at || (chat.last_reset && chat.last_reset.at)) {
           wrap.appendChild(h("div", { class: "ims-hint", style: "padding:0 var(--pad) 6px",
             text: [

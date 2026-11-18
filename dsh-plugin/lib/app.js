@@ -9,7 +9,7 @@ import { isMention } from "./im.js";
 import { keywordTooLong, replyTooLong } from "./command.js";
 import * as workspaces from "./workspaces.js";
 import * as sessions from "./sessions.js";
-import { chatPersonId, excerpt } from "./profiles.js";
+import { chatPersonId, excerpt, rightsSection, RIGHTS_TITLE } from "./profiles.js";
 import * as duty from "./duty.js";
 import fs from "node:fs";
 import path from "node:path";
@@ -41,6 +41,7 @@ export const ROUTES = {
   "/api/chat/session": "chatSession",
   "/api/logs": "logs",
   "/api/digest": "digest",
+  "/api/rights": "rights",
   "/api/duty": "duty",
 };
 
@@ -54,6 +55,7 @@ export const POST_ROUTES = {
   "/api/chat/send-mode": "chatSendMode",
   "/api/duty/triage": "dutyTriage",
   "/api/digest": "digestWrite",
+  "/api/rights": "rightsWrite",
 };
 
 export const DELETE_ROUTES = {
@@ -868,6 +870,9 @@ export class App {
         open_id: "",
         kind: chat.kind === "group" ? "group" : "p2p",
         profile: prof.text,
+        // 发言权契约：人改的是这一段，卡片要能显示「已定义 / 未定义 · 全自动已暂停」。
+        rights: rightsSection(prof.text).body,
+        rights_defined: chat.kind === "group" ? rightsSection(prof.text).defined : true,
         profile_excerpt: excerpt(prof.text),
         profile_path: prof.path,
         profile_updated_at: prof.mtime,
@@ -1129,6 +1134,48 @@ export class App {
     return {
       ok: true, date, exists: true, text: bodyText,
       mtime: fs.statSync(hit.file).mtimeMs / 1000, truncated: false,
+    };
+  }
+
+  /**
+   * 发言权：读工作本里的那一段（spec 0051）。
+   * 面板只暴露这一段、不做整本编辑——工作本还有 agent 的知识段，整本编辑会让人有机会覆盖它。
+   */
+  async rights(q) {
+    const platform = String(q1(q, "platform") || "");
+    const chatId = String(q1(q, "chat_id") || "");
+    const chat = platform && chatId ? this.state.getChat(platform, chatId) : null;
+    if (!chat) return { ok: false, reason: "not_found" };
+    const r = this.profiles.rightsFor(platform, chat, this.selfId(platform));
+    return {
+      ok: true, platform, chat_id: chatId, kind: chat.kind,
+      applicable: r.applicable, exists: r.exists, defined: r.defined,
+      text: r.text, title: r.title, path: r.path, mtime: r.mtime,
+    };
+  }
+
+  /**
+   * 面板改发言权：只替换那一小节，其余字节原样保留；base_mtime 落后回 stale，
+   * 不静默覆盖 agent 刚写的工作本（沿用 0050 的冲突语义）。
+   */
+  async rightsWrite(q, body = {}) {
+    const platform = String(pick(q, body, "platform") || "");
+    const chatId = String(pick(q, body, "chat_id") || "");
+    const chat = platform && chatId ? this.state.getChat(platform, chatId) : null;
+    if (!chat) return { ok: false, reason: "not_found" };
+    const text = pick(q, body, "text", undefined);
+    if (typeof text !== "string") return { ok: false, reason: "text 必须是字符串" };
+    const hasBase = (body && Object.prototype.hasOwnProperty.call(body, "base_mtime")) ||
+      !!(q && ((typeof q.has === "function" && q.has("base_mtime")) ||
+        q.base_mtime !== undefined));
+    const base = Number(pick(q, body, "base_mtime", 0)) || 0;
+    const r = this.profiles.writeRights(platform, chat, this.selfId(platform), text, {
+      baseMtime: hasBase ? base : 0,
+    });
+    if (!r.ok) return { ok: false, reason: r.reason };
+    return {
+      ok: true, platform, chat_id: chatId, exists: true,
+      defined: r.defined, text: r.text, title: RIGHTS_TITLE, path: r.path, mtime: r.mtime,
     };
   }
 }

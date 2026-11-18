@@ -11,7 +11,7 @@ import path from "node:path";
 
 import { chatKey, RECENT_LIMIT } from "./state.js";
 import { ACK_EMOJI, MEDIA_ADAPTERS, MEDIA_LABELS, imageMediaType } from "./im.js";
-import { chatPersonId, personRefs } from "./profiles.js";
+import { chatPersonId, personRefs, RIGHTS_TITLE } from "./profiles.js";
 import * as workspaces from "./workspaces.js";
 
 const PLAT_LABEL = { feishu: "飞书", wecom: "企业微信", dingtalk: "钉钉" };
@@ -67,7 +67,55 @@ function duplicateSenderNames(messages) {
   return dup;
 }
 
-function formatMsgLine(m, mediaInfo = null, platform = "", dupNames = null) {
+/**
+ * 一条消息里被 @ 的人（显示名）。本人排除在外——`（@你）` 已经单独标注。
+ * 名字拿不到就不标：宁可不写，也不猜「这条是问谁的」。
+ */
+export function mentionedTargets(m, selfId = "") {
+  const list = Array.isArray(m?.mentions) ? m.mentions : [];
+  const out = [];
+  for (const mt of list) {
+    if (!mt || typeof mt !== "object") continue;
+    const id = typeof mt.id === "object" ? (mt.id?.open_id || mt.id?.user_id) : mt.id;
+    const sid = String(id || mt.open_id || mt.user_id || mt.union_id || "");
+    if (selfId && sid && sid === String(selfId)) continue;
+    const name = oneLine(mt.name);
+    if (name && !out.includes(name)) out.push(name);
+  }
+  return out;
+}
+
+/** 本人身份行：插件只说事实，取不到 name / open_id 就省略对应部分，不猜。 */
+export function selfLine(platform, selfId = "", selfName = "") {
+  const label = PLAT_LABEL[platform] || platform;
+  const bits = [oneLine(selfName) || "（未取到姓名）", label];
+  if (String(selfId || "").trim()) bits.push(`open_id ${String(selfId).trim()}`);
+  return `本人：${bits.join(" · ")}`;
+}
+
+/** 本批点名统计：群里「你被点名」是发言的默认授权信号，其余消息是知会。 */
+export function mentionFactLine(messages, kind = "group") {
+  if (kind !== "group") return "";
+  const list = Array.isArray(messages) ? messages : [];
+  const mine = list.filter((m) => m && m.kind === "mention").length;
+  const others = list.filter((m) => m && m.kind === "fyi").length;
+  if (mine) {
+    return `本批 ${mine} 条点你名（mention.id == 本人 open_id）` +
+      (others ? `，其余 ${others} 条是知会。` : "。");
+  }
+  return "本批 0 条点你名（没有一条 mention.id == 本人 open_id）。";
+}
+
+/** 本人指令提示：本人在会话里 @ 自己留给替身的话，不是客户消息。 */
+export function cmdFactLine(messages, kind = "group") {
+  const list = Array.isArray(messages) ? messages : [];
+  const n = list.filter((m) => m && m.kind === "cmd").length;
+  if (!n) return "";
+  return `本批 ${n} 条是本人指令（本人 @ 自己说的话，不是客户消息）` +
+    (kind === "group" ? "；群聊里你的发言全群可见，别为「收到」发言。" : "。");
+}
+
+function formatMsgLine(m, mediaInfo = null, platform = "", dupNames = null, selfId = "") {
   let text = String(m.content || "").replace(/\s+/g, " ").trim();
   if (!text) text = "（正文在线查）";
   if (text.length > 800) text = text.slice(0, 800) + "…";
@@ -90,6 +138,9 @@ function formatMsgLine(m, mediaInfo = null, platform = "", dupNames = null) {
     if (tail) notes.push(`ID ${tail}`);
   }
   if (m.kind === "mention") notes.push("@你");
+  // 这条 @ 了谁：@ 别人的催办不能被当成「有人在问我」（spec 0051）。
+  const ats = mentionedTargets(m, selfId);
+  if (ats.length) notes.push(ats.map((n) => `@${n}`).join("、"));
   const tag = sanitizeUntrusted(notes.length ? `${who}（${notes.join("，")}）` : who);
   return `- [${m.ts || ""}] ${tag}: ${body}`;
 }
@@ -208,14 +259,20 @@ const SEND_MODE_LABEL = { draft: "草稿审批", auto: "全自动" };
 /**
  * 发送方式：只在首轮 / 开场 / 取值变化时出现（spec 0045）。
  * `from` 是这条 DSH 会话上次声明的值；非空且与当前值不同 = 刚切换，括号里标出来。
+ * `rights` 非空表示这一轮的取值是被发言权契约决定的：`"undefined"` = 本群还没定义，
+ * 降为草稿；`"defined"` = 契约补上了，恢复全自动。两种都写明原因，别让用户以为是自己点的。
  * 插件只声明策略，不解析回复、不代发；内容风险仍由 skill 铁律判断。
  */
-function sendModeNote(mode, { from = "" } = {}) {
+function sendModeNote(mode, { from = "", rights = "" } = {}) {
   const label = SEND_MODE_LABEL[mode] || SEND_MODE_LABEL.draft;
   const prev = SEND_MODE_LABEL[from] || "";
-  const head = (prev && prev !== label)
-    ? `发送方式：${label}（已从${prev}切换；只由面板开关决定，口头约定不改模式，要改请用户点面板「发送方式」）。`
-    : `发送方式：${label}（插件当前设置；只由面板开关决定，口头约定不改模式，要改请用户点面板「发送方式」）。`;
+  const head = rights === "undefined"
+    ? `发送方式：草稿审批（本群发言权未定义，全自动暂停；把「${RIGHTS_TITLE}」写进工作本后自动恢复）。`
+    : (rights === "defined" && mode === "auto"
+      ? "发送方式：全自动（本群发言权已定义，恢复全自动；只由面板开关决定，口头约定不改模式）。"
+      : ((prev && prev !== label)
+        ? `发送方式：${label}（已从${prev}切换；只由面板开关决定，口头约定不改模式，要改请用户点面板「发送方式」）。`
+        : `发送方式：${label}（插件当前设置；只由面板开关决定，口头约定不改模式，要改请用户点面板「发送方式」）。`));
   if (mode === "auto") {
     return head +
       "本轮该回的，按 skill 以本人身份直接发出，不要征求确认，也不要问「要不要发」；" +
@@ -233,13 +290,15 @@ function sendModeNote(mode, { from = "" } = {}) {
 /**
  * 关注程度注记：只有群「全部消息」与私聊「只盯 @我」两种形态需要说明。
  * 只在首轮 / 取值变化时出现（spec 0045）；`from` 非空且不同 = 刚切过来。
+ * 群「全部消息」不再写「非点名的群消息只看不回」——那是一条机械规则，会把
+ * 「没人 @ 但任务确实是你的」判死；这里只说默认值，本批几条点你名由载荷每轮给。
  */
 function wakeModeNote(wakeMode, kind, from = "") {
   const switched = !!from && from !== wakeMode;
   if (wakeMode === "all" && kind === "group") {
     return (switched ? "（关注程度已切换为「全部消息」：" : "（全量模式：") +
-      "非点名的群消息只看不回，要本人表态的写进当日日报等用户拍板；" +
-      "标了「（@你）」的消息照常处理，该回就回。）";
+      "每条新消息都会叫醒你。没点你名的行默认沉默；要本人表态的写进当日日报。" +
+      "判定确实是交给你的任务才发言，并说清为什么由你出面。）";
   }
   if (wakeMode === "mention" && kind !== "group") {
     return (switched ? "（关注程度已切换为「只盯 @我」：" : "（只认 @ 模式：") +
@@ -265,6 +324,7 @@ export function buildWakePrompt(platform, chatName, chatId, messages, {
   bookPath = "", people = [], interrupted = false, firstTurn = false, mediaMap = null,
   wakeMode = "mention", resetMin = 0, kind = "group", single = false,
   sendMode = "draft", legacyPath = "", legacyHistory = "", announced = null,
+  selfId = "", selfName = "", rightsDefined = null,
 } = {}) {
   const label = PLAT_LABEL[platform] || platform;
   const safeName = sanitizeUntrusted(chatName || chatId);
@@ -272,7 +332,7 @@ export function buildWakePrompt(platform, chatName, chatId, messages, {
   const lines = messages
     .slice()
     .sort((a, b) => (a.ts_epoch - b.ts_epoch))
-    .map((m) => formatMsgLine(m, mediaFor(mediaMap, m.msg_id), platform, dupNames));
+    .map((m) => formatMsgLine(m, mediaFor(mediaMap, m.msg_id), platform, dupNames, selfId));
   const peopleBlock = personLines(people);
   const legacy = legacyLine(legacyPath, legacyHistory);
 
@@ -288,17 +348,29 @@ export function buildWakePrompt(platform, chatName, chatId, messages, {
   // 没变的轮次不复读，历史里已经有同样的说明。
   const prevSend = String(announced?.send_mode || "");
   const prevMode = String(announced?.wake_mode || "");
+  const prevRights = typeof announced?.rights === "boolean" ? announced.rights : null;
   const fresh = firstTurn || !announced;
-  const sendNote = (fresh || prevSend !== sendMode)
-    ? sendModeNote(sendMode, { from: prevSend }) : "";
+  // 生效发送方式：发言权契约未定义时强制草稿——载荷绝不能一边说暂停一边给全自动口径。
+  const mode = rightsDefined === false ? "draft" : sendMode;
+  // 发言权契约把本轮发送方式降成草稿 / 恢复成全自动时，要把原因说出来（spec 0051）。
+  const rightsNote = rightsDefined === false
+    ? (prevRights === true || prevRights === null ? "undefined" : "")
+    : (rightsDefined === true && prevRights === false ? "defined" : "");
+  const sendNote = (fresh || prevSend !== mode || rightsNote)
+    ? sendModeNote(mode, { from: prevSend, rights: rightsNote }) : "";
   const modeNote = (fresh || prevMode !== wakeMode)
     ? wakeModeNote(wakeMode, kind, prevMode) : "";
   const cmdBlock = (fresh || !announced?.cmd) ? cmdNote : "";
+  // 本批数据每轮都变，不算「口径」，所以每次都给（spec 0045 约束的是不变的策略声明）。
+  const cmdFact = cmdFactLine(messages, kind);
+  const batchNote = kind === "group" && wakeMode === "all"
+    ? mentionFactLine(messages, kind) + cmdFact
+    : "";
 
   // 已有会话：只列本次新消息 + 这批发言人的档案路径。chat_id / 运行形态 /
   // 记忆文件行都已在本会话里，不再每一轮重复；旧私聊工作本待并入行除外（文件消失即停）。
   if (!firstTurn) {
-    return [lines.join("\n"), legacy, ...peopleBlock, cmdBlock, modeNote, sendNote]
+    return [lines.join("\n"), legacy, ...peopleBlock, cmdBlock, modeNote, batchNote, sendNote]
       .filter(Boolean).join("\n");
   }
 
@@ -308,6 +380,7 @@ export function buildWakePrompt(platform, chatName, chatId, messages, {
   }
   parts.push(`值守命中 · ${label} · ${safeName} · 新消息`);
   parts.push(`chat_id：${chatId}`);
+  if (selfId || selfName) parts.push(selfLine(platform, selfId, selfName));
   parts.push("运行形态：DSH 插件壳；监听、水位、唤醒由插件负责，不要挂监听，不要运行 listen_cli/bootstrap.py。");
   if (resetMin > 0) {
     parts.push(`会话：上一段会话闲置约 ${resetMin} 分钟（期间只保温一次），已自动重开；` +
@@ -321,6 +394,7 @@ export function buildWakePrompt(platform, chatName, chatId, messages, {
   parts.push(...lines);
   if (cmdBlock) parts.push(cmdBlock);
   if (modeNote) parts.push(modeNote);
+  if (batchNote) parts.push(batchNote);
   if (mediaSize(mediaMap)) parts.push(MEDIA_HINT);
   parts.push(payloadNote(messages.length));
   parts.push(single
@@ -334,12 +408,14 @@ export function buildWakePrompt(platform, chatName, chatId, messages, {
 
 /**
  * 人工开启值守时的开场载荷：不是命中唤醒，没有新消息也要把会话建起来。
- * 消息只当上下文，回不回由 agent 按 skill 判断；插件不在这里发任何东西。
+ * 群的第一件事是把「我在这个群的发言权」写进工作本，再决定要不要说话（spec 0051）；
+ * 默认动作是沉默，发言要能回答「为什么是我」。插件不在这里发任何东西。
  * 记忆文件与首轮唤醒同一套：群两层，单聊只有对方的人物档案一份。
  */
 export function buildOpenPrompt(platform, chatName, chatId, messages, {
   bookPath = "", people = [], wakeMode = "mention", resetMin = 0, kind = "group",
   single = false, sendMode = "draft", legacyPath = "", legacyHistory = "", dutyContext = null,
+  selfId = "", selfName = "", rightsDefined = null,
 } = {}) {
   const label = PLAT_LABEL[platform] || platform;
   const safeName = sanitizeUntrusted(chatName || chatId);
@@ -350,12 +426,13 @@ export function buildOpenPrompt(platform, chatName, chatId, messages, {
   const lines = messages
     .slice()
     .sort((a, b) => (a.ts_epoch - b.ts_epoch))
-    .map((m) => formatMsgLine(m, null, platform, dupNames));
+    .map((m) => formatMsgLine(m, null, platform, dupNames, selfId));
   const parts = ["/cyber-im-avatar"];
   parts.push(viaCommand
     ? `值守已开启 · ${label} · ${safeName} · IM 指令启动（你在会话里 @ 自己，不是新消息唤醒）`
     : `值守已开启 · ${label} · ${safeName} · 会话开场（人工开启，不是新消息唤醒）`);
   parts.push(`chat_id：${chatId}`);
+  if (selfId || selfName) parts.push(selfLine(platform, selfId, selfName));
   if (viaCommand) {
     parts.push(`启动指令：@ 自己 + 「${commandKeyword || "启动"}」；它只是打开值守的开关，` +
       "不是客户来信，也不是让你在会话里回一句话。");
@@ -371,6 +448,14 @@ export function buildOpenPrompt(platform, chatName, chatId, messages, {
   if (peopleBlock.length) parts.push(...peopleBlock);
   const legacy = legacyLine(legacyPath, legacyHistory);
   if (legacy) parts.push(legacy);
+  // 群的发言权契约：这一段是授权边界，先说清再决定说不说（spec 0051）。
+  if (kind === "group") {
+    parts.push(rightsDefined === false
+      ? `发言权：未定义（工作本里「${RIGHTS_TITLE}」还是空的）。` +
+        "这一轮先做这件事：把它写进工作本——我是谁、什么该我回、什么不该我回、" +
+        "别人被点名时我怎么做。这一段是授权边界，之后每轮都按它判断。"
+      : `发言权：已定义（工作本「${RIGHTS_TITLE}」）。按它判断；这一轮不要改它，除非用户要求。`);
+  }
   if (lines.length) {
     parts.push(dutyContext && dutyContext.action
       ? `分诊时看到的最近 ${lines.length} 条：`
@@ -387,36 +472,47 @@ export function buildOpenPrompt(platform, chatName, chatId, messages, {
     parts.push("最近 30 分钟没有新消息。");
   }
   if (dutyContext && dutyContext.action) {
-    parts.push("值守判断：" + String(dutyContext.action) + "（只盯 @我）");
+    parts.push(`值守分诊：${String(dutyContext.action)}（插件自动发现后转入，不是被新消息叫醒）。`);
     if (dutyContext.reason) parts.push("判断理由：" + sanitizeUntrusted(dutyContext.reason));
-    parts.push("这是决定值守后的接手轮；下面是分诊时看到的最近消息。");
-    parts.push("有该回的就按 skill 回，没有需要回的就不要往群里发消息。");
+    parts.push("这是决定值守后的第一轮：先读上下文与记忆，再决定要不要说话。");
   } else if (viaCommand) {
     parts.push("这是启动指令触发的开场轮：先把上下文和记忆读进来；" +
       "需要回的客户消息按 skill 处理，不需要回的不要为了确认启动往会话里发言。");
   }
+  if (kind === "group" && lines.length) {
+    parts.push(mentionFactLine(messages, kind));
+    parts.push("默认动作是沉默：只有判定「这条是交给你的」才发言，" +
+      "并在回复里说清为什么由你出面（没有点你名的消息也在本批里，别把问别人的当成问你）。");
+  } else if (kind === "group") {
+    parts.push("默认动作是沉默：没有该你说的，就不要为了确认值守往群里发消息。");
+  }
   parts.push(kind === "group"
     ? (wakeMode === "all"
-        ? "全量模式：非点名的群消息只看不回，要本人表态的写进当日日报；标了「（@你）」的照常处理。"
-        : "只盯 @我：非点名的群消息不需要处理。")
+        ? "关注程度：全部消息（每条新消息都会唤醒；表态留给你自己决定）。"
+        : "关注程度：只认点名（mention.id == 本人 open_id 才叫醒你；群里的其它消息只当上下文）。")
     : (wakeMode === "all"
         ? "关注程度：全部消息（每条新消息都会唤醒）。"
         : "关注程度：只认 @（对方 @ 你（或正文写 @你的名字）才唤醒；其它消息不会转给你）。"));
   if (viaCommand) {
     parts.push(single
       ? "这一轮是你在 IM 里 @ 自己用启动关键词开启的值班：先把上下文和这份人物档案读进来；" +
-        "有该回的就按 skill 处理，**不要为「启动」这条指令本身往会话里发消息**。"
+        "**不要为「启动」这条指令本身往会话里发消息**。"
       : "这一轮是你在 IM 里 @ 自己用启动关键词开启的值班：先把上下文和两层文件读进来；" +
-        "有该回的就按 skill 处理，**不要为「启动」这条指令本身往会话里发消息**。");
+        "**不要为「启动」这条指令本身往会话里发消息**。");
   } else {
-    parts.push(single
-      ? "这一轮是用户点「加入值守」触发的：先把上下文和这份人物档案读进来；" +
-        "有该回的就按 skill 处理，**没有需要回的就不要往会话里发任何消息**。"
-      : "这一轮是用户点「加入值守」触发的：先把上下文和两层文件读进来；" +
-        "有该回的就按 skill 处理，**没有需要回的就不要往会话里发任何消息**。");
+    // 自动分诊进来的值班不是用户点的「加入值守」，别把来源说错；私聊没有发言权契约。
+    const from = (dutyContext && dutyContext.action)
+      ? "这一轮是值守分诊通过后自动开的"
+      : "这一轮是用户点「加入值守」触发的";
+    const files = single ? "这份人物档案" : "两层文件";
+    parts.push(`${from}：把上下文和${files}读进来，按上面的默认值` +
+      `${kind === "group" ? "与发言权" : ""}判断。`);
   }
   if (lines.length) parts.push("上下文来自本地最近消息；更早的按 skill 在线拉，不要重发已经处理过的。");
-  parts.push(sendModeNote(sendMode));
+  const mode = rightsDefined === false ? "draft" : sendMode;
+  parts.push(sendModeNote(mode, {
+    rights: rightsDefined === false ? "undefined" : "",
+  }));
   return parts.join("\n");
 }
 
@@ -431,10 +527,12 @@ export function buildDeskPrompt(chat, {
   const f = facts || {};
   const label = PLAT_LABEL[chat?.platform] || f.label || chat?.platform || "";
   const name = sanitizeUntrusted(chat?.name || f.name || chat?.chat_id || "");
+  const selfId = String(f.self_id || "");
+  const selfName = String(f.self_name || "");
   const rows = (Array.isArray(messages) ? messages : [])
     .slice()
     .sort((a, b) => (Number(a.ts_epoch) || 0) - (Number(b.ts_epoch) || 0))
-    .map((m) => formatMsgLine(m, null, chat?.platform || "", null))
+    .map((m) => formatMsgLine(m, null, chat?.platform || "", null, selfId))
     .slice(-10);
   const trig = review ? "review" : String(f.trigger || "manual");
   const trigLabel = {
@@ -446,6 +544,7 @@ export function buildDeskPrompt(chat, {
   parts.push(`值守台 · ${label} · ${name}`);
   parts.push("本轮是一次性判断：新会话、无历史；不要依赖上一轮或会话上下文。");
   parts.push(`chat_id：${chat?.chat_id || f.chat_id || ""}`);
+  if (selfId || selfName) parts.push(selfLine(chat?.platform || "", selfId, selfName));
   parts.push(`触发：${trigLabel}`);
   if (review) {
     parts.push(`试用开始/到期：${f.review_at ? new Date(Number(f.review_at) * 1000).toISOString() : "未知"}`);
@@ -453,6 +552,11 @@ export function buildDeskPrompt(chat, {
   parts.push(`探针：最近 ${rows.length} 条（只读，未回复；媒体未取回）`);
   if (rows.length) parts.push(...rows);
   else parts.push("- （没有可读消息）");
+  if (rows.length) {
+    const fact = mentionFactLine(messages, chat?.kind || "group");
+    if (fact) parts.push(fact);
+    parts.push("看上面这行再判断：点你名的才是给你的；有人被点名不等于你被点名。");
+  }
   const count = Number(f.member_count) || 0;
   const limit = Number(f.member_limit) || 0;
   parts.push(`群成员：${count > 0 ? `${count} 人` : "未知"}（自动上限 ${limit || "不限"}；` +
@@ -469,8 +573,8 @@ export function buildDeskPrompt(chat, {
     ? "复核只允许 watch / ignore；不能续 trial。watch 不再起接手轮；理由写清这段试用看到了什么。"
     : "判断口径：硬门优先（平台判不了 @ / 屏蔽 / 人数超限或未知 / 达上限 → ignore）。");
   if (!review) {
-    parts.push(`- 个人 @ + 具体请求 + 工作上下文/认识的人 → watch；不确定 → ${trialOn ? "trial" : "ignore（trial 关，等 @ 再判）"}；无工作信号 → ignore。`);
-    parts.push("- @所有人 不算个人 @；只允许 mention，不提供 all。");
+    parts.push(`- 点你名（mention.id == 本人 open_id）+ 具体请求 + 工作上下文/认识的人 → watch；不确定 → ${trialOn ? "trial" : "ignore（trial 关，等新的点名再判）"}；无工作信号 → ignore。`);
+    parts.push("- 只是有人在群里被点名（被点的是别人）不算点你名；@所有人 不算个人 @；只允许 mention，不提供 all。");
     parts.push("- 只写一个 JSON：version/decision_id/platform/chat_id/action/watch|trial|ignore/reason/confidence；trial 还需 review_at（可选）。");
     parts.push("- 决策文件路径就是上面给的路径；写不进去就如实报告，不要改别的路径。");
     parts.push(`必须带 decision_id="${f.event_id || ""}"、platform="${chat?.platform || ""}"、` +
@@ -702,6 +806,12 @@ export class Turns {
       this.im?.identity?.[platform]?.self_id || "";
   }
 
+  /** 本人显示名：只用于载荷里那句「本人：谁」，取不到就留空，不影响判断。 */
+  selfNameFor(platform) {
+    return String(this.poller?.identity?.[platform]?.name ||
+      this.im?.identity?.[platform]?.name || "").trim();
+  }
+
   /** 本条绑定会话已经给过的人物 ID 集合；会话换了就是新集合。 */
   peopleSeenFor(platform, chatId, sid) {
     const key = `${platform}:${chatId}:${sid}`;
@@ -725,7 +835,7 @@ export class Turns {
     const key = `${platform}:${chatId}:${sid}`;
     let rec = this.announcedPolicy.get(key);
     if (!rec) {
-      rec = { send_mode: "", wake_mode: "", cmd: false };
+      rec = { send_mode: "", wake_mode: "", cmd: false, rights: null };
       this.announcedPolicy.set(key, rec);
       if (this.announcedPolicy.size > 64) {
         const oldest = this.announcedPolicy.keys().next().value;
@@ -1077,26 +1187,37 @@ export class Turns {
       // 值班单点优先；还没固化（未值守/老数据）时跟随新建默认。
       const sendMode = current.send_mode || this.state.data.config.send_mode_default || "draft";
       const wakeMode = current.wake_mode || "mention";
+      // 发言权契约：群没定义就不给全自动——这是依赖关系，不是开关（spec 0051）。
+      // 私聊没有授权边界可言，不参与降级。
+      const rights = current.kind === "group"
+        ? this.profiles.rightsFor(current.platform, current, selfId)
+        : { applicable: false, defined: true };
+      const effectiveSendMode = rights.defined ? sendMode : "draft";
+      const rightsState = rights.applicable ? rights.defined : null;
+      const selfName = this.selfNameFor(current.platform);
       // 这条会话已经声明过的口径：未变的轮次不再复读（spec 0045）。
       // 只有 followup 成功后才写回（runTurn 的 onSent），载荷没送出去不算声明过。
       const announced = this.announcedFor(current.platform, current.chat_id, sid);
       const hasCmd = messages.some((m) => m.kind === "cmd");
       const rememberAnnounced = () => {
-        announced.send_mode = sendMode;
+        announced.send_mode = effectiveSendMode;
         announced.wake_mode = wakeMode;
+        if (rightsState !== null) announced.rights = rightsState;
         if (hasCmd) announced.cmd = true;
       };
       const prompt = opening
         ? buildOpenPrompt(current.platform, current.name, current.chat_id, messages, {
             bookPath: memory.path, single: memory.single, legacyPath, legacyHistory, people,
             wakeMode, resetMin, kind: current.kind,
-            sendMode, dutyContext,
+            sendMode: effectiveSendMode, dutyContext,
+            selfId, selfName, rightsDefined: rightsState,
           })
         : buildWakePrompt(current.platform, current.name, current.chat_id, messages, {
             bookPath: memory.path, single: memory.single, legacyPath, legacyHistory, people,
             interrupted, firstTurn, mediaMap: media.map,
             wakeMode, resetMin, kind: current.kind,
-            sendMode, dutyContext, announced,
+            sendMode: effectiveSendMode, dutyContext, announced,
+            selfId, selfName, rightsDefined: rightsState,
           });
       const message = await makeUserMessage(prompt, media.parts);
       handle.promptId = message.id;

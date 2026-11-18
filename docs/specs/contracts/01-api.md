@@ -32,11 +32,12 @@
 | GET | `/api/doctor` | — | 体检：身份、拉取通路、DSH 宿主、skill 路径、拉取节奏 |
 | GET | `/api/config` | — | 读配置；模型/凭据全在 DSH，插件无 api_key 可回传 |
 | GET | `/api/workspaces` | — | 可选工作区列表（值守会话绑定用） |
-| GET | `/api/targets` | — | 服务对象列表：`profile*` = 该会话的记忆文件——群是会话工作本，单聊能推出人物 ID 时就是对方的人物档案（与 `person` 同一路径，并 ensure；旧私聊工作本在此整文件搬到人物档案）；推不出 ID 的 p2p 仍指会话工作本。`person` = `person_id` / `path` / `excerpt` / `updated_at` / `exists`，仅 p2p 有 |
+| GET | `/api/targets` | — | 服务对象列表（群的记忆行带 `rights` / `rights_defined` = 发言权小节的正文与是否已定义，spec 0051）：`profile*` = 该会话的记忆文件——群是会话工作本，单聊能推出人物 ID 时就是对方的人物档案（与 `person` 同一路径，并 ensure；旧私聊工作本在此整文件搬到人物档案）；推不出 ID 的 p2p 仍指会话工作本。`person` = `person_id` / `path` / `excerpt` / `updated_at` / `exists`，仅 p2p 有 |
 | GET | `/api/persons` | `platform`（可选） | 人物档案列表：只扫 `profiles/people/`，不建文件；items 带 `platform` / `person_id` / `name` / `profile` / `profile_path` / `profile_updated_at` / `profile_excerpt` / `bytes` / `chat_ids`（`[{platform, chat_id, name}]`） |
 | GET | `/api/chat/workspace` | `platform`、`chat_id`、`workspace`（别名 `path`） | 给值守会话绑 / 解绑工作区；必须显式给键，空串=解绑。工作区变了且旧会话因此解绑、会话又在值守中（未屏蔽）→ 立刻在新工作区开新会话，返回 `open` |
 | GET | `/api/chat/session` | `platform`、`chat_id` | 查当前绑定的 DSH 会话与工作区 |
 | GET | `/api/logs` | — | `{sends, errors, turns, events}`：`errors`=最近 20 条轮询错误；`turns`=在飞快照；`events`=最近 80 条 turn 事件（落盘 `~/.im-standin/logs/turns.jsonl`，只有事件/ID/耗时/原因，无正文） |
+| GET | `/api/rights` | `platform`、`chat_id` | 群发言权：读工作本里 `## 我在这个群的发言权` 那一段（spec 0051）。返回 `{ok, applicable, exists, defined, text, title, path, mtime}`；`applicable=false` 表示私聊不适用（`defined` 恒 true，不设闸门）；文件不存在时 `exists=false`、`text=""`，不建文件；只做结构切分（标题行到下一个二级标题），不解析语义 |
 | GET | `/api/digest` | `date`（`YYYY-MM-DD`，默认今天） | 读 `~/.im-standin/digest/<date>.md`（agent 维护、用户可在面板改）：`{ok, date, exists, text, mtime, truncated}`；超过 256KB 截断并 `truncated:true`；日期非法 `bad_date`；不建目录、不解析、不统计 |
 
 ### `/api/chats` 的工作区字段
@@ -66,6 +67,7 @@
 | POST | `/api/chat/wake` | 手动唤醒：可带 `workspace` 先落工作区；把该会话最近待回交给 agent，不等新消息；`running` / `blocked` / 未值守时拒绝 |
 | POST | `/api/duty/triage` | 手动让值守台判断：入参 `platform`、`chat_id`、`force`；只接受未值守、未屏蔽、非 queued/triaging；写 `trigger=manual` 的新事件，下一次 tick 起分诊 turn；`force` 可重排 ignore/failed，关闭自动分诊时也允许手动 |
 | POST | `/api/chat/send-mode` | 值班单点发送方式：入参 `platform`、`chat_id`、`mode`（`draft` / `auto`）；写 `chats[].send_mode`，返回 `{ok, send_mode, chat}`；会话不存在回 `not_found`。这个值不会被之后改 `send_mode_default` 覆盖 |
+| POST | `/api/rights` | 面板改发言权（spec 0051）：入参 `platform`、`chat_id`、`text`（字符串）、`base_mtime`（可选）。只替换那一小节，工作本其余字节原样保留；与磁盘 mtime 不一致回 `stale` 不写；`text` 为空 = 清空该小节（回到未定义）；小节标题丢失时在文末补回；正文超 8KB 或整份超 12KB 拒绝；私聊回 `single_chat`；原子写、文件 600。成功回与 GET 同形（多 `ok`） |
 | POST | `/api/digest` | 面板整份覆盖写日报：入参 `date`（默认今天）、`text`（必填字符串）、`base_mtime`（可选，面板加载时的 mtime，空态为 0）；空内容 = 删文件；超 256KB 拒绝不截断；带了 `base_mtime` 且与磁盘 mtime 不一致（含新建 / 删除）回 `{ok:false, reason:"stale"}` 不写，省略才显式覆盖；成功回与 GET 同形（多 `ok`），目录 700、文件 600、临时文件 + rename |
 
 ## 删除接口（DELETE）

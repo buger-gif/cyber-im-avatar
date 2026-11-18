@@ -110,7 +110,7 @@ test("open prompt for a DM reads the one file", () => {
   });
   assert.match(p, /人物档案：\/tmp\/people\/ou_other\.md（单聊只维护这一份/);
   assert.doesNotMatch(p, /会话工作本：/);
-  assert.match(p, /先把上下文和这份人物档案读进来/);
+  assert.match(p, /把上下文和这份人物档案读进来/);
 });
 
 test("later wakes only append the new messages when the session already knows the policy", () => {
@@ -1198,15 +1198,17 @@ test("all-mode prompt marks mentions and keeps the reply rule explicit", () => {
   assert.match(switched, /- \[t2\] 客户（@你）: @我 这个什么时候好/);
   assert.match(switched, /- \[t1\] 同事: 进度怎么样/);
   assert.match(switched, /关注程度已切换为「全部消息」/);
-  assert.match(switched, /非点名的群消息只看不回/);
-  assert.match(switched, /照常处理，该回就回/);
+  assert.match(switched, /没点你名的行默认沉默/);
+  assert.match(switched, /本批 0 条点你名|本批 1 条点你名/);
+  assert.match(switched, /判定确实是交给你的任务才发言/);
 
   // 关注程度没变：不再复读说明，只追加消息行。
   const steady = buildWakePrompt("feishu", "示例群", "oc_grp", rows, {
     firstTurn: false, wakeMode: "all",
     announced: { send_mode: "draft", wake_mode: "all", cmd: false },
   });
-  assert.doesNotMatch(steady, /关注程度|非点名的群消息|照常处理/);
+  assert.doesNotMatch(steady, /关注程度已切换|没点你名的行默认沉默/);
+  assert.match(steady, /本批 1 条点你名/);
   assert.match(steady, /- \[t1\] 同事: 进度怎么样/);
 });
 
@@ -1257,7 +1259,7 @@ test("open prompt works with no messages and tells the agent not to send anythin
   assert.match(prompt, /会话工作本：\/tmp\/book\.md（本会话的群规与工作要求；个人评价不写这里）/);
   assert.match(prompt, /人物档案：\n- 张三 · ou_a → \/tmp\/people\/ou_a\.md/);
   assert.match(prompt, /最近 30 分钟没有新消息/);
-  assert.match(prompt, /没有需要回的就不要往会话里发任何消息/);
+  assert.match(prompt, /没有该你说的，就不要为了确认值守往群里发消息/);
 });
 
 test("open prompt without people prints only the workbook layer", () => {
@@ -1274,7 +1276,8 @@ test("open prompt carries the recent context and the group mode rule", () => {
   const prompt = buildOpenPrompt("feishu", "示例群", "oc_grp", rows, { wakeMode: "all" });
   assert.match(prompt, /最近上下文（最近 30 分钟，共 1 条）/);
   assert.match(prompt, /- \[t1\] 同事: 这个谁看下/);
-  assert.match(prompt, /非点名的群消息只看不回/);
+  assert.match(prompt, /默认动作是沉默/);
+  assert.match(prompt, /关?注程度：全部消息/);
 });
 
 test("open prompt marks an IM start command and never calls it a triage handoff", () => {
@@ -1767,4 +1770,84 @@ test("desk triage always creates a fresh session and never reuses history", asyn
   assert.doesNotMatch(host.followups[0].content[0].text, /最近判断|人物档案/);
   assert.equal(state.data.desk.dsh_session, "session-2");
   assert.equal(state.data.desk.session_turns, 1);
+});
+
+test("事故 A：@ 的是别人时，载荷给事实并把发送降成草稿", () => {
+  const rows = [
+    { msg_id: "c1", sender_id: "cli_bot", sender_name: "值班机器人",
+      content: "@周明 工单 A-1024 有没有疑问或卡点",
+      mentions: [{ id: { open_id: "ou_demo_zhou" }, name: "周明" }],
+      ts: "t1", ts_epoch: 100, kind: "fyi", state: "ignored" },
+  ];
+  const prompt = buildOpenPrompt("feishu", "示例群", "oc_grp", rows, {
+    kind: "group", sendMode: "auto", selfId: "ou_me", selfName: "我",
+    rightsDefined: false,
+    dutyContext: { action: "watch", reason: "群里有人被点名" },
+  });
+  assert.match(prompt, /本人：我 · 飞书 · open_id ou_me/);
+  assert.match(prompt, /- \[t1\] 值班机器人（@周明）:/);
+  assert.doesNotMatch(prompt, /（@你）/);
+  assert.match(prompt, /本批 0 条点你名/);
+  assert.match(prompt, /发言权：未定义/);
+  assert.match(prompt, /先把它写进工作本|把它写进工作本/);
+  assert.match(prompt, /发送方式：草稿审批（本群发言权未定义，全自动暂停/);
+  assert.doesNotMatch(prompt, /以本人身份直接发出/, "未定义契约时不能给全自动口径");
+  assert.doesNotMatch(prompt, /有该回的就按 skill 回/);
+  assert.doesNotMatch(prompt, /只盯 @我/, "结论句不再进载荷");
+});
+
+test("场景 B：没人点名也要能出手——载荷给默认值与例外，不给禁令", () => {
+  const rows = [
+    { msg_id: "b1", sender_id: "ou_boss", sender_name: "负责人",
+      content: "这个工单你接一下，明天给我结论", ts: "t1", ts_epoch: 100,
+      kind: "fyi", state: "ignored" },
+  ];
+  const prompt = buildOpenPrompt("feishu", "示例群", "oc_b2", rows, {
+    kind: "group", sendMode: "auto", selfId: "ou_me", selfName: "我", rightsDefined: true,
+  });
+  assert.match(prompt, /本批 0 条点你名/);
+  assert.match(prompt, /默认动作是沉默/);
+  assert.match(prompt, /只有判定「这条是交给你的」才发言/);
+  assert.doesNotMatch(prompt, /不需要处理/, "不能写成机械禁令");
+  assert.doesNotMatch(prompt, /不要往这个群发任何消息/);
+});
+
+test("发言权已定义：恢复全自动，并说明是按契约判断", () => {
+  const rows = [
+    { msg_id: "m1", sender_id: "ou_x", sender_name: "客户", content: "@我 什么时候好",
+      mentions: [{ id: { open_id: "ou_me" }, name: "我" }],
+      ts: "t1", ts_epoch: 100, kind: "mention", state: "new" },
+  ];
+  const prompt = buildOpenPrompt("feishu", "示例群", "oc_grp", rows, {
+    kind: "group", sendMode: "auto", selfId: "ou_me", selfName: "我", rightsDefined: true,
+  });
+  assert.match(prompt, /发言权：已定义/);
+  assert.match(prompt, /发送方式：全自动/);
+  assert.doesNotMatch(prompt, /全自动暂停/);
+  assert.match(prompt, /本批 1 条点你名/);
+  assert.match(prompt, /- \[t1\] 客户（@你）:/);
+});
+
+test("提到自己时不把自己也列进 @目标；本人身份缺字段时不编", () => {
+  const rows = [
+    { msg_id: "p1", sender_id: "ou_x", sender_name: "客户", content: "两位看下",
+      mentions: [{ id: { open_id: "ou_me" }, name: "我" }, { id: { open_id: "ou_y" }, name: "李四" }],
+      ts: "t1", ts_epoch: 100, kind: "mention", state: "new" },
+  ];
+  const prompt = buildOpenPrompt("feishu", "示例群", "oc_grp", rows, {
+    kind: "group", selfId: "ou_me", selfName: "我", rightsDefined: true,
+  });
+  assert.match(prompt, /（@你，@李四）/);
+  const noName = buildOpenPrompt("feishu", "示例群", "oc_grp", [], {
+    kind: "group", selfId: "ou_me", rightsDefined: true,
+  });
+  assert.match(noName, /本人：（未取到姓名） · 飞书 · open_id ou_me/);
+});
+
+test("私聊不参与发言权降级", () => {
+  const prompt = buildOpenPrompt("feishu", "示例对象 A", "oc_dm", [], {
+    kind: "p2p", single: true, sendMode: "auto", rightsDefined: null,
+  });
+  assert.match(prompt, /发送方式：全自动/);
+  assert.doesNotMatch(prompt, /发言权/);
 });
