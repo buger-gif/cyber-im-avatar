@@ -15,7 +15,7 @@
 ├── profiles/people/<platform>/<person_id>.md  人物档案（跨会话，键＝消息发送者 ID；单聊只有这一份）
 ├── profiles/<platform>/<chat_id>.md           会话工作本（仅群：本群成立的规矩与上下文）
 ├── duty/                 私有值守台：policy.md（初始版本）+ decisions/<event_id>.json
-├── digest/               每日关注摘要（一个日期一份，agent 写、插件只读）
+├── digest/               每日关注摘要（一个日期一份，agent 整理、用户可在面板改）
 ├── media/                唤醒时取回的媒体（7 天 / 单会话 200MB 清理）
 ├── states/*.pos          监听水位（skill 形态）
 └── logs/turns.jsonl      turn 事件流水（唤醒 / 打断 / 结束；无正文）
@@ -75,9 +75,11 @@ Markdown，都不在 `state.json` 里。**群两层，单聊一份**：
 ## 每日关注摘要
 
 `digest/YYYY-MM-DD.md` 由 agent 按 `SKILL.md §值守日报` 维护：整份覆盖写、一个会话一行、
-问题消失行就消失、跨天把未结项带过来。插件只做一件事：`GET /api/digest` 把文件原样读给面板，
-不建目录、不写、不解析、不统计——判断归 agent（`AGENTS.md §设计铁律` 第 8 条）。格式见
-`SKILL.md`，取舍见 `docs/specs/archive/0019-daily-digest.md`。
+问题消失行就消失、跨天把未结项带过来。插件不解析、不统计，判断归 agent（`AGENTS.md §设计铁律`
+第 8 条）：`GET /api/digest` 把文件原样读给面板；用户在面板点保存时走 `POST /api/digest`
+整份覆盖写（`base_mtime` 与磁盘不一致——含新建 / 删除——回 `stale`，空内容删文件，超 256KB 拒绝编辑）。格式见
+`SKILL.md`，只读的取舍见 `docs/specs/archive/0019-daily-digest.md`，编辑见
+`docs/specs/archive/0050-关注页可编辑日报.md`。
 
 ## 会话状态
 

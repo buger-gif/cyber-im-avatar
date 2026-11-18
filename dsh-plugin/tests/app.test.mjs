@@ -1084,3 +1084,117 @@ test("thread items carry the skip reason", async () => {
   assert.equal(item.skip, "no-mention");
   assert.deepEqual(out.body.chat.silent, { count: 1, skip: "no-mention" });
 });
+
+test("digest reads agent's file and lets the user overwrite it explicitly", async () => {
+  const { app, dir } = makeApp();
+  const date = "2026-11-17";
+  const file = path.join(dir, "digest", `${date}.md`);
+  const q = new URLSearchParams(`date=${date}`);
+
+  let out = await app.handle("/api/digest", "GET", q);
+  assert.equal(out.status, 200);
+  assert.equal(out.body.exists, false);
+  assert.equal(out.body.truncated, false);
+  assert.equal(fs.existsSync(path.join(dir, "digest")), false, "GET 不预建目录");
+
+  out = await app.handle("/api/digest", "POST", null, { date, text: "# 今天\n- 一条\n" });
+  assert.equal(out.status, 200);
+  assert.equal(out.body.ok, true);
+  assert.equal(out.body.exists, true);
+  assert.equal(fs.readFileSync(file, "utf8"), "# 今天\n- 一条\n");
+  assert.equal(fs.statSync(file).mode & 0o777, 0o600);
+  assert.equal(fs.statSync(path.dirname(file)).mode & 0o777, 0o700);
+  assert.deepEqual(fs.readdirSync(path.dirname(file)), [`${date}.md`], "临时文件不残留");
+
+  out = await app.handle("/api/digest", "GET", q);
+  assert.equal(out.body.text, "# 今天\n- 一条\n");
+  assert.equal(out.body.mtime, fs.statSync(file).mtimeMs / 1000);
+
+  // agent 在这之后又写了：面板拿旧 mtime 保存必须被拒，文件保持 agent 的版本。
+  const base = out.body.mtime;
+  const later = (Math.floor(fs.statSync(file).mtimeMs / 1000) + 10);
+  fs.utimesSync(file, new Date(later * 1000), new Date(later * 1000));
+  out = await app.handle("/api/digest", "POST", null, { date, text: "用户版本", base_mtime: base });
+  assert.equal(out.body.ok, false);
+  assert.equal(out.body.reason, "stale");
+  assert.equal(fs.readFileSync(file, "utf8"), "# 今天\n- 一条\n");
+
+  // 面板确认覆盖：带上最新 mtime 再写一次。
+  out = await app.handle("/api/digest", "POST", null,
+    { date, text: "用户版本", base_mtime: later });
+  assert.equal(out.body.ok, true);
+  assert.equal(fs.readFileSync(file, "utf8"), "用户版本\n");
+
+  // 空内容 = 清空这一天：删文件而不是留一份空文件。
+  out = await app.handle("/api/digest", "POST", null,
+    { date, text: "  \n", base_mtime: out.body.mtime });
+  assert.equal(out.body.ok, true);
+  assert.equal(out.body.exists, false);
+  assert.equal(fs.existsSync(file), false);
+
+  out = await app.handle("/api/digest", "GET", q);
+  assert.equal(out.body.exists, false);
+});
+
+test("digest write rejects bad dates, traversals and oversized text", async () => {
+  const { app, dir } = makeApp();
+  for (const date of ["2026-13-99", "2026-02-30", "../../etc/passwd", "2026-11-17/../x"]) {
+    const out = await app.handle("/api/digest", "POST", null, { date, text: "x" });
+    assert.equal(out.status, 200);
+    assert.equal(out.body.ok, false, `${date} 必须被拒`);
+    assert.equal(out.body.reason, "bad_date");
+  }
+  const tooBig = "x".repeat(256 * 1024 + 1);
+  const out = await app.handle("/api/digest", "POST", null, { date: "2026-11-17", text: tooBig });
+  assert.equal(out.body.ok, false);
+  assert.equal(out.body.reason, "日报超过 256KB");
+  assert.equal(fs.existsSync(path.join(dir, "digest")), false, "拒绝时不创建目录、不落盘");
+
+  const notText = await app.handle("/api/digest", "POST", null, { date: "2026-11-17", text: 1 });
+  assert.equal(notText.body.ok, false);
+  assert.equal(notText.body.reason, "text 必须是字符串");
+});
+
+test("an oversized digest is flagged truncated so the panel will not edit it", async () => {
+  const { app, dir } = makeApp();
+  const date = "2026-11-18";
+  const file = path.join(dir, "digest", `${date}.md`);
+  fs.mkdirSync(path.dirname(file), { recursive: true });
+  fs.writeFileSync(file, "x".repeat(256 * 1024 + 64));
+
+  const out = await app.handle("/api/digest", "GET", new URLSearchParams(`date=${date}`));
+  assert.equal(out.body.exists, true);
+  assert.equal(out.body.truncated, true);
+  assert.match(out.body.text, /（过长，已截断）$/);
+  assert.ok(Buffer.byteLength(out.body.text, "utf8") <= 256 * 1024 + 64,
+    "截断后的正文不应把整份大文件带回前端");
+});
+
+test("digest stale also covers a file appearing or vanishing between load and save", async () => {
+  const { app, dir } = makeApp();
+  const date = "2026-11-19";
+  const file = path.join(dir, "digest", `${date}.md`);
+  fs.mkdirSync(path.dirname(file), { recursive: true });
+
+  // 面板加载时空态（base=0），编辑期间 agent 写了第一份：不能直接覆盖。
+  fs.writeFileSync(file, "agent 先写\n");
+  let out = await app.handle("/api/digest", "POST", null,
+    { date, text: "用户版本", base_mtime: 0 });
+  assert.equal(out.body.ok, false);
+  assert.equal(out.body.reason, "stale");
+  assert.equal(fs.readFileSync(file, "utf8"), "agent 先写\n");
+
+  // 面板加载到文件后，agent 把整份删了：旧 mtime 也不能把文件复活。
+  const base = fs.statSync(file).mtimeMs / 1000;
+  fs.unlinkSync(file);
+  out = await app.handle("/api/digest", "POST", null,
+    { date, text: "用户版本", base_mtime: base });
+  assert.equal(out.body.ok, false);
+  assert.equal(out.body.reason, "stale");
+  assert.equal(fs.existsSync(file), false);
+
+  // 不传 base_mtime 才是显式覆盖；调用方自己承担并发风险。
+  out = await app.handle("/api/digest", "POST", null, { date, text: "用户版本" });
+  assert.equal(out.body.ok, true);
+  assert.equal(fs.readFileSync(file, "utf8"), "用户版本\n");
+});

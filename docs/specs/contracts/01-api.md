@@ -37,7 +37,7 @@
 | GET | `/api/chat/workspace` | `platform`、`chat_id`、`workspace`（别名 `path`） | 给值守会话绑 / 解绑工作区；必须显式给键，空串=解绑。工作区变了且旧会话因此解绑、会话又在值守中（未屏蔽）→ 立刻在新工作区开新会话，返回 `open` |
 | GET | `/api/chat/session` | `platform`、`chat_id` | 查当前绑定的 DSH 会话与工作区 |
 | GET | `/api/logs` | — | `{sends, errors, turns, events}`：`errors`=最近 20 条轮询错误；`turns`=在飞快照；`events`=最近 80 条 turn 事件（落盘 `~/.im-standin/logs/turns.jsonl`，只有事件/ID/耗时/原因，无正文） |
-| GET | `/api/digest` | `date`（`YYYY-MM-DD`，默认今天） | 只读 `~/.im-standin/digest/<date>.md`（agent 维护）：`{ok, date, exists, text, mtime}`；日期非法 `bad_date`；不建目录、不解析、不统计 |
+| GET | `/api/digest` | `date`（`YYYY-MM-DD`，默认今天） | 读 `~/.im-standin/digest/<date>.md`（agent 维护、用户可在面板改）：`{ok, date, exists, text, mtime, truncated}`；超过 256KB 截断并 `truncated:true`；日期非法 `bad_date`；不建目录、不解析、不统计 |
 
 ### `/api/chats` 的工作区字段
 
@@ -66,6 +66,7 @@
 | POST | `/api/chat/wake` | 手动唤醒：可带 `workspace` 先落工作区；把该会话最近待回交给 agent，不等新消息；`running` / `blocked` / 未值守时拒绝 |
 | POST | `/api/duty/triage` | 手动让值守台判断：入参 `platform`、`chat_id`、`force`；只接受未值守、未屏蔽、非 queued/triaging；写 `trigger=manual` 的新事件，下一次 tick 起分诊 turn；`force` 可重排 ignore/failed，关闭自动分诊时也允许手动 |
 | POST | `/api/chat/send-mode` | 值班单点发送方式：入参 `platform`、`chat_id`、`mode`（`draft` / `auto`）；写 `chats[].send_mode`，返回 `{ok, send_mode, chat}`；会话不存在回 `not_found`。这个值不会被之后改 `send_mode_default` 覆盖 |
+| POST | `/api/digest` | 面板整份覆盖写日报：入参 `date`（默认今天）、`text`（必填字符串）、`base_mtime`（可选，面板加载时的 mtime，空态为 0）；空内容 = 删文件；超 256KB 拒绝不截断；带了 `base_mtime` 且与磁盘 mtime 不一致（含新建 / 删除）回 `{ok:false, reason:"stale"}` 不写，省略才显式覆盖；成功回与 GET 同形（多 `ok`），目录 700、文件 600、临时文件 + rename |
 
 ## 删除接口（DELETE）
 

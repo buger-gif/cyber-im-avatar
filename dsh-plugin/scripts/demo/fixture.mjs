@@ -356,12 +356,12 @@ const workspaces = {
   default: W1,
 };
 
-// 每日关注摘要：面板只显示原文，这里给一份虚构的（人物仍来自本文件的示例）。
+// 每日关注摘要：面板显示原文、也可直接编辑，这里给一份虚构的（人物仍来自本文件的示例）。
 const _d = new Date();
 const _p = (n) => (n < 10 ? "0" + n : "" + n);
 const TODAY = `${_d.getFullYear()}-${_p(_d.getMonth() + 1)}-${_p(_d.getDate())}`;
 const digest = {
-  ok: true, date: TODAY, exists: true,
+  ok: true, date: TODAY, exists: true, truncated: false,
   mtime: Math.floor(_d.getTime() / 1000) - 3600,
   text: [
     `# ${TODAY} · 今日关注`,
@@ -584,6 +584,17 @@ export const intercept = `(() => {
         }
       }
       return { ok: true, deleted: true };
+    }
+    if (p === "/api/digest") {
+      const base = Number(body.base_mtime) || 0;
+      if (base > 0 && FIX.digest.mtime > base + 0.001) return { ok: false, reason: "stale" };
+      const text = typeof body.text === "string" ? body.text : "";
+      FIX.digest.text = text.trim() ? (text.endsWith("\\n") ? text : text + "\\n") : "";
+      FIX.digest.exists = !!text.trim();
+      FIX.digest.mtime = Date.now() / 1000;
+      FIX.digest.truncated = false;
+      if (body.date) FIX.digest.date = String(body.date);
+      return { ok: true, ...FIX.digest };
     }
     if (p === "/api/send") return { ok: true };
     if (p === "/api/state") return { ok: true };

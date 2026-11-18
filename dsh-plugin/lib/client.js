@@ -415,7 +415,8 @@ window.__ModuleLoader__.load({
       persons: [], personsLoaded: false, personSegment: "targets",
       personEdit: "", personDrafts: {},
       personSearch: { q: "", platform: "feishu", items: null, err: "", seq: 0, open: false },
-      digest: null, digestDate: "", digestLoading: "", digestError: "", digestTimer: null
+      digest: null, digestDate: "", digestLoading: "", digestError: "", digestTimer: null,
+      digestEdit: false, digestDraft: "", digestEditBase: 0, digestSaving: false, digestConflict: 0
     };
 
     var toastTimer = null;
@@ -428,6 +429,7 @@ window.__ModuleLoader__.load({
     function onKey(e) {
       if (S.dead) return;
       if (e.key === "Escape") {
+        if (S.tab === "attention" && S.digestEdit) { cancelDigestEdit(); return; }
         if (S.personEdit) { S.personEdit = ""; paintBody(); return; }
         if (S.targetEdit) { S.targetEdit = ""; paintBody(); return; }
         if (S.detail) { S.detail = null; paint(); }
@@ -721,24 +723,27 @@ window.__ModuleLoader__.load({
       return "";
     }
 
-    // 日报只由 agent 写；这里只读文件，不解析、不统计。缓存 / 预热 / 去重见模块级 digestFetch。
+    // 日报平时由 agent 写；这里只读展示，用户显式保存时才整份覆盖。不解析、不统计。
     function digestSame(a, b) {
       a = a || {}; b = b || {};
-      return !!a.exists === !!b.exists && (a.mtime || 0) === (b.mtime || 0) &&
+      return !!a.exists === !!b.exists && !!a.truncated === !!b.truncated &&
+        (a.mtime || 0) === (b.mtime || 0) &&
         (a.error || "") === (b.error || "") && String(a.text || "") === String(b.text || "");
     }
     /** 重绘关注页时保住滚动位置：兜底刷新不该把正在读的日报顶回顶部。 */
-    function paintAttention() {
+    function paintAttention(force) {
       if (S.dead || S.tab !== "attention" || S.detail) return;
       var sc = panel.querySelector(".ims-body .ims-scroll");
       var top = sc ? sc.scrollTop : 0;
-      paintBody();
+      paintBody(force);
       if (!top) return;
       var sc2 = panel.querySelector(".ims-body .ims-scroll");
       if (sc2) sc2.scrollTop = top;
     }
     /** 打开页签 / 切日期：缓存优先同步渲染，再后台重取；没缓存才显示「正在读取」。 */
     function loadDigest(date) {
+      // 编辑中不重取：磁盘新内容会在输入时把草稿顶掉，保存还有 stale 兜底。
+      if (S.digestEdit) return Promise.resolve(S.digest);
       var d = date || S.digestDate || todayStr();
       var changed = S.digestDate !== d;
       S.digestDate = d;
@@ -757,6 +762,8 @@ window.__ModuleLoader__.load({
     }
     /** 静默重取：内容真的变了才重绘（滚动位置不动、DOM 不重建）。 */
     function refreshDigest(date) {
+      // 编辑态冻结：3 秒 / 60 秒刷新都不该碰 S.digest，草稿与光标才不会跳。
+      if (S.digestEdit) return Promise.resolve(S.digest);
       var d = date || S.digestDate || todayStr();
       return digestFetch(d).then(function (payload) {
         if (S.dead || S.digestDate !== d) return;
@@ -1054,10 +1061,12 @@ window.__ModuleLoader__.load({
       return ["checkbox", "radio", "button", "submit", "reset", "file"].indexOf(type) < 0;
     }
 
-    function paintBody() {
+    function paintBody(force) {
       var b = panel.querySelector(".ims-body");
       if (!b) return paint();
-      if (typingFocus()) {
+      // 主动离开编辑态要 force：程序化 click 不会把焦点从 textarea 移到按钮，
+      // 只靠 typingFocus() 会把已经保存/取消的编辑页留在原地。
+      if (force !== true && typingFocus()) {
         // 用户正在输入：只刷新页头/页脚，body 等失焦或下一次主动操作再重建。
         var h0 = panel.querySelector(".ims-head");
         if (h0) h0.replaceWith(head());
@@ -2162,6 +2171,8 @@ window.__ModuleLoader__.load({
 
     // ---- 记忆文件：「群聊」=会话工作本，「人物」=人物档案（单聊只这一份）----
     var PERSON_LIMIT = 12 * 1024;
+    // 日报是整份文本；和 GET 的截断阈值保持一致，超了只能去终端处理。
+    var DIGEST_LIMIT = 256 * 1024;
 
     function byteLen(text) {
       try { return new TextEncoder().encode(String(text || "")).length; }
@@ -2627,8 +2638,10 @@ window.__ModuleLoader__.load({
 
     // ---- 体检 -----------------------------------------------------------
     // ---- 关注 -----------------------------------------------------------
-    // 日报由 agent 按 skill 维护；面板只把文件原文摊开，不解析、不统计。
+    // 日报由 agent 按 skill 维护；面板把文件原文摊开，不解析、不统计。
+    // 用户可以在面板里整份编辑：保存走 POST /api/digest，base_mtime 不一致回 stale。
     function attentionView() {
+      if (S.digestEdit) return digestEditor(S.digestDate || todayStr());
       var d = S.digest || {};
       var date = S.digestDate || todayStr();
       var scroll = h("div", { class: "ims-scroll" });
@@ -2652,6 +2665,9 @@ window.__ModuleLoader__.load({
           String(t.getDate()).padStart(2, "0");
         loadDigest(v);
       }
+      // 还没加载、读失败、文件被截断时不给编辑入口——截断版一保存就会丢掉后半段。
+      var canEdit = !d.error && !d.truncated && !S.digestError &&
+        !(S.digestLoading === date && !d.exists);
       scroll.appendChild(h("div", { class: "ims-rowline", style: "padding:8px var(--pad) 6px" },
         h("span", { class: "ims-hint", text: "日期" }),
         h("button", { class: "ims-btn mini ghost", type: "button", title: "前一天",
@@ -2660,6 +2676,13 @@ window.__ModuleLoader__.load({
         h("button", { class: "ims-btn mini ghost", type: "button", title: "后一天",
           onclick: function () { shiftDay(1); } }, "›"),
         h("span", { class: "ims-grow" }),
+        canEdit ? h("button", {
+          class: "ims-btn mini", type: "button",
+          title: d.exists
+            ? "直接改这一天的日报；agent 下一轮会以它为基础整理"
+            : "写这一天的日报；留空保存不会建文件",
+          onclick: startDigestEdit
+        }, "编辑") : null,
         date !== todayStr()
           ? h("button", {
               class: "ims-btn mini ghost", type: "button",
@@ -2667,6 +2690,11 @@ window.__ModuleLoader__.load({
             }, "回到今天")
           : (d.exists ? h("span", { class: "ims-hint", text: "最后更新 " + fmtTime(d.mtime) }) : null)));
 
+      if (d.truncated) {
+        scroll.appendChild(h("div", { class: "ims-banner warn" },
+          h("span", { class: "ims-ico", html: icon("bell", 13) }),
+          h("span", { text: "文件超过 256KB，面板只显示前 256KB；为防截断丢失，这里不能编辑" })));
+      }
       var stale = d.exists && d.mtime && (Date.now() / 1000 - d.mtime) > 24 * 3600;
       if (stale) {
         scroll.appendChild(h("div", { class: "ims-banner warn" },
@@ -2701,6 +2729,168 @@ window.__ModuleLoader__.load({
       return scroll;
     }
 
+    function focusDigestTa() {
+      requestAnimationFrame(function () {
+        var t = panel.querySelector(".ims-digest-ta");
+        if (!t) return;
+        t.focus();
+        try { t.setSelectionRange(t.value.length, t.value.length); } catch (e) { /* ignore */ }
+      });
+    }
+
+    function startDigestEdit() {
+      var d = S.digest || {};
+      if (S.digestEdit || d.error || d.truncated) return;
+      S.digestEdit = true;
+      S.digestEditBase = Number(d.mtime) || 0;
+      S.digestDraft = d.exists ? String(d.text || "") : "";
+      S.digestConflict = 0;
+      S.digestSaving = false;
+      paintBody(true);
+      focusDigestTa();
+    }
+
+    function cancelDigestEdit() {
+      S.digestEdit = false;
+      S.digestDraft = "";
+      S.digestEditBase = 0;
+      S.digestConflict = 0;
+      S.digestSaving = false;
+      paintBody(true);
+    }
+
+    /** 保存被 stale 拒了：保留草稿，取一次磁盘最新 mtime，再点一次保存才算覆盖。 */
+    function digestConflictRefresh(date, btn) {
+      return digestFetch(date).then(function (latest) {
+        if (S.dead) return;
+        if (!latest || latest.error) {
+          if (btn) btn.disabled = false;
+          return say("日报刚被 agent 更新过，但读不到最新版；先取消，刷新后再改");
+        }
+        S.digest = latest;
+        digestRemember(date, latest);
+        S.digestConflict = Number(latest.mtime) || 0;
+        S.digestSaving = false;
+        say("日报刚被 agent 更新过；再点一次保存会覆盖它");
+        paintAttention(true);
+      }).catch(function (e) {
+        if (btn) btn.disabled = false;
+        say("读到最新版失败：" + shortReason(e));
+      });
+    }
+
+    function reloadDigestLatest() {
+      var date = S.digestDate || todayStr();
+      return digestFetch(date).then(function (latest) {
+        if (S.dead) return;
+        if (!latest || latest.error) return say("读不到最新版，稍后再试");
+        S.digest = latest;
+        digestRemember(date, latest);
+        S.digestDraft = latest.exists ? String(latest.text || "") : "";
+        S.digestEditBase = Number(latest.mtime) || 0;
+        S.digestConflict = 0;
+        say("已载入最新版");
+        paintAttention(true);
+        focusDigestTa();
+      }).catch(function (e) { say("载入失败：" + shortReason(e)); });
+    }
+
+    function saveDigest(ta, btn) {
+      if (S.digestSaving) return;
+      var n = byteLen(ta.value);
+      if (n > DIGEST_LIMIT) return say("已超过 256KB（" + n + " 字节），先精简再保存");
+      var date = S.digestDate || todayStr();
+      // stale 后用户再点一次保存：用最新 mtime 明确覆盖；第一次保存用加载时的 mtime。
+      var base = S.digestConflict ? S.digestConflict : S.digestEditBase;
+      S.digestSaving = true;
+      btn.disabled = true;
+      btn.textContent = "保存中…";
+      api("/api/digest", { body: { date: date, text: ta.value, base_mtime: base } })
+        .then(function (r) {
+          S.digestSaving = false;
+          if (!r) {
+            btn.disabled = false;
+            btn.textContent = "保存";
+            return say("保存失败：本地服务没响应");
+          }
+          if (r.ok === false) {
+            if (r.reason === "stale") return digestConflictRefresh(date, btn);
+            btn.disabled = false;
+            btn.textContent = "保存";
+            return say("保存失败：" + (r.reason || "未知原因"));
+          }
+          var payload = digestPayload(r);
+          S.digest = payload;
+          digestRemember(date, payload);
+          clearConnError("digest");
+          S.digestError = "";
+          S.digestEdit = false;
+          S.digestDraft = "";
+          S.digestEditBase = 0;
+          S.digestConflict = 0;
+          say(r.exists ? "日报已保存" : "已清空这一天的日报");
+          paintAttention(true);
+        })
+        .catch(function (e) {
+          S.digestSaving = false;
+          btn.disabled = false;
+          btn.textContent = "保存";
+          say("保存失败：" + shortReason(e));
+        });
+    }
+
+    /** 编辑态：整份纯文本覆盖，不解析 markdown。 */
+    function digestEditor(date) {
+      var scroll = h("div", { class: "ims-scroll",
+        style: "display:flex;flex-direction:column;min-height:0" });
+      var ta = h("textarea", { class: "ims-ta ims-digest-ta",
+        placeholder: "写下这一天要记住的事；没有也可以留空保存，等于删掉这一天" });
+      ta.value = S.digestDraft;
+      ta.style.minHeight = "220px";
+      ta.style.maxHeight = "none";
+      ta.style.flex = "1";
+      ta.style.width = "auto";
+      ta.style.margin = "0 var(--pad)";
+      ta.style.resize = "none";
+      var counter = h("span", { class: "ims-hint" });
+      var saveBtn = h("button", { class: "ims-btn primary", type: "button" },
+        S.digestConflict ? "覆盖保存" : "保存");
+      function refreshCount() {
+        var n = byteLen(ta.value);
+        var over = n > DIGEST_LIMIT;
+        counter.textContent = kbText(n) + " / 256 KB";
+        counter.className = "ims-hint" + (over ? " ims-err" : "");
+        saveBtn.disabled = over || S.digestSaving;
+        saveBtn.title = over ? "超过 256KB，先精简再保存" : "";
+      }
+      ta.addEventListener("input", function () {
+        S.digestDraft = ta.value;
+        refreshCount();
+      });
+      saveBtn.addEventListener("click", function () { saveDigest(ta, saveBtn); });
+      refreshCount();
+      scroll.appendChild(h("div", { class: "ims-rowline", style: "padding:8px var(--pad) 6px" },
+        h("span", { class: "ims-name", text: "编辑 " + date + " 的日报" }),
+        h("span", { class: "ims-grow" }),
+        saveBtn,
+        h("button", { class: "ims-btn", type: "button",
+          onclick: function () { cancelDigestEdit(); } }, "取消")));
+      if (S.digestConflict) {
+        scroll.appendChild(h("div", { class: "ims-banner warn" },
+          h("span", { class: "ims-ico", html: icon("bell", 13) }),
+          h("span", { style: "flex:1;min-width:0",
+            text: "agent 刚更新过这份日报；你的草稿还在，再点一次保存会覆盖它的版本。" }),
+          h("button", { class: "ims-btn mini", type: "button",
+            title: "放弃我的改动，载入 agent 的最新版",
+            onclick: reloadDigestLatest }, "重新载入最新")));
+      }
+      scroll.appendChild(ta);
+      scroll.appendChild(h("div", { class: "ims-rowline", style: "padding:6px var(--pad) 0" },
+        counter,
+        h("span", { class: "ims-grow" }),
+        h("span", { class: "ims-hint", text: "整份覆盖写；留空保存 = 删掉这一天。" })));
+      return scroll;
+    }
     function statusView() {
       var st = S.status || {}, scroll = h("div", { class: "ims-scroll" });
       var ins = st.instances || [];
@@ -3253,7 +3443,7 @@ window.__ModuleLoader__.load({
     // 关注页被盯着看时，日报要像原生文件页一样及时：可见时 3 秒静默重取一次；
     // 页面不可见 / 面板被切走时不动，回前台立刻补一次。
     function digestTick() {
-      if (S.dead || S.tab !== "attention" || S.detail) return;
+      if (S.dead || S.tab !== "attention" || S.detail || S.digestEdit) return;
       if (typeof document !== "undefined" && document.visibilityState === "hidden") return;
       if (!panel.getClientRects || !panel.getClientRects().length) return;
       refreshDigest();

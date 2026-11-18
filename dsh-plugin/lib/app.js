@@ -53,12 +53,20 @@ export const POST_ROUTES = {
   "/api/chat/wake": "chatWake",
   "/api/chat/send-mode": "chatSendMode",
   "/api/duty/triage": "dutyTriage",
+  "/api/digest": "digestWrite",
 };
 
 export const DELETE_ROUTES = {
   "/api/forget": "forget",
   "/api/persons": "personDelete",
 };
+
+const MAX_DIGEST = 256 * 1024;
+
+function digestToday(now = new Date()) {
+  return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-` +
+    String(now.getDate()).padStart(2, "0");
+}
 
 function q1(q, key, fallback = "") {
   if (!q) return fallback;
@@ -1036,33 +1044,91 @@ export class App {
   }
 
   /**
-   * 每日关注摘要：只读 agent 写的那份文件，不创建、不解析、不统计。
-   * 目录与文件名都是确定性约定，插件这边唯一要防的是路径穿越。
+   * 日报的路径解析。日期只接受严格的 YYYY-MM-DD 且必须是真实存在的日历日；
+   * 拼出的绝对路径必须仍在 digest/ 下，防 `..` 穿越。非法日期返回 null。
    */
-  async digest(q) {
-    const now = new Date();
-    const today = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-` +
-      String(now.getDate()).padStart(2, "0");
-    const date = String(q1(q, "date", "") || today);
-    if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) return { ok: false, reason: "bad_date" };
-    const [y, mo, da] = date.split("-").map(Number);
+  digestFile(date) {
+    const s = String(date || "");
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(s)) return null;
+    const [y, mo, da] = s.split("-").map(Number);
     const probe = new Date(y, mo - 1, da);
     if (probe.getFullYear() !== y || probe.getMonth() !== mo - 1 || probe.getDate() !== da) {
-      return { ok: false, reason: "bad_date" };
+      return null;
     }
     const dir = path.resolve(this.state.dir, "digest");
-    const file = path.resolve(dir, `${date}.md`);
-    if (!file.startsWith(dir + path.sep)) return { ok: false, reason: "bad_date" };
+    const file = path.resolve(dir, `${s}.md`);
+    if (!file.startsWith(dir + path.sep)) return null;
+    return { date: s, dir, file };
+  }
+
+  /**
+   * 每日关注摘要：读 agent 写的那份文件，不解析、不统计。
+   * GET 不建目录、不写盘；用户在面板里显式保存走 digestWrite。
+   */
+  async digest(q) {
+    const date = String(q1(q, "date", "") || digestToday());
+    const hit = this.digestFile(date);
+    if (!hit) return { ok: false, reason: "bad_date" };
     let text = "";
     let mtime = 0;
+    let truncated = false;
     try {
-      const st = fs.statSync(file);
+      const st = fs.statSync(hit.file);
       if (st.isFile()) {
-        mtime = Math.floor(st.mtimeMs / 1000);
-        text = fs.readFileSync(file, "utf8");
-        if (text.length > 256 * 1024) text = text.slice(0, 256 * 1024) + "\n\n（过长，已截断）";
+        mtime = st.mtimeMs / 1000;
+        const buf = fs.readFileSync(hit.file);
+        truncated = buf.length > MAX_DIGEST;
+        text = (truncated ? buf.subarray(0, MAX_DIGEST) : buf).toString("utf8");
+        if (truncated) text += "\n\n（过长，已截断）";
       }
     } catch { /* 文件不存在就是空态，不建目录、不写盘 */ }
-    return { ok: true, date, exists: !!mtime, text, mtime };
+    return { ok: true, date, exists: !!mtime, text, mtime, truncated };
+  }
+
+  /**
+   * 面板整份覆盖写日报。base_mtime 是面板加载时的 mtime：磁盘比它新就回 stale，
+   * 不静默覆盖 agent 刚写的内容；空内容 = 清空这一天（删文件，让空态重新成立）。
+   */
+  async digestWrite(q, body = {}) {
+    const date = String(pick(q, body, "date", "") || digestToday());
+    const hit = this.digestFile(date);
+    if (!hit) return { ok: false, reason: "bad_date" };
+    const text = pick(q, body, "text", undefined);
+    if (typeof text !== "string") return { ok: false, reason: "text 必须是字符串" };
+    if (Buffer.byteLength(text, "utf8") > MAX_DIGEST) {
+      return { ok: false, reason: "日报超过 256KB" };
+    }
+    let diskMtime = 0;
+    try { diskMtime = fs.statSync(hit.file).mtimeMs / 1000; } catch { /* 还没有这份日报 */ }
+    // 面板总会带 base_mtime（还没有文件时是 0）：与磁盘不一致就回 stale。
+    // 完全不传这个键的调用方按显式覆盖处理，不做比对。
+    const hasBase = (body && Object.prototype.hasOwnProperty.call(body, "base_mtime")) ||
+      !!(q && ((typeof q.has === "function" && q.has("base_mtime")) ||
+        q.base_mtime !== undefined));
+    const base = Number(pick(q, body, "base_mtime", 0)) || 0;
+    if (hasBase && Math.abs(diskMtime - base) > 0.001) {
+      return { ok: false, reason: "stale" };
+    }
+
+    if (!text.trim()) {
+      try { fs.unlinkSync(hit.file); } catch { /* 已经不存在也算清空 */ }
+      return { ok: true, date, exists: false, text: "", mtime: 0, truncated: false };
+    }
+    const bodyText = text.endsWith("\n") ? text : text + "\n";
+    fs.mkdirSync(hit.dir, { recursive: true, mode: 0o700 });
+    try { fs.chmodSync(hit.dir, 0o700); } catch { /* best effort */ }
+    const tmp = `${hit.file}.tmp.${process.pid}.${Date.now()}`;
+    try {
+      fs.writeFileSync(tmp, bodyText, { mode: 0o600 });
+      try { fs.chmodSync(tmp, 0o600); } catch { /* best effort */ }
+      fs.renameSync(tmp, hit.file);
+      try { fs.chmodSync(hit.file, 0o600); } catch { /* best effort */ }
+    } finally {
+      try { if (fs.existsSync(tmp)) fs.unlinkSync(tmp); } catch { /* best effort */ }
+    }
+    return {
+      ok: true, date, exists: true, text: bodyText,
+      mtime: fs.statSync(hit.file).mtimeMs / 1000, truncated: false,
+    };
   }
 }
