@@ -85,6 +85,28 @@ export function mentionedTargets(m, selfId = "") {
   return out;
 }
 
+/**
+ * 「没点你名、没转给你」的群消息条数（spec 0051 §6）。
+ * 只数 `no-mention` 的知会（`baseline` 是首次基线、`you-replied` 是本人已经回过的），
+ * 且只数上次交付之后的——每轮提示一次就够，不重复计数。`recent[]` 有上限（10 条），
+ * 所以这是「至少这么多」，载荷里按条数说，不装作是全集。
+ */
+export function silentNoMention(chat) {
+  const floor = Math.max(Number(chat?.last_turn?.at) || 0,
+    Number(chat?.session_bound_at) || 0);
+  return (chat?.recent || []).filter((m) => m && m.kind === "fyi" &&
+    m.skip === "no-mention" && (Number(m.ts_epoch) || 0) > floor).length;
+}
+
+/** 发言权一句话摘要：默认口径只讲判据，不背四条；本群已改就给指针。 */
+export function rightsLine(custom = false) {
+  return custom
+    ? `发言权：本群单独改过（工作本「${RIGHTS_TITLE}」），按那一段判断。`
+    : "发言权（默认口径）：点我名的回；点了别人的只当知会、不代答；" +
+      "没点任何人的先判断（问题悬着、任务派我、要我表态就回；纯告警寒暄不回）；" +
+      "信息同步可以发；判不准就沉默。要按群改口径，在面板会话详情的「发言权」里改，只影响这个群。";
+}
+
 /** 本人身份行：插件只说事实，取不到 name / open_id 就省略对应部分，不猜。 */
 export function selfLine(platform, selfId = "", selfName = "") {
   const label = PLAT_LABEL[platform] || platform;
@@ -93,17 +115,24 @@ export function selfLine(platform, selfId = "", selfName = "") {
   return `本人：${bits.join(" · ")}`;
 }
 
-/** 本批点名统计：群里「你被点名」是发言的默认授权信号，其余消息是知会。 */
+/**
+ * 本批点名统计：先看「这条点名了谁」，是判断该不该接的第一步（spec 0051）。
+ * 三分类 = 点你名 / 点了别人 / 谁都没点。`mentions` 只有探针消息带，拿不到时
+ * 只报「没点你名」的总数——不猜某条到底有没有 @ 别人。
+ */
 export function mentionFactLine(messages, kind = "group") {
   if (kind !== "group") return "";
-  const list = Array.isArray(messages) ? messages : [];
-  const mine = list.filter((m) => m && m.kind === "mention").length;
-  const others = list.filter((m) => m && m.kind === "fyi").length;
-  if (mine) {
-    return `本批 ${mine} 条点你名（mention.id == 本人 open_id）` +
-      (others ? `，其余 ${others} 条是知会。` : "。");
+  const list = (Array.isArray(messages) ? messages : [])
+    .filter((m) => m && m.kind !== "out" && m.kind !== "cmd");
+  const mine = list.filter((m) => m.kind === "mention").length;
+  const rest = list.filter((m) => m.kind !== "mention");
+  if (!rest.length) return `本批 ${mine} 条点你名（mention.id == 本人 open_id）。`;
+  const others = rest.filter((m) => Array.isArray(m.mentions) && m.mentions.length > 0).length;
+  if (!others) {
+    return `本批 ${mine} 条点你名；其余 ${rest.length} 条没点你名。`;
   }
-  return "本批 0 条点你名（没有一条 mention.id == 本人 open_id）。";
+  const nobody = rest.length - others;
+  return `本批 ${mine} 条点你名；${others} 条点了别人（不是给你的）；${nobody} 条谁都没点。`;
 }
 
 /** 本人指令提示：本人在会话里 @ 自己留给替身的话，不是客户消息。 */
@@ -259,20 +288,14 @@ const SEND_MODE_LABEL = { draft: "草稿审批", auto: "全自动" };
 /**
  * 发送方式：只在首轮 / 开场 / 取值变化时出现（spec 0045）。
  * `from` 是这条 DSH 会话上次声明的值；非空且与当前值不同 = 刚切换，括号里标出来。
- * `rights` 非空表示这一轮的取值是被发言权契约决定的：`"undefined"` = 本群还没定义，
- * 降为草稿；`"defined"` = 契约补上了，恢复全自动。两种都写明原因，别让用户以为是自己点的。
  * 插件只声明策略，不解析回复、不代发；内容风险仍由 skill 铁律判断。
  */
-function sendModeNote(mode, { from = "", rights = "" } = {}) {
+function sendModeNote(mode, { from = "" } = {}) {
   const label = SEND_MODE_LABEL[mode] || SEND_MODE_LABEL.draft;
   const prev = SEND_MODE_LABEL[from] || "";
-  const head = rights === "undefined"
-    ? `发送方式：草稿审批（本群发言权未定义，全自动暂停；把「${RIGHTS_TITLE}」写进工作本后自动恢复）。`
-    : (rights === "defined" && mode === "auto"
-      ? "发送方式：全自动（本群发言权已定义，恢复全自动；只由面板开关决定，口头约定不改模式）。"
-      : ((prev && prev !== label)
-        ? `发送方式：${label}（已从${prev}切换；只由面板开关决定，口头约定不改模式，要改请用户点面板「发送方式」）。`
-        : `发送方式：${label}（插件当前设置；只由面板开关决定，口头约定不改模式，要改请用户点面板「发送方式」）。`));
+  const head = (prev && prev !== label)
+    ? `发送方式：${label}（已从${prev}切换；只由面板开关决定，口头约定不改模式，要改请用户点面板「发送方式」）。`
+    : `发送方式：${label}（插件当前设置；只由面板开关决定，口头约定不改模式，要改请用户点面板「发送方式」）。`;
   if (mode === "auto") {
     return head +
       "本轮该回的，按 skill 以本人身份直接发出，不要征求确认，也不要问「要不要发」；" +
@@ -324,7 +347,7 @@ export function buildWakePrompt(platform, chatName, chatId, messages, {
   bookPath = "", people = [], interrupted = false, firstTurn = false, mediaMap = null,
   wakeMode = "mention", resetMin = 0, kind = "group", single = false,
   sendMode = "draft", legacyPath = "", legacyHistory = "", announced = null,
-  selfId = "", selfName = "", rightsDefined = null,
+  selfId = "", selfName = "", rightsCustom = false, silentCount = 0,
 } = {}) {
   const label = PLAT_LABEL[platform] || platform;
   const safeName = sanitizeUntrusted(chatName || chatId);
@@ -350,17 +373,18 @@ export function buildWakePrompt(platform, chatName, chatId, messages, {
   const prevMode = String(announced?.wake_mode || "");
   const prevRights = typeof announced?.rights === "boolean" ? announced.rights : null;
   const fresh = firstTurn || !announced;
-  // 生效发送方式：发言权契约未定义时强制草稿——载荷绝不能一边说暂停一边给全自动口径。
-  const mode = rightsDefined === false ? "draft" : sendMode;
-  // 发言权契约把本轮发送方式降成草稿 / 恢复成全自动时，要把原因说出来（spec 0051）。
-  const rightsNote = rightsDefined === false
-    ? (prevRights === true || prevRights === null ? "undefined" : "")
-    : (rightsDefined === true && prevRights === false ? "defined" : "");
-  const sendNote = (fresh || prevSend !== mode || rightsNote)
-    ? sendModeNote(mode, { from: prevSend, rights: rightsNote }) : "";
+  const sendNote = (fresh || prevSend !== sendMode)
+    ? sendModeNote(sendMode, { from: prevSend }) : "";
+  // 发言权：默认口径就是有效口径；本群单独改过才给指针（spec 0051）。
+  const rightsNote = kind === "group" && (fresh || prevRights !== rightsCustom)
+    ? rightsLine(rightsCustom) : "";
   const modeNote = (fresh || prevMode !== wakeMode)
     ? wakeModeNote(wakeMode, kind, prevMode) : "";
   const cmdBlock = (fresh || !announced?.cmd) ? cmdNote : "";
+  // 没点你名的消息不占唤醒，但要让 agent 知道「还有这些没看到」，按需在线拉（spec 0051 §6）。
+  const silentNote = kind === "group" && silentCount > 0
+    ? `另有 ${silentCount} 条没点你名的群消息没转给正文；判断需要时按 skill 在线拉最近的群消息看。`
+    : "";
   // 本批数据每轮都变，不算「口径」，所以每次都给（spec 0045 约束的是不变的策略声明）。
   const cmdFact = cmdFactLine(messages, kind);
   const batchNote = kind === "group" && wakeMode === "all"
@@ -370,8 +394,8 @@ export function buildWakePrompt(platform, chatName, chatId, messages, {
   // 已有会话：只列本次新消息 + 这批发言人的档案路径。chat_id / 运行形态 /
   // 记忆文件行都已在本会话里，不再每一轮重复；旧私聊工作本待并入行除外（文件消失即停）。
   if (!firstTurn) {
-    return [lines.join("\n"), legacy, ...peopleBlock, cmdBlock, modeNote, batchNote, sendNote]
-      .filter(Boolean).join("\n");
+    return [lines.join("\n"), legacy, ...peopleBlock, cmdBlock, modeNote, batchNote,
+      silentNote, rightsNote, sendNote].filter(Boolean).join("\n");
   }
 
   const parts = ["/cyber-im-avatar"];
@@ -395,6 +419,8 @@ export function buildWakePrompt(platform, chatName, chatId, messages, {
   if (cmdBlock) parts.push(cmdBlock);
   if (modeNote) parts.push(modeNote);
   if (batchNote) parts.push(batchNote);
+  if (silentNote) parts.push(silentNote);
+  if (rightsNote) parts.push(rightsNote);
   if (mediaSize(mediaMap)) parts.push(MEDIA_HINT);
   parts.push(payloadNote(messages.length));
   parts.push(single
@@ -415,7 +441,7 @@ export function buildWakePrompt(platform, chatName, chatId, messages, {
 export function buildOpenPrompt(platform, chatName, chatId, messages, {
   bookPath = "", people = [], wakeMode = "mention", resetMin = 0, kind = "group",
   single = false, sendMode = "draft", legacyPath = "", legacyHistory = "", dutyContext = null,
-  selfId = "", selfName = "", rightsDefined = null,
+  selfId = "", selfName = "", rightsCustom = false,
 } = {}) {
   const label = PLAT_LABEL[platform] || platform;
   const safeName = sanitizeUntrusted(chatName || chatId);
@@ -448,13 +474,13 @@ export function buildOpenPrompt(platform, chatName, chatId, messages, {
   if (peopleBlock.length) parts.push(...peopleBlock);
   const legacy = legacyLine(legacyPath, legacyHistory);
   if (legacy) parts.push(legacy);
-  // 群的发言权契约：这一段是授权边界，先说清再决定说不说（spec 0051）。
+  // 群的发言权：默认口径本来就有，用户不用配；从群里看出更细的分工才写进工作本（spec 0051）。
   if (kind === "group") {
-    parts.push(rightsDefined === false
-      ? `发言权：未定义（工作本里「${RIGHTS_TITLE}」还是空的）。` +
-        "这一轮先做这件事：把它写进工作本——我是谁、什么该我回、什么不该我回、" +
-        "别人被点名时我怎么做。这一段是授权边界，之后每轮都按它判断。"
-      : `发言权：已定义（工作本「${RIGHTS_TITLE}」）。按它判断；这一轮不要改它，除非用户要求。`);
+    parts.push(rightsLine(rightsCustom));
+    if (!rightsCustom) {
+      parts.push("如果从这个群的分工能看出默认口径不够用（比如你只是跟进人、不该代处理人答），" +
+        `就把结论写进工作本「${RIGHTS_TITLE}」那一段，以后按它判断；没看出来就别动它。`);
+    }
   }
   if (lines.length) {
     parts.push(dutyContext && dutyContext.action
@@ -481,8 +507,9 @@ export function buildOpenPrompt(platform, chatName, chatId, messages, {
   }
   if (kind === "group" && lines.length) {
     parts.push(mentionFactLine(messages, kind));
-    parts.push("默认动作是沉默：只有判定「这条是交给你的」才发言，" +
-      "并在回复里说清为什么由你出面（没有点你名的消息也在本批里，别把问别人的当成问你）。");
+    parts.push("判断顺序：先看这条点名了谁——点你名的是给你的；点了别人的只当知会；" +
+      "谁都没点的，按内容判断是不是派给我、问到我、需要我表态。" +
+      "判不准就沉默，并在回复里说清为什么由你出面。");
   } else if (kind === "group") {
     parts.push("默认动作是沉默：没有该你说的，就不要为了确认值守往群里发消息。");
   }
@@ -509,10 +536,7 @@ export function buildOpenPrompt(platform, chatName, chatId, messages, {
       `${kind === "group" ? "与发言权" : ""}判断。`);
   }
   if (lines.length) parts.push("上下文来自本地最近消息；更早的按 skill 在线拉，不要重发已经处理过的。");
-  const mode = rightsDefined === false ? "draft" : sendMode;
-  parts.push(sendModeNote(mode, {
-    rights: rightsDefined === false ? "undefined" : "",
-  }));
+  parts.push(sendModeNote(sendMode));
   return parts.join("\n");
 }
 
@@ -1187,37 +1211,36 @@ export class Turns {
       // 值班单点优先；还没固化（未值守/老数据）时跟随新建默认。
       const sendMode = current.send_mode || this.state.data.config.send_mode_default || "draft";
       const wakeMode = current.wake_mode || "mention";
-      // 发言权契约：群没定义就不给全自动——这是依赖关系，不是开关（spec 0051）。
-      // 私聊没有授权边界可言，不参与降级。
+      // 发言权：默认口径一直有效，本群写了自己的那一段就用它（spec 0051）。不改变发送方式。
       const rights = current.kind === "group"
         ? this.profiles.rightsFor(current.platform, current, selfId)
-        : { applicable: false, defined: true };
-      const effectiveSendMode = rights.defined ? sendMode : "draft";
-      const rightsState = rights.applicable ? rights.defined : null;
+        : { applicable: false, custom: false };
+      const rightsCustom = !!rights.custom;
       const selfName = this.selfNameFor(current.platform);
       // 这条会话已经声明过的口径：未变的轮次不再复读（spec 0045）。
       // 只有 followup 成功后才写回（runTurn 的 onSent），载荷没送出去不算声明过。
       const announced = this.announcedFor(current.platform, current.chat_id, sid);
       const hasCmd = messages.some((m) => m.kind === "cmd");
       const rememberAnnounced = () => {
-        announced.send_mode = effectiveSendMode;
+        announced.send_mode = sendMode;
         announced.wake_mode = wakeMode;
-        if (rightsState !== null) announced.rights = rightsState;
+        if (rights.applicable) announced.rights = rightsCustom;
         if (hasCmd) announced.cmd = true;
       };
       const prompt = opening
         ? buildOpenPrompt(current.platform, current.name, current.chat_id, messages, {
             bookPath: memory.path, single: memory.single, legacyPath, legacyHistory, people,
             wakeMode, resetMin, kind: current.kind,
-            sendMode: effectiveSendMode, dutyContext,
-            selfId, selfName, rightsDefined: rightsState,
+            sendMode, dutyContext,
+            selfId, selfName, rightsCustom,
           })
         : buildWakePrompt(current.platform, current.name, current.chat_id, messages, {
             bookPath: memory.path, single: memory.single, legacyPath, legacyHistory, people,
             interrupted, firstTurn, mediaMap: media.map,
             wakeMode, resetMin, kind: current.kind,
-            sendMode: effectiveSendMode, dutyContext, announced,
-            selfId, selfName, rightsDefined: rightsState,
+            sendMode, dutyContext, announced,
+            selfId, selfName, rightsCustom,
+            silentCount: current.kind === "group" ? silentNoMention(current) : 0,
           });
       const message = await makeUserMessage(prompt, media.parts);
       handle.promptId = message.id;

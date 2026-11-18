@@ -870,9 +870,9 @@ export class App {
         open_id: "",
         kind: chat.kind === "group" ? "group" : "p2p",
         profile: prof.text,
-        // 发言权契约：人改的是这一段，卡片要能显示「已定义 / 未定义 · 全自动已暂停」。
+        // 发言权：空段 = 用默认口径；`rights_custom` 只表示「这个群单独改过」。
         rights: rightsSection(prof.text).body,
-        rights_defined: chat.kind === "group" ? rightsSection(prof.text).defined : true,
+        rights_custom: rightsSection(prof.text).defined,
         profile_excerpt: excerpt(prof.text),
         profile_path: prof.path,
         profile_updated_at: prof.mtime,
@@ -1149,8 +1149,9 @@ export class App {
     const r = this.profiles.rightsFor(platform, chat, this.selfId(platform));
     return {
       ok: true, platform, chat_id: chatId, kind: chat.kind,
-      applicable: r.applicable, exists: r.exists, defined: r.defined,
-      text: r.text, title: r.title, path: r.path, mtime: r.mtime,
+      applicable: r.applicable, exists: r.exists, custom: r.custom,
+      text: r.text, default_text: r.default_text, title: r.title,
+      path: r.path, mtime: r.mtime,
     };
   }
 
@@ -1175,7 +1176,8 @@ export class App {
     if (!r.ok) return { ok: false, reason: r.reason };
     return {
       ok: true, platform, chat_id: chatId, exists: true,
-      defined: r.defined, text: r.text, title: RIGHTS_TITLE, path: r.path, mtime: r.mtime,
+      custom: r.custom, text: r.text, default_text: r.default_text,
+      title: RIGHTS_TITLE, path: r.path, mtime: r.mtime,
     };
   }
 }

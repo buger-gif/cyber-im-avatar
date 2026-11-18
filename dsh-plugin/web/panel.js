@@ -459,10 +459,6 @@
     }
 
     function chatSendModeHint(chat) {
-      var t = chat && chat.kind === "group" ? targetOfChat(chat.platform, chat.chat_id) : null;
-      if (t && t.rights_defined === false) {
-        return "发言权未定义，本群先出草稿；写清楚「我在这个群的发言权」后自动恢复";
-      }
       return chatSendModeValue(chat) === "auto"
         ? "这通值班直接发，不再逐条问你"
         : "这通值班留草稿，等你说「发」";
@@ -473,22 +469,23 @@
      * 未定义时该群只能出草稿——这是依赖关系，不是开关。
      */
     var RIGHTS_PLACEHOLDER =
-      "- 我是谁：跟进人，不是处理人\n" +
-      "- 该我回：点我名的消息；需要我表态或给结论的事\n" +
-      "- 不该我回：处理人被点名的催办、他的进展\n" +
-      "- 别人被点名时：不代答；确有补充用跟进人口吻单独说";
+      "- 点我名：回\n" +
+      "- 点了别人：只当知会，不代答\n" +
+      "- 没点任何人：先判断是派给我/问到我/要我表态，还是纯告警寒暄\n" +
+      "- 信息同步：已确认的进度、结论、事实可以发\n" +
+      "- 判不准：沉默，等下一次点名";
 
     function rightsOf(d) {
       if (!d || !d.chat || d.chat.kind !== "group") return null;
       var t = targetOfChat(d.platform, d.chat_id);
-      return t && typeof t.rights_defined === "boolean" ? t : null;
+      return t && typeof t.rights_custom === "boolean" ? t : null;
     }
 
     function rightsHint(t) {
       if (!t) return "读不到工作本；去「记忆文件 → 群聊」看这份会话";
-      if (t.rights_defined === false) return "未定义 · 全自动已暂停；写清楚这一段后自动恢复";
+      if (t.rights_custom !== true) return "默认口径：点我名的回；点了别人的不代答；没点任何人的先判断要不要接；信息同步可以发";
       var first = String(t.rights || "").split("\n").filter(function (l) { return l.trim(); })[0] || "";
-      return first ? first.replace(/^\s*[-*]\s*/, "").replace(/^我是谁[：:]\s*/, "") : "已定义";
+      return first ? first.replace(/^\s*[-*]\s*/, "") : "本群单独改过";
     }
 
     function openRightsEdit(d, btn) {
@@ -503,7 +500,8 @@
           if (!r.applicable) return say("私聊没有发言权契约（对方在跟你说话，不需要授权边界）");
           S.rightsEdit = {
             platform: d.platform, chat_id: d.chat_id, chat: d.chat || {},
-            text: r.text || "", base_mtime: Number(r.mtime) || 0, defined: !!r.defined
+            text: r.text || "", base_mtime: Number(r.mtime) || 0,
+            custom: !!r.custom, default_text: String(r.default_text || "")
           };
           S.rightsConflict = 0;
           S.rightsSaving = false;
@@ -549,7 +547,8 @@
           if (!latest || latest.ok === false) return say("读不到最新版，稍后再试");
           S.rightsEdit.text = latest.text || "";
           S.rightsEdit.base_mtime = Number(latest.mtime) || 0;
-          S.rightsEdit.defined = !!latest.defined;
+          S.rightsEdit.custom = !!latest.custom;
+          S.rightsEdit.default_text = String(latest.default_text || "");
           S.rightsConflict = 0;
           say("已载入最新版");
           paint();
@@ -581,10 +580,10 @@
             btn.textContent = "保存";
             return say("保存失败：" + (r.reason || "未知原因"));
           }
-          var defined = !!r.defined;
+          var custom = !!r.custom;
           S.rightsEdit = null;
           S.rightsConflict = 0;
-          say(defined ? "发言权已保存" : "发言权已清空；这个群先出草稿，补上后自动恢复");
+          say(custom ? "本群发言权已保存" : "已恢复默认口径");
           paint();
           loadChats();
           // 「发言权 / 发送方式」两行读的是 targets 行：等它回来再重画一次，
@@ -613,8 +612,8 @@
         h("span", { class: "ims-name", text: "发言权 · " + (chat.name || e.chat_id || "") }),
         h("span", { class: "ims-grow" })));
       wrap.appendChild(h("div", { class: "ims-hint", style: "padding:2px var(--pad) 6px",
-        text: "这一段是你在本群的授权边界：我是谁、什么该我回、什么不该我回。" +
-              "没定义时这个群只能出草稿；保存后按面板的发送方式执行。" }));
+        text: "默认口径每个群本来就有，不用配；这里改只影响这个群。留空保存 = 回到默认。" +
+              "改完仍按面板的「发送方式」发，这里只管该不该说。" }));
       wrap.appendChild(h("div", { class: "ims-hint", style: "padding:0 var(--pad) 6px",
         text: "只改这一段，工作本其它内容（群内工作要求、成员与角色、结论）一个字节不动。" }));
       var ta = h("textarea", { class: "ims-ta", placeholder: RIGHTS_PLACEHOLDER });
@@ -635,9 +634,16 @@
           onclick: reloadRightsLatest }, "载入最新版"));
         bar.appendChild(h("span", { class: "ims-hint ims-err",
           text: "工作本刚被 agent 改过" }));
-      } else {
+      } else if (e.default_text) {
+        bar.appendChild(h("button", { class: "ims-btn ghost", type: "button",
+          onclick: function () {
+            if (!S.rightsEdit) return;
+            S.rightsEdit.text = "";
+            ta.value = "";
+            say("已清空；保存后这个群回到默认口径");
+          } }, "恢复默认"));
         bar.appendChild(h("span", { class: "ims-hint",
-          text: e.defined ? "已在用" : "空 = 未定义" }));
+          text: e.custom ? "本群单独改过" : "当前是默认口径" }));
       }
       wrap.appendChild(bar);
       return wrap;
@@ -1676,21 +1682,18 @@
         // 发言权：群才有；未定义时全自动已暂停，点一下就能定义（spec 0051）。
         if (chat.kind === "group") {
           var rt = rightsOf(d);
-          var rDefined = rt ? rt.rights_defined !== false : null;
+          var rCustom = rt ? rt.rights_custom === true : null;
           wrap.appendChild(h("div", { class: "ims-rowline", style: "padding:0 var(--pad) 6px" },
             h("span", { class: "ims-hint", text: "发言权" }),
-            h("span", {
-              class: rDefined === false ? "ims-hint ims-err" : "ims-hint",
-              text: rDefined === null ? "未知" : (rDefined ? "已定义" : "未定义")
-            }),
-            h("span", { class: "ims-hint" + (rDefined === false ? " ims-err" : ""),
-                        text: rightsHint(rt) }),
+            h("span", { class: "ims-hint",
+                        text: rCustom === null ? "未知" : (rCustom ? "本群已改" : "默认口径") }),
+            h("span", { class: "ims-hint", text: rightsHint(rt) }),
             h("span", { class: "ims-grow" }),
             h("button", {
               class: "ims-btn mini", type: "button",
-              title: "只编辑工作本里的「我在这个群的发言权」这一段",
+              title: "只改工作本里的「我在这个群的发言权」这一段；默认口径不用动",
               onclick: function (ev) { openRightsEdit(d, ev.currentTarget); }
-            }, rDefined === false ? "定义" : "编辑")));
+            }, "编辑")));
         }
         if (chat.last_warm_at || (chat.last_reset && chat.last_reset.at)) {
           wrap.appendChild(h("div", { class: "ims-hint", style: "padding:0 var(--pad) 6px",

@@ -6,7 +6,7 @@ import test from "node:test";
 
 import { State } from "../lib/state.js";
 import { Profiles } from "../lib/profiles.js";
-import { Turns, buildDeskPrompt, buildOpenPrompt, buildWakePrompt, buildWarmPrompt, sanitizeUntrusted, turnWatchdog } from "../lib/turns.js";
+import { Turns, buildDeskPrompt, buildOpenPrompt, buildWakePrompt, buildWarmPrompt, sanitizeUntrusted, silentNoMention, turnWatchdog } from "../lib/turns.js";
 import { TurnLog } from "../lib/turn-log.js";
 
 function recent(n = 2) {
@@ -114,7 +114,7 @@ test("open prompt for a DM reads the one file", () => {
 });
 
 test("later wakes only append the new messages when the session already knows the policy", () => {
-  const announced = { send_mode: "draft", wake_mode: "mention", cmd: false };
+  const announced = { send_mode: "draft", wake_mode: "mention", cmd: false, rights: false };
   const prompt = buildWakePrompt("feishu", "示例对象 A", "oc_abc", recent(2), {
     firstTurn: false, announced,
   });
@@ -156,14 +156,14 @@ test("wake and open prompts declare the send mode on first turn and after a swit
   // 同一会话、没变化：后续轮不再复读。
   const later = buildWakePrompt("feishu", "示例对象 A", "oc_dm", recent(1), {
     firstTurn: false, kind: "p2p", sendMode: "auto",
-    announced: { send_mode: "auto", wake_mode: "mention", cmd: false },
+    announced: { send_mode: "auto", wake_mode: "mention", cmd: false, rights: false },
   });
   assert.doesNotMatch(later, /发送方式：/);
 
   // 切换后的第一轮要说清新值从哪一档切过来；再下一轮又安静。
   const changed = buildWakePrompt("feishu", "示例对象 A", "oc_dm", recent(1), {
     firstTurn: false, kind: "p2p", sendMode: "auto",
-    announced: { send_mode: "draft", wake_mode: "mention", cmd: false },
+    announced: { send_mode: "draft", wake_mode: "mention", cmd: false, rights: false },
   });
   assert.match(changed, /发送方式：全自动（已从草稿审批切换/);
   assert.match(changed, /不要征求确认/);
@@ -206,7 +206,7 @@ test("same display name with different ids tags message lines with the id tail",
   const one = buildWakePrompt("feishu", "示例群", "oc_grp", [rows[0]], { firstTurn: false });
   const oneLines = one.split("\n");
   assert.equal(oneLines[0], "- [t1] 张三: A 说的");
-  assert.match(oneLines[1], /^发送方式：草稿审批/);
+  assert.match(oneLines.at(-1), /^发送方式：草稿审批/, "发送方式永远是最末一行");
 });
 
 test("later wakes with stickers send only the message line, no media boilerplate", () => {
@@ -216,7 +216,7 @@ test("later wakes with stickers send only the message line, no media boilerplate
   };
   const prompt = buildWakePrompt("feishu", "示例对象 A", "oc_abc", [row], {
     firstTurn: false, mediaMap: new Map([["s1", { sticker: true }]]),
-    announced: { send_mode: "draft", wake_mode: "mention", cmd: false },
+    announced: { send_mode: "draft", wake_mode: "mention", cmd: false, rights: false },
   });
   const lines = prompt.split("\n");
   assert.equal(lines.length, 1);
@@ -1193,7 +1193,7 @@ test("all-mode prompt marks mentions and keeps the reply rule explicit", () => {
   // 从「只盯 @我」切到「全部消息」：切换后的第一轮带说明。
   const switched = buildWakePrompt("feishu", "示例群", "oc_grp", rows, {
     firstTurn: false, wakeMode: "all",
-    announced: { send_mode: "draft", wake_mode: "mention", cmd: false },
+    announced: { send_mode: "draft", wake_mode: "mention", cmd: false, rights: false },
   });
   assert.match(switched, /- \[t2\] 客户（@你）: @我 这个什么时候好/);
   assert.match(switched, /- \[t1\] 同事: 进度怎么样/);
@@ -1205,7 +1205,7 @@ test("all-mode prompt marks mentions and keeps the reply rule explicit", () => {
   // 关注程度没变：不再复读说明，只追加消息行。
   const steady = buildWakePrompt("feishu", "示例群", "oc_grp", rows, {
     firstTurn: false, wakeMode: "all",
-    announced: { send_mode: "draft", wake_mode: "all", cmd: false },
+    announced: { send_mode: "draft", wake_mode: "all", cmd: false, rights: false },
   });
   assert.doesNotMatch(steady, /关注程度已切换|没点你名的行默认沉默/);
   assert.match(steady, /本批 1 条点你名/);
@@ -1238,12 +1238,12 @@ test("DM prompts never claim the group rule and spell out the @-only mode", () =
   // 私聊「只盯 @我」：未变不复读，从「全部消息」切过来时带一次说明。
   const steady = buildWakePrompt("feishu", "示例对象 A", "oc_dm", rows, {
     firstTurn: false, wakeMode: "mention", kind: "p2p",
-    announced: { send_mode: "draft", wake_mode: "mention", cmd: false },
+    announced: { send_mode: "draft", wake_mode: "mention", cmd: false, rights: false },
   });
   assert.doesNotMatch(steady, /只认 @ 模式|关注程度/);
   const switched = buildWakePrompt("feishu", "示例对象 A", "oc_dm", rows, {
     firstTurn: false, wakeMode: "mention", kind: "p2p",
-    announced: { send_mode: "draft", wake_mode: "all", cmd: false },
+    announced: { send_mode: "draft", wake_mode: "all", cmd: false, rights: false },
   });
   assert.match(switched, /关注程度已切换为「只盯 @我」/);
   assert.match(switched, /只有对方 @ 你/);
@@ -1276,7 +1276,7 @@ test("open prompt carries the recent context and the group mode rule", () => {
   const prompt = buildOpenPrompt("feishu", "示例群", "oc_grp", rows, { wakeMode: "all" });
   assert.match(prompt, /最近上下文（最近 30 分钟，共 1 条）/);
   assert.match(prompt, /- \[t1\] 同事: 这个谁看下/);
-  assert.match(prompt, /默认动作是沉默/);
+  assert.match(prompt, /判断顺序：先看这条点名了谁/);
   assert.match(prompt, /关?注程度：全部消息/);
 });
 
@@ -1500,7 +1500,7 @@ test("self-@ command lines are marked as the owner talking to the stand-in", () 
   // 后续轮：会话里第一次出现指令，带完整规则。
   const firstCmd = buildWakePrompt("feishu", "示例对象 A", "oc_dm", [rows[0]], {
     wakeMode: "mention", kind: "p2p", firstTurn: false,
-    announced: { send_mode: "draft", wake_mode: "mention", cmd: false },
+    announced: { send_mode: "draft", wake_mode: "mention", cmd: false, rights: false },
   });
   assert.match(firstCmd, /【本人指令】/);
   assert.match(firstCmd, /本人（@自己）/);
@@ -1509,7 +1509,7 @@ test("self-@ command lines are marked as the owner talking to the stand-in", () 
   // 同一会话再下指令：规则没变，不再复读；身份仍标在消息行上。
   const nextCmd = buildWakePrompt("feishu", "示例对象 A", "oc_dm", [rows[0]], {
     wakeMode: "mention", kind: "p2p", firstTurn: false,
-    announced: { send_mode: "draft", wake_mode: "mention", cmd: true },
+    announced: { send_mode: "draft", wake_mode: "mention", cmd: true, rights: false },
   });
   assert.doesNotMatch(nextCmd, /【本人指令】/);
   assert.match(nextCmd, /本人（@自己）/);
@@ -1772,7 +1772,7 @@ test("desk triage always creates a fresh session and never reuses history", asyn
   assert.equal(state.data.desk.session_turns, 1);
 });
 
-test("事故 A：@ 的是别人时，载荷给事实并把发送降成草稿", () => {
+test("事故 A：@ 的是别人时，载荷给事实与默认口径，不降级也不邀请发言", () => {
   const rows = [
     { msg_id: "c1", sender_id: "cli_bot", sender_name: "值班机器人",
       content: "@周明 工单 A-1024 有没有疑问或卡点",
@@ -1781,17 +1781,20 @@ test("事故 A：@ 的是别人时，载荷给事实并把发送降成草稿", (
   ];
   const prompt = buildOpenPrompt("feishu", "示例群", "oc_grp", rows, {
     kind: "group", sendMode: "auto", selfId: "ou_me", selfName: "我",
-    rightsDefined: false,
+    rightsCustom: false,
     dutyContext: { action: "watch", reason: "群里有人被点名" },
   });
   assert.match(prompt, /本人：我 · 飞书 · open_id ou_me/);
   assert.match(prompt, /- \[t1\] 值班机器人（@周明）:/);
   assert.doesNotMatch(prompt, /（@你）/);
   assert.match(prompt, /本批 0 条点你名/);
-  assert.match(prompt, /发言权：未定义/);
-  assert.match(prompt, /先把它写进工作本|把它写进工作本/);
-  assert.match(prompt, /发送方式：草稿审批（本群发言权未定义，全自动暂停/);
-  assert.doesNotMatch(prompt, /以本人身份直接发出/, "未定义契约时不能给全自动口径");
+  // 默认口径本来就有，用户不用配：不降级、不要求先写。
+  assert.match(prompt, /发言权（默认口径）/);
+  assert.match(prompt, /点了别人的只当知会、不代答/);
+  assert.match(prompt, /没点任何人的先判断/);
+  assert.match(prompt, /信息同步可以发/);
+  assert.match(prompt, /发送方式：全自动/);
+  assert.doesNotMatch(prompt, /全自动暂停|发言权：未定义/);
   assert.doesNotMatch(prompt, /有该回的就按 skill 回/);
   assert.doesNotMatch(prompt, /只盯 @我/, "结论句不再进载荷");
 });
@@ -1806,24 +1809,26 @@ test("场景 B：没人点名也要能出手——载荷给默认值与例外，
     kind: "group", sendMode: "auto", selfId: "ou_me", selfName: "我", rightsDefined: true,
   });
   assert.match(prompt, /本批 0 条点你名/);
-  assert.match(prompt, /默认动作是沉默/);
-  assert.match(prompt, /只有判定「这条是交给你的」才发言/);
+  assert.match(prompt, /判断顺序：先看这条点名了谁/);
+  assert.match(prompt, /判不准就沉默/);
+  assert.match(prompt, /没点任何人的先判断（问题悬着、任务派我、要我表态就回；纯告警寒暄不回）/, "默认口径要能覆盖「没人点名」");
+  assert.match(prompt, /信息同步可以发/, "默认口径要能覆盖信息同步");
   assert.doesNotMatch(prompt, /不需要处理/, "不能写成机械禁令");
   assert.doesNotMatch(prompt, /不要往这个群发任何消息/);
 });
 
-test("发言权已定义：恢复全自动，并说明是按契约判断", () => {
+test("本群单独改过口径：给工作本指针，仍按面板的发送方式跑", () => {
   const rows = [
     { msg_id: "m1", sender_id: "ou_x", sender_name: "客户", content: "@我 什么时候好",
       mentions: [{ id: { open_id: "ou_me" }, name: "我" }],
       ts: "t1", ts_epoch: 100, kind: "mention", state: "new" },
   ];
   const prompt = buildOpenPrompt("feishu", "示例群", "oc_grp", rows, {
-    kind: "group", sendMode: "auto", selfId: "ou_me", selfName: "我", rightsDefined: true,
+    kind: "group", sendMode: "auto", selfId: "ou_me", selfName: "我", rightsCustom: true,
   });
-  assert.match(prompt, /发言权：已定义/);
+  assert.match(prompt, /发言权：本群单独改过/);
   assert.match(prompt, /发送方式：全自动/);
-  assert.doesNotMatch(prompt, /全自动暂停/);
+  assert.doesNotMatch(prompt, /默认口径/);
   assert.match(prompt, /本批 1 条点你名/);
   assert.match(prompt, /- \[t1\] 客户（@你）:/);
 });
@@ -1850,4 +1855,60 @@ test("私聊不参与发言权降级", () => {
   });
   assert.match(prompt, /发送方式：全自动/);
   assert.doesNotMatch(prompt, /发言权/);
+});
+
+test("点名三分类：点我 / 点了别人 / 谁都没点，分开报给 agent", () => {
+  const rows = [
+    { msg_id: "t1", sender_id: "cli_bot", sender_name: "值班机器人",
+      content: "@周明 进度如何",
+      mentions: [{ id: { open_id: "ou_demo_zhou" }, name: "周明" }],
+      ts: "t1", ts_epoch: 100, kind: "fyi" },
+    { msg_id: "t2", sender_id: "ou_boss", sender_name: "负责人",
+      content: "这个需求两天内能上吗", ts: "t2", ts_epoch: 101, kind: "fyi" },
+    { msg_id: "t3", sender_id: "ou_x", sender_name: "客户",
+      content: "@我 确认一下", mentions: [{ id: { open_id: "ou_me" }, name: "我" }],
+      ts: "t3", ts_epoch: 102, kind: "mention" },
+  ];
+  const prompt = buildOpenPrompt("feishu", "示例群", "oc_three", rows, {
+    kind: "group", sendMode: "draft", selfId: "ou_me", selfName: "我", rightsCustom: false,
+  });
+  assert.match(prompt, /本批 1 条点你名；1 条点了别人（不是给你的）；1 条谁都没点。/);
+  assert.match(prompt, /- \[t1\] 值班机器人（@周明）: @周明 进度如何/);
+  // 「谁都没点」的那条不能被载荷判死：问在群里、要表态的就是要回。
+  assert.match(prompt, /没点任何人的先判断（问题悬着、任务派我、要我表态就回；纯告警寒暄不回）/);
+  assert.doesNotMatch(prompt, /没点任何人的.*(不用回|不需要处理|一律不回)/);
+});
+
+test("C 型态：没点你名的消息不占唤醒，但下一轮带条数提示，按需在线拉", () => {
+  const chat = {
+    last_turn: { at: 100 },
+    session_bound_at: 50,
+    recent: [
+      { msg_id: "a", kind: "fyi", skip: "no-mention", ts_epoch: 120 },
+      { msg_id: "b", kind: "fyi", skip: "no-mention", ts_epoch: 130 },
+      // 基线 / 你已回过 / 已交付过的都不算
+      { msg_id: "c", kind: "fyi", skip: "baseline", ts_epoch: 120 },
+      { msg_id: "d", kind: "fyi", skip: "you-replied", ts_epoch: 120 },
+      { msg_id: "e", kind: "fyi", skip: "no-mention", ts_epoch: 90 },
+      { msg_id: "f", kind: "mention", skip: "", ts_epoch: 140 },
+    ],
+  };
+  assert.equal(silentNoMention(chat), 2);
+  assert.equal(silentNoMention({ last_turn: { at: 0 }, recent: [] }), 0);
+
+  const rows = [
+    { msg_id: "m1", sender_id: "ou_x", sender_name: "客户", content: "@我 看下",
+      mentions: [{ id: { open_id: "ou_me" }, name: "我" }],
+      ts: "t1", ts_epoch: 141, kind: "mention", state: "new" },
+  ];
+  const withHint = buildWakePrompt("feishu", "示例群", "oc_grp", rows, {
+    firstTurn: false, announced: { send_mode: "draft", wake_mode: "mention", cmd: false, rights: false },
+    silentCount: 2,
+  });
+  assert.match(withHint, /另有 2 条没点你名的群消息没转给正文；判断需要时按 skill 在线拉最近的群消息看。/);
+  // 私聊与 0 条都不出这一行
+  const none = buildWakePrompt("feishu", "示例群", "oc_grp", rows, {
+    firstTurn: false, announced: { send_mode: "draft", wake_mode: "mention", cmd: false, rights: false },
+  });
+  assert.doesNotMatch(none, /另有 \d+ 条没点你名/);
 });

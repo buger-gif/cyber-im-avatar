@@ -1208,7 +1208,9 @@ test("rights: 群只读写发言权那一段，其余字节不变；stale 拒写
   assert.equal(out.status, 200);
   assert.equal(out.body.ok, true);
   assert.equal(out.body.applicable, true);
-  assert.equal(out.body.defined, false, "新建工作本里的契约段是空的");
+  assert.equal(out.body.custom, false, "没写过 = 默认口径");
+  assert.match(out.body.text, /没点任何人/, "默认口径必须有内容");
+  assert.equal(out.body.text, out.body.default_text);
   assert.equal(out.body.title, "## 我在这个群的发言权");
 
   const file = profiles.pathFor("feishu", "oc_grp", "示例群");
@@ -1220,7 +1222,7 @@ test("rights: 群只读写发言权那一段，其余字节不变；stale 拒写
     platform: "feishu", chat_id: "oc_grp", text: "- 我是谁：跟进人", base_mtime: 0,
   });
   assert.equal(out.body.ok, true);
-  assert.equal(out.body.defined, true);
+  assert.equal(out.body.custom, true);
   const after = fs.readFileSync(file, "utf8");
   assert.equal(after.slice(0, after.indexOf("## 我在这个群的发言权")), head, "标题之前一个字节不改");
   assert.equal(after.slice(after.indexOf("## 成员与角色")), tail, "下一段之后一个字节不改");
@@ -1233,25 +1235,25 @@ test("rights: 群只读写发言权那一段，其余字节不变；stale 拒写
   assert.equal(out.body.reason, "stale");
   assert.equal(fs.readFileSync(file, "utf8"), after);
 
-  // 空正文 = 清空该段，回到未定义，标题还在
+  // 空正文 = 清空该段，回到默认口径，标题还在
   out = await app.handle("/api/rights", "POST", null, {
     platform: "feishu", chat_id: "oc_grp", text: "  ", base_mtime: 0,
   });
   assert.equal(out.body.ok, true);
-  assert.equal(out.body.defined, false);
+  assert.equal(out.body.custom, false);
+  assert.match(out.body.text, /没点任何人/);
   assert.match(fs.readFileSync(file, "utf8"), /^## 我在这个群的发言权$/m);
 
   // targets 行带上契约状态
   out = await app.handle("/api/targets", "GET");
   const row = out.body.items.find((t) => t.chat_id === "oc_grp");
-  assert.equal(row.rights_defined, false);
-  assert.equal(row.rights, "");
+  assert.equal(row.rights_custom, false, "默认口径不算「本群改过」");
+  assert.equal(row.rights, "", "工作本里那段是空的，默认文本不落盘");
 
   // 私聊不适用：不设闸门，也不能通过这条路由改名下的工作本
   state.ensureChat("feishu", "oc_dm", { name: "张三", kind: "p2p", target: true });
   out = await app.handle("/api/rights", "GET", { platform: "feishu", chat_id: "oc_dm" });
   assert.equal(out.body.applicable, false);
-  assert.equal(out.body.defined, true);
   out = await app.handle("/api/rights", "POST", null, {
     platform: "feishu", chat_id: "oc_dm", text: "- x", base_mtime: 0,
   });

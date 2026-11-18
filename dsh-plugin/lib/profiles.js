@@ -15,6 +15,18 @@ export const MAX_PROFILE = 12 * 1024;
 export const MAX_RIGHTS = 8 * 1024;
 /** 发言权小节标题：插件建模板时就写进去，人填、agent 首任代笔；判定只看这段是否非空。 */
 export const RIGHTS_TITLE = "## 我在这个群的发言权";
+/**
+ * 默认发言权：每个群一上来就按它跑，用户不用写、也不用开。
+ * 工作本那一段为空（或没写）就等于用默认；写了就覆盖默认——只有一个覆盖点。
+ */
+export const RIGHTS_DEFAULT = [
+  "- 点我名：回（这是给我的）",
+  "- 点了别人：只当知会，不代答；除非那条明确也在问我",
+  "- 没点任何人：先判断——问题悬在群里、任务派到我头上、需要我表态或给结论 → 回；" +
+    "纯告警、寒暄、别人之间的对话 → 沉默",
+  "- 信息同步：已确认的进度、结论、事实，可以主动发到群里",
+  "- 判不准：沉默，等下一次点名",
+].join("\n");
 const PLATFORM_LABEL = { feishu: "飞书", wecom: "企业微信", dingtalk: "钉钉" };
 const SAFE = /[^0-9A-Za-z._\-\u4e00-\u9fff]+/g;
 const H2 = /^##\s+\S/;
@@ -422,18 +434,18 @@ export class Profiles {
    */
   rightsFor(platform, chat, selfId = "") {
     const memory = this.memoryFor(platform, chat, selfId);
-    const empty = {
-      path: memory.path || "", exists: false, defined: true, text: "",
-      title: RIGHTS_TITLE, mtime: 0, applicable: false,
+    const plain = {
+      path: memory.path || "", exists: false, custom: false, text: RIGHTS_DEFAULT,
+      title: RIGHTS_TITLE, mtime: 0, applicable: false, default_text: RIGHTS_DEFAULT,
     };
-    if (!memory.path) return empty;
-    if (chat?.kind !== "group" || memory.single) return empty;
+    if (!memory.path) return plain;
+    if (chat?.kind !== "group" || memory.single) return plain;
     const exists = fs.existsSync(memory.path);
-    const text = exists ? this.readPath(memory.path) : "";
-    const sec = rightsSection(text);
+    const sec = rightsSection(exists ? this.readPath(memory.path) : "");
+    // 空段 = 用默认口径，不是「没定义」：默认值必须有，用户不需要为它做任何事。
     return {
-      path: memory.path, exists, defined: sec.defined, text: sec.body,
-      title: RIGHTS_TITLE, mtime: this.mtime(memory.path), applicable: true,
+      ...plain, exists, custom: sec.defined, text: sec.defined ? sec.body : RIGHTS_DEFAULT,
+      mtime: this.mtime(memory.path), applicable: true,
     };
   }
 
@@ -463,9 +475,11 @@ export class Profiles {
     }
     this.writeRaw(memory.path, next.endsWith("\n") ? next : `${next}\n`);
     const sec = rightsSection(this.readPath(memory.path));
+    // 写空 = 恢复默认口径（该段清空），不是「关掉闸门」。
     return {
-      ok: true, path: memory.path, defined: sec.defined, text: sec.body,
-      title: RIGHTS_TITLE, mtime: this.mtime(memory.path),
+      ok: true, path: memory.path, custom: sec.defined,
+      text: sec.defined ? sec.body : RIGHTS_DEFAULT,
+      title: RIGHTS_TITLE, default_text: RIGHTS_DEFAULT, mtime: this.mtime(memory.path),
     };
   }
 

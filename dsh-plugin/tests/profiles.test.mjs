@@ -5,7 +5,7 @@ import path from "node:path";
 import test from "node:test";
 
 import {
-  Profiles, MAX_PROFILE, MAX_RIGHTS, RIGHTS_TITLE, chatPersonId, excerpt, memoryRel,
+  Profiles, MAX_PROFILE, MAX_RIGHTS, RIGHTS_DEFAULT, RIGHTS_TITLE, chatPersonId, excerpt, memoryRel,
   personRefs, personRel, profileRel, profileTemplate, rightsSection, setRightsSection, titleOf,
 } from "../lib/profiles.js";
 
@@ -292,26 +292,28 @@ test("发言权标题被删后能补回（插件是模板作者），且不覆�
   assert.match(out, /- 只回点名/);
 });
 
-test("rightsFor：群适用，私聊不适用且不设闸门", () => {
+test("rightsFor：空段 = 默认口径，不是「没定义」", () => {
   const { profiles } = tempProfiles();
   const group = { platform: "feishu", chat_id: "oc_g", name: "示例群", kind: "group" };
   profiles.ensureMemory("feishu", group, "ou_self");
   const r = profiles.rightsFor("feishu", group, "ou_self");
   assert.equal(r.applicable, true);
   assert.equal(r.exists, true);
-  assert.equal(r.defined, false);
+  assert.equal(r.custom, false, "没写过就是默认口径");
+  assert.equal(r.text, RIGHTS_DEFAULT, "默认口径必须有内容，不能是空串");
+  assert.match(r.text, /没点任何人/);
   const dm = { platform: "feishu", chat_id: "oc_dm", name: "张三", kind: "p2p" };
   const d = profiles.rightsFor("feishu", dm, "ou_self");
   assert.equal(d.applicable, false);
-  assert.equal(d.defined, true, "私聊没有授权边界可言，不能因此降级");
+  assert.equal(d.text, RIGHTS_DEFAULT);
 });
 
-test("writeRights：段内写、stale 拒写、8KB 上限、清空回未定义", () => {
+test("writeRights：段内写、stale 拒写、8KB 上限、清空回默认", () => {
   const { profiles } = tempProfiles();
   const group = { platform: "feishu", chat_id: "oc_g", name: "示例群", kind: "group" };
   const first = profiles.writeRights("feishu", group, "ou_self", "- 我是谁：跟进人", {});
   assert.equal(first.ok, true);
-  assert.equal(first.defined, true);
+  assert.equal(first.custom, true);
   const file = first.path;
   const book = fs.readFileSync(file, "utf8");
   assert.match(book, /## 群内工作要求/, "其它段落还在");
@@ -326,7 +328,8 @@ test("writeRights：段内写、stale 拒写、8KB 上限、清空回未定义",
   // 清空该段 -> 未定义，标题仍在
   const cleared = profiles.writeRights("feishu", group, "ou_self", "", {});
   assert.equal(cleared.ok, true);
-  assert.equal(cleared.defined, false);
+  assert.equal(cleared.custom, false);
+  assert.equal(cleared.text, RIGHTS_DEFAULT, "清空 = 回到默认口径");
   assert.match(fs.readFileSync(file, "utf8"), new RegExp(`^${RIGHTS_TITLE}$`, "m"));
   // 私聊拒写
   const dm = { platform: "feishu", chat_id: "oc_dm", name: "张三", kind: "p2p" };
