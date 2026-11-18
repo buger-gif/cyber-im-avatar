@@ -101,7 +101,7 @@ test("command config defaults on, normalizes the keyword and keeps an empty keyw
     enabled: true,
     start_keyword: "启动",
     reply_enabled: true,
-    reply_text: "支持用户自定义，默认就是 24 小时值班，上线 @ 我即可触发。",
+    reply_text: "24 小时agent值班上线， @ 我即可触发服务",
   });
   assert.equal(normalizeConfig({ command: { enabled: false } }).command.enabled, false);
   assert.equal(normalizeConfig({ command: { enabled: "false" } }).command.enabled, false);
@@ -120,7 +120,7 @@ test("command config defaults on, normalizes the keyword and keeps an empty keyw
 test("command reply defaults on, keeps an explicit off, and an empty text means no reply", () => {
   const base = normalizeConfig({}).command;
   assert.equal(base.reply_enabled, true);
-  assert.match(base.reply_text, /24 小时值班/);
+  assert.match(base.reply_text, /24 小时/);
   assert.equal(normalizeConfig({ command: { reply_enabled: false } }).command.reply_enabled, false);
   assert.equal(normalizeConfig({ command: { reply_enabled: "off" } }).command.reply_enabled, false);
   assert.equal(normalizeConfig({ command: { reply_enabled: "yes" } }).command.reply_enabled, true);

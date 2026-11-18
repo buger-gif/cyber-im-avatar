@@ -52,7 +52,7 @@ export const DEFAULT_CONFIG = {
     enabled: true,
     start_keyword: "启动",
     reply_enabled: true,
-    reply_text: "支持用户自定义，默认就是 24 小时值班，上线 @ 我即可触发。",
+    reply_text: "24 小时agent值班上线， @ 我即可触发服务",
   },
   dsh: { timeout: 600, turn_cap_sec: 3600, full_access: false, warm_min: 55, ack_reaction: true },
   duty: {
