@@ -5,12 +5,13 @@
 
 ## 更新时间
 
-2026-11-18（0.24.1 已发布：0051 发言权默认口径 + 按群覆盖 + 没点名消息给条数；npm latest 与市场索引指向 0.24.1；0051 真机三项、0049 与「@ 自己」修复待真机；0048 / 0046 仍待真机）
+2026-11-19（0.24.2 已发布：交付本人文档不再当成「授权」、开权限不带重复通知；npm latest 与市场索引指向 0.24.2；0051 真机三项、0049 与「@ 自己」修复待真机；0048 / 0046 仍待真机）
 
 ## 最近批次
 
 | 日期 | 主题 | 证据 |
 | --- | --- | --- |
+| 2026-11-19 | 0.24.2 发布（交付本人文档不再当成「授权」+ 开权限不带重复通知）：功能提交 `3abef89` + 规则书与产物对照 `0d1340f`；`SKILL.md` 明确「把自己新建的文档交给当前会话对象」是回复的组成部分，只有扩大范围（租户/外部可读、给第三方、改他人权限、公开空间）才停；`turns.js` 载荷同步这两句，开权限省略 `--need-notification`；根 `SKILL.md`、构建产物、安装副本三份一致 | `CHANGELOG.md`、`SKILL.md`、`dsh-plugin/lib/turns.js`、`docs/implementation/runbooks/dev-loop.md`、`dsh-plugin/package.json` |
 | 2026-11-18 | 0.24.1 发布（0051 发言权默认口径 + C 型态）：功能提交 `8f60315` + 发布提交 `129f842` + 市场索引 `076b77b`；Trusted Publishing 发布成功（[run 44251140188](https://github.com/buger-gif/cyber-im-avatar/actions/runs/44251140188)，含版本自检）；tag / main 两套回归矩阵绿；公开 packument `time["0.24.1"]=2026-11-18T06:30:06Z`、`dist-tags.latest=0.24.1`，索引经 format-1 校验后指向它 | `CHANGELOG.md`、`dsh-plugin/package.json`、`dsh-plugin/market/index.json`、[run 44251140188](https://github.com/buger-gif/cyber-im-avatar/actions/runs/44251140188) |
 | 2026-11-18 | 发言权改成「内置默认口径 + 按群覆盖」（0051 / ADR 0017，未发版）：取消「未定义 → 强制草稿」；`RIGHTS_DEFAULT` 按「点名了谁」排序（点我名回 / 点了别人只当知会 / 谁都没点先判断 / 信息同步可发 / 判不准沉默），不落盘、不改发送方式；面板显示「默认口径 / 本群已改」+「恢复默认」，`/api/rights` 返回 `custom` / `default_text`；载荷给点名三分类统计；没点你名的消息给条数 + 按需在线拉（ADR 0018）；Node 322 绿、gate quick 绿 | `dsh-plugin/lib/{profiles,turns,app}.js`、`dsh-plugin/web/panel.js`、`dsh-plugin/lib/client.js`、`dsh-plugin/tests/{profiles,turns,app}.test.mjs`、`docs/specs/active/0051-发言权契约.md`、`docs/decisions/implemented/0017-发言权默认口径.md`、契约 01、架构 03、`SKILL.md` |
 | 2026-11-18 | 0.24.0 发布（0051 群发言权契约 + 启动回执默认文案）：功能提交 `a5d2fe5` + 文案提交 `b2998aa` + 发布提交 `02d64c5` + 市场索引 `c15ca15`；Trusted Publishing 发布成功（[run 44248159949](https://github.com/buger-gif/cyber-im-avatar/actions/runs/44248159949)，3m4s，含版本自检）；tag / main 两套回归矩阵全绿（tag [run 44248159872](https://github.com/buger-gif/cyber-im-avatar/actions/runs/44248159872)）；本地带 `?t=` 的 curl 确认 `0.24.0` 已在公开 packument（`time=2026-11-18T06:03:13Z`）、`npm view` latest 0.24.0，索引经 format-1 校验后指向它 | `CHANGELOG.md`、`dsh-plugin/package.json`、`dsh-plugin/market/index.json`、[run 44248159949](https://github.com/buger-gif/cyber-im-avatar/actions/runs/44248159949) |
