@@ -32,6 +32,18 @@ dsh plugin --profile web add ~/Desktop/cyber-im-avatar/dsh-plugin   # 目录安�
 | `scripts/migrate-state.mjs` | 先 `--dry-run`，再对副本 `--dir` 跑 | 旧库改名、`state.json` 字段与契约一致 |
 | 契约相关（路由/state 字段/配置键） | 同 commit 改 `docs/specs/contracts/` | `python3 tests/test_docs.py` 全绿 |
 
+### 3.1 真源与产物：别改安装副本
+
+规则和文案最容易改错地方——用户跑的是「安装副本」，本仓库才是真源。
+
+| 要改什么 | 真源 | 产物（不要手改） |
+| --- | --- | --- |
+| agent 值守规则（能发什么、不能发什么、文档交付、记忆与画像） | 根 `SKILL.md` | `dsh-plugin/skill/SKILL.md`（`npm run build:skill` 生成，`prepack` 重建）；`~/.agents/skills/cyber-im-avatar/`（安装副本） |
+| 唤醒载荷里插件注入的文案（发送方式、关注程度、本批点名分布） | `dsh-plugin/lib/turns.js` | 无产物，重启 DSH 即生效 |
+| 面板提示语与交互 | `dsh-plugin/web/panel.js` | `dsh-plugin/lib/client.js`（`python3 scripts/build_client.py` 生成） |
+
+判定口诀：**给 agent 的新规则写进 `SKILL.md`，载荷里那几行写进 `turns.js`**；同一条规则不要两边各写一遍（ADR 0004）。改完 `SKILL.md` 要 `cd dsh-plugin && npm run build:skill`，再把安装副本同步过去（或重装插件）；改 `turns.js` 直接重启 DSH。
+
 ## 4. 不开端口怎么调试后端
 
 ```bash
