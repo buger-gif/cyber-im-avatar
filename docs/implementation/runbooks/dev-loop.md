@@ -64,6 +64,14 @@ bash scripts/gate.sh --quick                               # 提交前：静态�
 bash scripts/gate.sh                                       # 发版前：全量
 ```
 
+### 5.1 CI 上的 actions 版本
+
+runner 会按 action 自带的运行时 Node 版本告警：`checkout` / `setup-node` 的 v4 与 `setup-python` 的 v5
+跑 node20，每次 push 都会在 run 页挂「Node.js 20 is deprecated」。workflow 里统一钉 **v7**（node24，
+要求 runner ≥ 2.327.1，托管 runner 满足）；输入名不变（`python-version` / `node-version`）。
+验证看 `test` run 页的 **ANNOTATIONS** 是否为空；发布流程用 `gh workflow run publish.yml` 干跑
+（`dry_run` 默认 true，不发 npm），别为了验证真发一版。
+
 ## 6. UI 层验证
 
 `dsh-plugin/scripts/shot-dsh.mjs` 走 CDP 截面板截图；改动牵涉交互时，先截一张再改，
