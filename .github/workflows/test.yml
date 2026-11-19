@@ -1,5 +1,7 @@
 name: test
 
+# actions 统一用 v7（node24 运行时）。checkout / setup-node v4 与 setup-python v5
+# 跑在 node20 上，runner 会给每个 job 挂「Node.js 20 is deprecated」告警。
 on:
   push:
   pull_request:
@@ -15,12 +17,12 @@ jobs:
       matrix:
         python-version: ["3.9", "3.11", "3.13"]
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
         with:
           python-version: ${{ matrix.python-version }}
       # 插件测试与契约探针是 Node 22+（node:sqlite 在 22.5 才可用）。
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         with:
           node-version: 22
       - run: python3 tests/run_tests.py
@@ -28,11 +30,11 @@ jobs:
   docs-gate:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
         with:
           python-version: "3.12"
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         with:
           node-version: 22
       - name: 静态层 gate（文档死链 / 契约对账 / 版本一致 / 构建产物新鲜度 / 密钥扫描）

@@ -5,6 +5,7 @@ name: publish
 # 用 npm 的 Trusted Publishing（OIDC）：不需要任何长期 token，也不需要 2FA 交互。
 # 前提是在 npmjs.com 的包设置里登记过本仓库 + 本工作流文件名（见 PUBLISHING.md）。
 #
+# actions 统一用 v7（node24 运行时），避免 runner 的 Node 20 弃用告警。
 # 注意：bypass-2FA 的 granular token 在 2027-01 之后只能"暂存发布"，
 # 这条路是长期方案；临时救急仍可用 token，但别把它写进仓库。
 
@@ -34,9 +35,9 @@ jobs:
       run:
         working-directory: dsh-plugin
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         with:
           node-version: 22
           registry-url: https://registry.npmjs.org
