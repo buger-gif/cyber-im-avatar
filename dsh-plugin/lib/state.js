@@ -54,7 +54,10 @@ export const DEFAULT_CONFIG = {
     reply_enabled: true,
     reply_text: "24 小时agent值班上线， @ 我即可触发服务",
   },
-  dsh: { timeout: 600, turn_cap_sec: 3600, full_access: false, warm_min: 55, ack_reaction: true },
+  dsh: {
+    timeout: 600, turn_cap_sec: 3600, full_access: false, warm_min: 55,
+    ack_reaction: true, progress_card: false,
+  },
   duty: {
     enabled: true,
     trial_hours: 0,
@@ -148,6 +151,9 @@ export function normalizeConfig(input) {
   d.ack_reaction = d.ack_reaction == null ? true
     : !(d.ack_reaction === false || d.ack_reaction === 0 ||
         ["false", "no", "off", "0", ""].includes(String(d.ack_reaction).trim().toLowerCase()));
+  // 私聊进度卡：全局默认关；只有显式 true 才开。单聊 progress_card 三态覆盖。
+  d.progress_card = d.progress_card === true || d.progress_card === "true" ||
+    d.progress_card === 1 || d.progress_card === "1";
   const du = cfg.duty || (cfg.duty = {});
   du.enabled = du.enabled !== false && du.enabled !== 0 && du.enabled !== "0" &&
     du.enabled !== "false" && du.enabled !== "off";
@@ -235,6 +241,28 @@ function safeReadJson(file) {
 
 const RECENT_KINDS = ["dm", "mention", "service", "fyi", "out", "cmd"];
 const RECENT_STATES = ["new", "opened", "replied", "ignored"];
+const PROGRESS_STATES = ["", "running", "done", "failed", "cancelled"];
+
+/** 私聊进度卡落盘形状（spec 0052）；ids 只留最近 5 个卡片消息 ID。 */
+function normalizeProgress(input) {
+  const p = input && typeof input === "object" ? input : {};
+  const ids = (Array.isArray(p.ids) ? p.ids : []).map((x) => String(x || "")).filter(Boolean);
+  return {
+    msg_id: String(p.msg_id || ""),
+    turn_id: String(p.turn_id || ""),
+    state: PROGRESS_STATES.includes(p.state) ? p.state : "",
+    created_at: Number(p.created_at) || 0,
+    updated_at: Number(p.updated_at) || 0,
+    last_error: String(p.last_error || "").slice(0, 160),
+    counts: {
+      research: Math.max(0, Number(p.counts?.research) || 0),
+      files: Math.max(0, Number(p.counts?.files) || 0),
+      ops: Math.max(0, Number(p.counts?.ops) || 0),
+      parallel: Math.max(0, Number(p.counts?.parallel) || 0),
+    },
+    ids: [...new Set(ids)].slice(-5),
+  };
+}
 /**
  * 一条消息没进唤醒批次的原因。只留可枚举的三种，面板按它聚合成一句话；
  * 进批次的行 skip 为空串。老数据没有这个键，读出来就是空串，不需要迁移。
@@ -381,6 +409,10 @@ export class State {
       wake_mode: WAKE_MODES.includes(input.wake_mode) ? input.wake_mode : (isGroup ? "mention" : "all"),
       // "" = 还没单独设过（首次加入值守时取 config.send_mode_default）；之后是显式选择。
       send_mode: SEND_MODES.includes(input.send_mode) ? input.send_mode : fallbackSendMode,
+      // 私聊进度卡：null=跟随全局，true=这个人开，false=这个人关；群聊忽略。
+      progress_card: input.progress_card === true ? true
+        : input.progress_card === false ? false : null,
+      progress: normalizeProgress(input.progress),
       last_wake_at: Number(input.last_wake_at) || 0,
       last_wake_epoch: Number(input.last_wake_epoch) || 0,
       workspace: typeof input.workspace === "string" ? input.workspace : "",

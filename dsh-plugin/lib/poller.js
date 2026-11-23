@@ -580,8 +580,10 @@ export class Poller {
     // 不该参与 selfEpoch——否则会把自己刚下指令时对面还没处理的 @ 吞掉。
     const isCmdMsg = (m) => !!selfId && m.sender_id === selfId &&
       isMention(m, selfId, names);
+    const progressIds = new Set((chat.progress?.ids || []).map(String));
     const selfEpoch = Math.max(0, ...messages
-      .filter((m) => selfId && m.sender_id === selfId && !isCmdMsg(m))
+      .filter((m) => selfId && m.sender_id === selfId && !isCmdMsg(m) &&
+        !progressIds.has(String(m.msg_id)))
       .map((m) => Number(m.ts_epoch) || 0));
     // 消息列表是最新在前；同秒多条时第一个最大的就是最新，不能只按 epoch 收口。
     let best = null;
@@ -596,6 +598,8 @@ export class Poller {
     const newIds = new Set();
     for (let i = 0; i < messages.length; i += 1) { // 最新在前
       const m = messages[i];
+      // 进度卡是本人发的 Card，不是“本人已回复”；不进 recent/selfEpoch/newIds。
+      if (progressIds.has(String(m.msg_id))) continue;
       const isNew = !baseline && (hasWatermark
         ? i < stopAt
         : (Number(m.ts_epoch) || 0) > floorEpoch);

@@ -1260,3 +1260,29 @@ test("rights: 群只读写发言权那一段，其余字节不变；stale 拒写
   assert.equal(out.body.ok, false);
   assert.equal(out.body.reason, "single_chat");
 });
+
+test("progress card global config and per-chat tri-state are exposed", async () => {
+  const { app, state } = makeApp();
+  let out = await app.handle("/api/config", "POST", null, { dsh: { progress_card: true } });
+  assert.equal(out.body.dsh.progress_card, true);
+  state.ensureChat("feishu", "oc_progress_api", { name: "示例", kind: "p2p" });
+  out = await app.handle("/api/chat/progress", "POST", null, {
+    platform: "feishu", chat_id: "oc_progress_api", mode: "on",
+  });
+  assert.equal(out.body.ok, true);
+  assert.equal(out.body.progress_card, true);
+  out = await app.handle("/api/chat/progress", "POST", null, {
+    platform: "feishu", chat_id: "oc_progress_api", mode: "off",
+  });
+  assert.equal(out.body.progress_card, false);
+  out = await app.handle("/api/chat/progress", "POST", null, {
+    platform: "feishu", chat_id: "oc_progress_api", mode: "inherit",
+  });
+  assert.equal(out.body.progress_card, null);
+  state.ensureChat("feishu", "oc_progress_group", { name: "群", kind: "group" });
+  out = await app.handle("/api/chat/progress", "POST", null, {
+    platform: "feishu", chat_id: "oc_progress_group", mode: "on",
+  });
+  assert.equal(out.body.ok, false);
+  assert.equal(out.body.reason, "single_chat");
+});

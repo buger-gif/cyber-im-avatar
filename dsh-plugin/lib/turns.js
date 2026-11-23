@@ -12,6 +12,7 @@ import path from "node:path";
 import { chatKey, RECENT_LIMIT } from "./state.js";
 import { ACK_EMOJI, MEDIA_ADAPTERS, MEDIA_LABELS, imageMediaType } from "./im.js";
 import { chatPersonId, personRefs, RIGHTS_TITLE } from "./profiles.js";
+import { ProgressCards } from "./progress.js";
 import * as workspaces from "./workspaces.js";
 
 const PLAT_LABEL = { feishu: "飞书", wecom: "企业微信", dingtalk: "钉钉" };
@@ -318,6 +319,16 @@ function sendModeNote(mode, { from = "" } = {}) {
  * 群「全部消息」不再写「非点名的群消息只看不回」——那是一条机械规则，会把
  * 「没人 @ 但任务确实是你的」判死；这里只说默认值，本批几条点你名由载荷每轮给。
  */
+function progressCardNote(enabled) {
+  if (!enabled) return "";
+  return "进度卡：本轮超过 2 分钟时插件会用你本人身份发一张 Card 2.0 并原地刷新。" +
+    "卡片自动显示“已做：查资料 N 次 · 改文件 N 次 · 执行操作 N 次”，不读命令、路径或正文。" +
+    "如果想让对方知道具体在做什么，在 assistant 消息里单独写一行（不会自动发到 IM）：" +
+    "[进度] 1/3 现在：核对数据；接着：整理结论。" +
+    "只写任务级动作，不写工具名、命令、文件名、路径、链接、ID、人名、金额或未确认结论。" +
+    "不写也有动作计数，不会只剩计时器。不要另发「收到/处理中」。";
+}
+
 function wakeModeNote(wakeMode, kind, from = "") {
   const switched = !!from && from !== wakeMode;
   if (wakeMode === "all" && kind === "group") {
@@ -350,6 +361,7 @@ export function buildWakePrompt(platform, chatName, chatId, messages, {
   wakeMode = "mention", resetMin = 0, kind = "group", single = false,
   sendMode = "draft", legacyPath = "", legacyHistory = "", announced = null,
   selfId = "", selfName = "", rightsCustom = false, silentCount = 0,
+  progressCard = false,
 } = {}) {
   const label = PLAT_LABEL[platform] || platform;
   const safeName = sanitizeUntrusted(chatName || chatId);
@@ -374,7 +386,10 @@ export function buildWakePrompt(platform, chatName, chatId, messages, {
   const prevSend = String(announced?.send_mode || "");
   const prevMode = String(announced?.wake_mode || "");
   const prevRights = typeof announced?.rights === "boolean" ? announced.rights : null;
+  const prevProgress = announced?.progress_card === true;
   const fresh = firstTurn || !announced;
+  const progressNote = (fresh || prevProgress !== (progressCard === true))
+    ? progressCardNote(progressCard === true) : "";
   const sendNote = (fresh || prevSend !== sendMode)
     ? sendModeNote(sendMode, { from: prevSend }) : "";
   // 发言权：默认口径就是有效口径；本群单独改过才给指针（spec 0051）。
@@ -397,7 +412,7 @@ export function buildWakePrompt(platform, chatName, chatId, messages, {
   // 记忆文件行都已在本会话里，不再每一轮重复；旧私聊工作本待并入行除外（文件消失即停）。
   if (!firstTurn) {
     return [lines.join("\n"), legacy, ...peopleBlock, cmdBlock, modeNote, batchNote,
-      silentNote, rightsNote, sendNote].filter(Boolean).join("\n");
+      silentNote, rightsNote, sendNote, progressNote].filter(Boolean).join("\n");
   }
 
   const parts = ["/cyber-im-avatar"];
@@ -431,6 +446,7 @@ export function buildWakePrompt(platform, chatName, chatId, messages, {
     : "按 skill 处理这通会话；记忆只改上面给出的会话工作本与人物档案，" +
       "不要写 state.json / env.json / media。");
   if (sendNote) parts.push(sendNote);
+  if (progressNote) parts.push(progressNote);
   return parts.join("\n");
 }
 
@@ -709,6 +725,7 @@ export class Turns {
     this.im = im;
     this.media = media;
     this.logger = logger;
+    this.progressCards = new ProgressCards({ state, im, logger });
     this.sessionController = null;
     this.sessions = null;
     this.registry = null;
@@ -730,6 +747,19 @@ export class Turns {
     this.announcedPolicy = new Map();
     // DSH 压缩会话后模型可能看不到已声明的口径：清空记录，下一轮补一次。
     this.compactionWatcher = null;
+    // 进程重启：上一进程留下的 running 进度卡补一次“已暂停”。
+    Promise.resolve().then(() => this.progressCards.sweep()).catch((e) => {
+      this.logger.warn?.(`[im-standin] progress sweep: ${e?.message || e}`);
+    });
+  }
+
+  /** 进度卡生效值：单聊三态覆盖全局；群聊/非飞书永远 false。 */
+  progressCardFor(chat) {
+    if (!chat || chat.platform !== "feishu" || chat.kind !== "p2p") return false;
+    if (chat.watching !== true || chat.blocked === true) return false;
+    if (chat.progress_card === true) return true;
+    if (chat.progress_card === false) return false;
+    return this.state.data.config?.dsh?.progress_card === true;
   }
 
   setHost(hostCtx, rootCtx = null) {
@@ -861,7 +891,7 @@ export class Turns {
     const key = `${platform}:${chatId}:${sid}`;
     let rec = this.announcedPolicy.get(key);
     if (!rec) {
-      rec = { send_mode: "", wake_mode: "", cmd: false, rights: null };
+      rec = { send_mode: "", wake_mode: "", cmd: false, rights: null, progress_card: null };
       this.announcedPolicy.set(key, rec);
       if (this.announcedPolicy.size > 64) {
         const oldest = this.announcedPolicy.keys().next().value;
@@ -906,6 +936,7 @@ export class Turns {
       rec.send_mode = "";
       rec.wake_mode = "";
       rec.cmd = false;
+      rec.progress_card = null;
     }
     for (const key of [...this.seenPeople.keys()]) {
       if (key.endsWith(suffix)) this.seenPeople.delete(key);
@@ -1213,6 +1244,7 @@ export class Turns {
       // 值班单点优先；还没固化（未值守/老数据）时跟随新建默认。
       const sendMode = current.send_mode || this.state.data.config.send_mode_default || "draft";
       const wakeMode = current.wake_mode || "mention";
+      const progressCard = this.progressCardFor(current);
       // 发言权：默认口径一直有效，本群写了自己的那一段就用它（spec 0051）。不改变发送方式。
       const rights = current.kind === "group"
         ? this.profiles.rightsFor(current.platform, current, selfId)
@@ -1226,6 +1258,7 @@ export class Turns {
       const rememberAnnounced = () => {
         announced.send_mode = sendMode;
         announced.wake_mode = wakeMode;
+        announced.progress_card = progressCard;
         if (rights.applicable) announced.rights = rightsCustom;
         if (hasCmd) announced.cmd = true;
       };
@@ -1242,6 +1275,7 @@ export class Turns {
             wakeMode, resetMin, kind: current.kind,
             sendMode, dutyContext, announced,
             selfId, selfName, rightsCustom,
+            progressCard,
             silentCount: current.kind === "group" ? silentNoMention(current) : 0,
           });
       const message = await makeUserMessage(prompt, media.parts);
@@ -1705,6 +1739,7 @@ export class Turns {
       };
 
       const finish = (result) => {
+        if (!warm && !desk) this.progressCards.finish(chat.platform, chat.chat_id, handle.turnId, result);
         if (handle.cancelled && !handle.timedOut) {
           const wasActive = this.active.get(key)?.turnId === handle.turnId;
           if (wasActive) {
@@ -1805,6 +1840,7 @@ export class Turns {
 
       const collect = (event) => {
         const type = event?.type;
+        if (!warm && !desk) this.progressCards.note(chat.platform, chat.chat_id, event);
         if (type === "user/message") {
           if (event?.data?.id && event.data.id === handle.promptId) {
             promptSeen = true;
@@ -1889,6 +1925,7 @@ export class Turns {
       }
       // 会话已启动、载荷已送出：现在才点回执；失败不影响本轮。
       if (!desk) this.sendAck(chat, ack);
+      if (!warm && !desk) this.progressCards.begin({ chat, turnId: handle.turnId });
       watchdog = turnWatchdog({
         stallSec: timeoutSec,
         capSec,
@@ -1949,6 +1986,7 @@ export class Turns {
   }
 
   stopAll() {
+    this.progressCards?.stopAll();
     for (const handle of this.active.values()) {
       handle.cancelled = true;
       this.cancelHandle(handle);

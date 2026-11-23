@@ -33,6 +33,8 @@
 | timer | number | 定时拉：-1 明确不拉 / 0 跟随默认 / 1 强制拉；群默认 -1 |
 | wake_mode | string | 关注程度：`mention`=只有 @ 我唤醒（群默认；私聊=只认 @，其它消息记知会）/ `all`=全部消息都唤醒（群里非 @ 也进批次、只看不回；私聊默认，等于每条都唤醒）。用户的选择，不随 `watching` 清零：切「不盯」（`timer=-1`）时保留，下次开启 / 重新加入值守沿用 |
 | send_mode | string | 值班单点发送方式：`""`=还没设过，首次加入值守时固化为当时的 `config.send_mode_default`；`draft`=草稿审批 / `auto`=全自动。显式值不随全局默认变化。存量已值守会话加载时按旧全局值/默认值补齐；未值守会话留空 |
+| progress_card | bool/null | 私聊进度卡单点覆盖：`null`=跟随 `config.dsh.progress_card`；`true`=这个私聊开；`false`=这个私聊关。只有 p2p 使用；群聊忽略（spec 0052） |
+| progress | object | 最近一张私聊进度卡：`msg_id` / `turn_id` / `state`（`""`/`running`/`done`/`failed`/`cancelled`）/ `created_at` / `updated_at` / `last_error` / `counts`（查资料/改文件/执行操作/并行处理累计）/ `ids`（最近 5 个卡片消息 ID，轮询器据此排除本人消息）。老 state 缺省为空对象 |
 | last_wake_at | number | 上一次成功唤醒的墙钟时刻（epoch 秒）；群的 `all` 模式用它做合并窗口，失败不写 |
 | last_wake_epoch | number | 上一次唤醒批次里最大的 `ts_epoch`；群的 `all` 模式按它去重，同一批不会投递两次 |
 | workspace | string | 显式绑定的工作区路径；空=未绑定，turn 跟随 DSH 默认工作区 |

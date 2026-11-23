@@ -16,7 +16,7 @@
 | GET | `/api/inbox` | `filter`、`limit`、`group` | 待回聚合；默认按会话聚合，`group=msg` 逐条；只从每会话最近 10 条派生（面板自 spec 0032 起不再展示） |
 | GET | `/api/inbox/cleanup` | — | 把未值守会话的待回批量标成 ignored |
 | GET | `/api/thread` | `platform`、`chat_id`、`fetch`、`limit` | 会话正文：默认在线拉 30 条；`fetch=1` 先补拉分类（**只读，不唤醒**；冷却中直接用本地指针）；失败回退本地 10 条并带 `offline` / `error`；每条带 `skip`（没唤醒的原因，空串=进过批次） |
-| GET | `/api/chats` | — | 会话清单，含 `blocked` / `timer` / `timed` / `watching` / `wake_mode` / `send_mode` / `mentionable` / `dsh_session` / `session_turns` / `turn_state` / `duty` / `command`（含 `reply` 回执）；`send_mode` 是该值班实际生效的 `draft` / `auto`；`mentionable=false` 表示该平台判不了 @（面板置灰「只盯 @我」）；`command` 是最近一次 IM 启动指令结果（见契约 02）；`silent` = 最近未唤醒的消息条数与主因 `{count, skip}`（`skip` 见契约 02 的 `recent[].skip`）。工作区字段见下 |
+| GET | `/api/chats` | — | 会话清单，含 `blocked` / `timer` / `timed` / `watching` / `wake_mode` / `send_mode` / `progress_card` / `progress` / `mentionable` / `dsh_session` / `session_turns` / `turn_state` / `duty` / `command`（含 `reply` 回执）；`send_mode` 是该值班实际生效的 `draft` / `auto`；`mentionable=false` 表示该平台判不了 @（面板置灰「只盯 @我」）；`command` 是最近一次 IM 启动指令结果（见契约 02）；`silent` = 最近未唤醒的消息条数与主因 `{count, skip}`（`skip` 见契约 02 的 `recent[].skip`）。工作区字段见下 |
 | GET | `/api/duty` | — | 值守候选：`enabled`、`counts`（排队/判断中/试用/失败/忽略/值守/复核 + 配额与上限）、`desk`（session_id/workspace/session_turns/session_max_turns/last_turn/last_error/baseline_at/full_baseline_at/last_sweep_at）、`last_sweep`、`items`（每个非 none 的会话 + duty） |
 | GET | `/api/send` | `platform`、`chat_id`、`text`、`msg_id` | 以本人身份发出；不写发送历史 |
 | GET | `/api/state` | `platform`、`msg_id`、`state`、`chat_id` | 改最近 10 条里的一条：new / opened / replied / ignored；更早的返回 `not_cached` |
@@ -59,7 +59,7 @@
 
 | 方法 | 路径 | 说明 |
 | --- | --- | --- |
-| POST | `/api/config` | 写配置；`poll.interval_min` 夹到 ≥10；`send_mode_default` 只接受 `draft` / `auto`，非法值回 `draft`（只影响之后新加入值守的会话）；`command.enabled` / `command.start_keyword` / `command.reply_enabled` / `command.reply_text` 一并合并；启用时关键词不能为空、最多 20 字，回执文案最多 200 字，否则整次拒绝 |
+| POST | `/api/config` | 写配置；`poll.interval_min` 夹到 ≥10；`send_mode_default` 只接受 `draft` / `auto`，非法值回 `draft`（只影响之后新加入值守的会话）；`dsh.progress_card` 与已有 `dsh.*` 合并（默认 false）；`command.enabled` / `command.start_keyword` / `command.reply_enabled` / `command.reply_text` 一并合并；启用时关键词不能为空、最多 20 字，回执文案最多 200 字，否则整次拒绝 |
 | POST | `/api/platforms` | 启用 / 停用平台：入参 `platform`、`enabled`；只接受 `feishu` / `wecom` / `dingtalk`，写回 `config.platforms`（按固定顺序去重） |
 | POST | `/api/targets/profile` | 覆盖写该会话的记忆文件：p2p 写人物档案（同一份，不另存工作本），群写会话工作本；入参 `platform`、`chat_id`（优先）/`name`（兼容旧面板）、`text`（≤12KB，超限拒绝不截断） |
 | POST | `/api/persons/profile` | 覆盖写人物档案；入参 `platform`、`person_id`、`name`、`text`（≤12KB）、`base_mtime`（可选）；mtime 更新过则回 `{ok:false, reason:"stale"}` 不写 |
@@ -67,6 +67,7 @@
 | POST | `/api/chat/wake` | 手动唤醒：可带 `workspace` 先落工作区；把该会话最近待回交给 agent，不等新消息；`running` / `blocked` / 未值守时拒绝 |
 | POST | `/api/duty/triage` | 手动让值守台判断：入参 `platform`、`chat_id`、`force`；只接受未值守、未屏蔽、非 queued/triaging；写 `trigger=manual` 的新事件，下一次 tick 起分诊 turn；`force` 可重排 ignore/failed，关闭自动分诊时也允许手动 |
 | POST | `/api/chat/send-mode` | 值班单点发送方式：入参 `platform`、`chat_id`、`mode`（`draft` / `auto`）；写 `chats[].send_mode`，返回 `{ok, send_mode, chat}`；会话不存在回 `not_found`。这个值不会被之后改 `send_mode_default` 覆盖 |
+| POST | `/api/chat/progress` | 私聊进度卡单点覆盖：入参 `platform`、`chat_id`、`mode`（`inherit` / `on` / `off`）；写 `chats[].progress_card` 为 null / true / false，返回 `{ok, progress_card, chat}`；群聊回 `{ok:false, reason:"single_chat"}`（spec 0052） |
 | POST | `/api/rights` | 面板改发言权（spec 0051）：入参 `platform`、`chat_id`、`text`（字符串）、`base_mtime`（可选）。只替换那一小节，工作本其余字节原样保留；与磁盘 mtime 不一致回 `stale` 不写；`text` 为空 = 清空该小节（回到默认口径）；小节标题丢失时在文末补回；正文超 8KB 或整份超 12KB 拒绝；私聊回 `single_chat`；原子写、文件 600。成功回与 GET 同形（多 `ok`） |
 | POST | `/api/digest` | 面板整份覆盖写日报：入参 `date`（默认今天）、`text`（必填字符串）、`base_mtime`（可选，面板加载时的 mtime，空态为 0）；空内容 = 删文件；超 256KB 拒绝不截断；带了 `base_mtime` 且与磁盘 mtime 不一致（含新建 / 删除）回 `{ok:false, reason:"stale"}` 不写，省略才显式覆盖；成功回与 GET 同形（多 `ok`），目录 700、文件 600、临时文件 + rename |
 

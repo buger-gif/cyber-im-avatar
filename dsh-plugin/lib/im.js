@@ -62,6 +62,13 @@ export const ADAPTERS = {
       "--msg-type", "text", "--text", "{text}", "--as", "user"],
     cmd_send_user: ["im", "+messages-send", "--user-id", "{chat_id}",
       "--msg-type", "text", "--text", "{text}", "--as", "user"],
+    // 私聊进度卡（spec 0052）：本人身份发 Card 2.0，再用同一身份 patch。
+    cmd_send_card: ["im", "+messages-send", "--chat-id", "{chat_id}",
+      "--msg-type", "interactive", "--content", "{content}", "--as", "user"],
+    cmd_send_card_user: ["im", "+messages-send", "--user-id", "{chat_id}",
+      "--msg-type", "interactive", "--content", "{content}", "--as", "user"],
+    cmd_patch_card: ["im", "messages", "patch", "--message-id", "{msg_id}",
+      "--data", "{data}", "--as", "user"],
     // 表情回执走原生 API（没有 + 快捷命令）；--params/--data 是 lark-cli 的原始入参形状。
     cmd_reaction: ["im", "reactions", "create",
       "--params", "{\"message_id\":\"{msg_id}\"}",
@@ -939,6 +946,38 @@ export class Adapter {
     return { ok: true, message_id: dig(json, [["data", "message_id"], ["message_id"]]) || "" };
   }
 
+  /** 本人身份发 Card 2.0；必须拿到 message_id，拿不到就无法从轮询里排除。 */
+  async sendCard(chatId, card, { idempotencyKey = "" } = {}) {
+    if (!this.ad.cmd_send_card) return { ok: false, unsupported: true, error: "card_unavailable" };
+    let content;
+    try { content = JSON.stringify(card); } catch (e) { return { ok: false, error: `card_json: ${e?.message || e}` }; }
+    const tmpl = String(chatId).startsWith("ou_") && this.ad.cmd_send_card_user
+      ? this.ad.cmd_send_card_user : this.ad.cmd_send_card;
+    const args = this.argv(tmpl, { chat_id: chatId, content });
+    if (idempotencyKey) args.push("--idempotency-key", String(idempotencyKey).slice(0, 50));
+    const { rc, json, raw } = await this.run(args, 30);
+    if (rc !== 0) return { ok: false, error: redact(raw || `rc=${rc}`, 400) };
+    if (json && json.ok === false) return { ok: false, error: redact(JSON.stringify(json), 400) };
+    const messageId = String(dig(json, [["data", "message_id"], ["message_id"]]) || "");
+    if (!messageId) return { ok: false, error: "missing_message_id" };
+    return { ok: true, message_id: messageId, error: "" };
+  }
+
+  /** patch 本人发出的进度卡；--data 里的 content 是卡片 JSON 字符串。 */
+  async patchCard(msgId, card) {
+    if (!this.ad.cmd_patch_card) return { ok: false, unsupported: true, error: "card_unavailable" };
+    const id = String(msgId || "");
+    if (!id) return { ok: false, error: "missing_msg_id" };
+    let data;
+    try { data = JSON.stringify({ content: JSON.stringify(card) }); } catch (e) {
+      return { ok: false, error: `card_json: ${e?.message || e}` };
+    }
+    const { rc, json, raw } = await this.run(this.argv(this.ad.cmd_patch_card, { msg_id: id, data }), 20);
+    if (rc !== 0) return { ok: false, error: redact(raw || `rc=${rc}`, 400) };
+    if (json && json.ok === false) return { ok: false, error: redact(JSON.stringify(json), 400) };
+    return { ok: true, error: "" };
+  }
+
   /**
    * 给一条消息点表情回执。只有配了 cmd_reaction 的平台才走这里；
    * 失败只回错误字符串，由上层降级为日志，不影响 turn。
@@ -1103,6 +1142,31 @@ export class IM {
     try {
       return await adapter.react(msgId, emoji);
     } catch (e) {
+      return { ok: false, error: `${e?.name || "Error"}: ${e?.message || e}` };
+    }
+  }
+
+  /** 私聊进度卡：只飞书；适配层异常只回错误字符串。 */
+  async sendCard(platform, chatId, card, opts = {}) {
+    if (platform !== "feishu") return { ok: false, unsupported: true, error: "card_unavailable" };
+    let adapter;
+    try { adapter = this.adapter(platform); } catch (e) {
+      return { ok: false, unsupported: true, error: `adapter: ${e?.message || e}` };
+    }
+    if (!adapter.ad?.cmd_send_card) return { ok: false, unsupported: true, error: "card_unavailable" };
+    try { return await adapter.sendCard(chatId, card, opts); } catch (e) {
+      return { ok: false, error: `${e?.name || "Error"}: ${e?.message || e}` };
+    }
+  }
+
+  async patchCard(platform, msgId, card) {
+    if (platform !== "feishu") return { ok: false, unsupported: true, error: "card_unavailable" };
+    let adapter;
+    try { adapter = this.adapter(platform); } catch (e) {
+      return { ok: false, unsupported: true, error: `adapter: ${e?.message || e}` };
+    }
+    if (!adapter.ad?.cmd_patch_card) return { ok: false, unsupported: true, error: "card_unavailable" };
+    try { return await adapter.patchCard(msgId, card); } catch (e) {
       return { ok: false, error: `${e?.name || "Error"}: ${e?.message || e}` };
     }
   }

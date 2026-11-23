@@ -1912,3 +1912,21 @@ test("C 型态：没点你名的消息不占唤醒，但下一轮带条数提示
   });
   assert.doesNotMatch(none, /另有 \d+ 条没点你名/);
 });
+
+test("progress card policy is declared once when enabled", () => {
+  const once = buildWakePrompt("feishu", "示例对象", "oc_dm", recent(1), {
+    firstTurn: true, progressCard: true,
+  });
+  assert.match(once, /进度卡/);
+  assert.match(once, /已做：查资料/);
+  assert.match(once, /\[进度\] 1\/3 现在/);
+  const again = buildWakePrompt("feishu", "示例对象", "oc_dm", recent(1), {
+    firstTurn: false, progressCard: true,
+    announced: { send_mode: "draft", wake_mode: "mention", cmd: false, rights: false, progress_card: true },
+  });
+  assert.doesNotMatch(again, /进度卡/);
+  const off = buildWakePrompt("feishu", "示例对象", "oc_dm", recent(1), {
+    firstTurn: true, progressCard: false,
+  });
+  assert.doesNotMatch(off, /进度卡/);
+});

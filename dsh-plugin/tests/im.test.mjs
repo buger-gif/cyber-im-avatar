@@ -427,3 +427,43 @@ test("fetchMessages does not retry our own timeout kill (rc 124)", async () => {
   assert.equal(r.ok, false);
   assert.match(r.error, /网络传输失败/);
 });
+
+test("sendCard sends a user interactive card and requires a message id", async () => {
+  const a = new Adapter("feishu", { dir: "/nonexistent-im-test" });
+  let seen = null;
+  a.run = async (args) => {
+    seen = args;
+    return { rc: 0, raw: "", json: { ok: true, data: { message_id: "om_card" } } };
+  };
+  const r = await a.sendCard("oc_dm", { schema: "2.0" }, { idempotencyKey: "progress:x" });
+  assert.equal(r.ok, true);
+  assert.equal(r.message_id, "om_card");
+  assert.ok(seen.includes("interactive"));
+  assert.equal(seen[seen.indexOf("--as") + 1], "user");
+  assert.equal(seen[seen.indexOf("--idempotency-key") + 1], "progress:x");
+});
+
+test("sendCard without message id fails; patchCard wraps card JSON in content", async () => {
+  const a = new Adapter("feishu", { dir: "/nonexistent-im-test" });
+  a.run = async () => ({ rc: 0, raw: "", json: { ok: true, data: {} } });
+  const r = await a.sendCard("oc_dm", { schema: "2.0" });
+  assert.equal(r.ok, false);
+  assert.equal(r.error, "missing_message_id");
+
+  let seen = null;
+  a.run = async (args) => {
+    seen = args;
+    return { rc: 0, raw: "", json: { ok: true, data: {} } };
+  };
+  const p = await a.patchCard("om_card", { schema: "2.0", body: {} });
+  assert.equal(p.ok, true);
+  const data = JSON.parse(seen[seen.indexOf("--data") + 1]);
+  assert.equal(typeof data.content, "string");
+  assert.deepEqual(JSON.parse(data.content), { schema: "2.0", body: {} });
+});
+
+test("IM.sendCard/patchCard are feishu-only", async () => {
+  const im = new IM({ dir: "/nonexistent-im-test" });
+  assert.equal((await im.sendCard("wecom", "oc_dm", {})).unsupported, true);
+  assert.equal((await im.patchCard("wecom", "om_card", {})).unsupported, true);
+});

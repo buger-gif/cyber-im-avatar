@@ -53,6 +53,7 @@ export const POST_ROUTES = {
   "/api/chat/session/reset": "chatSessionReset",
   "/api/chat/wake": "chatWake",
   "/api/chat/send-mode": "chatSendMode",
+  "/api/chat/progress": "chatProgress",
   "/api/duty/triage": "dutyTriage",
   "/api/digest": "digestWrite",
   "/api/rights": "rightsWrite",
@@ -618,6 +619,25 @@ export class App {
       ok: true, send_mode: r.chat.send_mode,
       chat: this.publicChat(r.chat),
     };
+  }
+
+  /** 私聊进度卡单点覆盖：inherit / on / off；群聊不适用。 */
+  async chatProgress(q, body = {}) {
+    const platform = pick(q, body, "platform");
+    const chatId = pick(q, body, "chat_id");
+    const mode = String(pick(q, body, "mode") || "");
+    if (!platform || !chatId) return { ok: false, reason: "bad_request" };
+    if (!["inherit", "on", "off"].includes(mode)) {
+      return { ok: false, reason: "mode 必须是 inherit / on / off" };
+    }
+    if (!this.supported(platform)) return this.unsupported(platform);
+    const chat = this.state.ensureChat(platform, chatId, {
+      name: pick(q, body, "name"), kind: pick(q, body, "kind"),
+    });
+    if (chat.kind !== "p2p") return { ok: false, reason: "single_chat" };
+    chat.progress_card = mode === "inherit" ? null : mode === "on";
+    this.state.save();
+    return { ok: true, progress_card: chat.progress_card, chat: this.publicChat(chat) };
   }
 
   async chatTimer(q, body = {}) {

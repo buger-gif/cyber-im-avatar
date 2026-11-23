@@ -1591,3 +1591,21 @@ test("fetch failure keeps last_error one line and puts the raw detail in the hos
   assert.ok(poller.errors.every((e) => !e.msg.includes("\n")));
   assert.ok(warns.some((w) => w.includes("fetch feishu/oc_dm") && w.includes("network")));
 });
+
+test("progress card is excluded from selfEpoch and recent", async () => {
+  const { state, poller } = setup();
+  const chat = state.ensureChat("feishu", "oc_progress_poll", { name: "客户", kind: "p2p" });
+  chat.watching = true;
+  chat.last_epoch = 1000;
+  chat.last_msg_id = "";
+  chat.progress = { ...chat.progress, ids: ["om_card"] };
+  const messages = [
+    msg("om_card", 1030, { sender_id: "ou_me", sender_name: "我" }),
+    msg("om_new", 1020),
+  ];
+  const r = poller.process(chat, messages, { baseline: false, platform: "feishu" });
+  assert.equal(r.batch.length, 1);
+  assert.equal(r.batch[0].msg_id, "om_new");
+  assert.equal(r.batch[0].state, "new");
+  assert.equal(chat.recent.some((m) => m.msg_id === "om_card"), false);
+});

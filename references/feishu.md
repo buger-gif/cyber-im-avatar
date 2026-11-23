@@ -36,6 +36,25 @@
 - 需要 `im:message.reactions:write_only` 授权。缺权限时命令非 0 退出，消息本身不受影响；
   重登一次 `lark-cli auth login` 会按当前命令重新要权限。
 
+## 编辑 / 撤回本人消息
+
+- **用户身份不能编辑文本**：`+messages-edit` 的 `--as` 只接受 `bot`；`--as user` 在参数
+  校验阶段就拒。用 `lark-cli api PUT /open-apis/im/v1/messages/<id> --as user` 实测返回
+  `230027`（缺权限 / 用户授权 / 租户策略）；官方文档的 Authorization 也只列
+  `tenant_access_token`。
+- `lark-cli im messages patch` 支持 `--as user`，但只接受 `interactive` 卡片；对文本消息
+  返回 `230001 This message is NOT a card`。
+- 飞书客户端里的“编辑”是客户端内部能力，不在 OpenAPI / lark-cli 的用户 token 通路上；
+  要复用它就得代管 web 登录态，超出本项目「只复用 CLI 登录态」的边界。
+- 唯一能用用户 token 原地更新的是**本人发出的 interactive 卡片**：
+  `+messages-send --as user --msg-type interactive` → `im messages patch --as user`；
+  要求发送 / 更新身份一致、卡片 `config.update_multi=true`、14 天内、单条 5 QPS。
+  实测：本人账号发卡成功（`sender_type=user`、`is_agent=false`），随后 patch 成功，
+  卡片内容原地更新；不是应用号消息。
+- 撤回重发（`im messages delete --as user` + `+messages-send`）不是编辑：对方会看到
+  “撤回了一条消息”，每次更新都是一条新通知；撤回还受企业管理员设置的时限约束
+  （超时返回 `230009`），长任务可能已经撤不回。
+
 ## 媒体资源
 
 - 正文里的资源标记：图片是 `img_xxx`（可能显示为图片标记或 `[image: img_xxx]`），文件/音频/视频

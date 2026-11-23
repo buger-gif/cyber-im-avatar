@@ -509,3 +509,26 @@ test("recent rows keep only known skip reasons", () => {
   assert.equal(chat.recent.find((m) => m.msg_id === "s2").skip, "", "未知原因归空，不污染聚合");
   assert.equal(chat.recent.find((m) => m.msg_id === "s3").skip, "", "进批次的行没有原因码");
 });
+
+test("progress card config defaults off and chat override is tri-state", () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "im-state-progress-"));
+  const state = new State(dir);
+  state.load();
+  assert.equal(state.data.config.dsh.progress_card, false);
+  const chat = state.ensureChat("feishu", "oc_progress_state", { name: "示例", kind: "p2p" });
+  assert.equal(chat.progress_card, null);
+  assert.deepEqual(chat.progress.ids, []);
+  assert.deepEqual(chat.progress.counts, { research: 0, files: 0, ops: 0, parallel: 0 });
+  chat.progress_card = true;
+  state.save();
+  const again = new State(dir);
+  again.load();
+  assert.equal(again.getChat("feishu", "oc_progress_state").progress_card, true);
+  again.getChat("feishu", "oc_progress_state").progress_card = false;
+  again.save();
+  const third = new State(dir);
+  third.load();
+  assert.equal(third.getChat("feishu", "oc_progress_state").progress_card, false);
+  assert.equal(normalizeConfig({ dsh: { progress_card: "false" } }).dsh.progress_card, false);
+  assert.equal(normalizeConfig({ dsh: { progress_card: "true" } }).dsh.progress_card, true);
+});
