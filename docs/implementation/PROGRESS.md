@@ -5,12 +5,13 @@
 
 ## 更新时间
 
-2026-11-23（0054 服务对象筛选与搜索已实现并归档，待真机；0055 文档收敛已归档，active 清空；0052 / 0053 真机项挂账；0.24.2 仍是 npm latest）
+2026-11-23（0.25.0 已发布：0052 私聊进度卡 / 0053 引用消息 / 0054 服务对象筛选；npm latest 0.25.0，市场索引已指向；三项真机验收挂账）
 
 ## 最近批次
 
 | 日期 | 主题 | 证据 |
 | --- | --- | --- |
+| 2026-11-23 | 0.25.0 发布：0052 / 0053 / 0054 进版；Trusted Publishing 成功（run 45140421056，3m30s）；npm latest 0.25.0（08:42:54Z，tarball 200）；tag `v0.25.0`；市场索引指向 0.25.0 | `CHANGELOG.md`、`dsh-plugin/package.json`、`dsh-plugin/market/index.json`、[run 45140421056](https://github.com/buger-gif/cyber-im-avatar/actions/runs/45140421056) |
 | 2026-11-23 | 服务对象筛选与搜索（0054，已归档，真机待验）：群聊 / 人物两段各加名称搜索 + 状态 chips + 平台下拉 + facet 计数；空态可一键复位；纯前端、不改接口 | `dsh-plugin/web/panel.js`、`dsh-plugin/lib/client.js`、`docs/specs/archive/0054-服务对象筛选与搜索.md`、`CHANGELOG.md` |
 | 2026-11-23 | 文档收敛（0055）：16 个已实现 spec + plan 归档；active 上限 2、plan 按需、目标版本闸进 `verify_docs` | `docs/specs/README.md`、`docs/AGENTS.md §4`、`scripts/verify_docs.py`、`docs/specs/archive/README.md` |
 | 2026-11-23 | 引用消息进载荷（0053，已归档，真机待验）：飞书 `reply_to` + `+messages-mget` 补原文，载荷加 `↪ 引用` 行；取不到明说；企微 / 钉钉不接 | `dsh-plugin/lib/{im,state,poller,turns}.js`、契约 01/02、`docs/specs/archive/0053-引用消息进载荷.md` |
@@ -22,8 +23,8 @@
 
 - **active 已清空**：0055 归档后 `docs/specs/active/` 为空，下一个 spec 从 0056 起；
   新开之前先确认手上没有在办项（上限 2，`verify_docs.py` 会拦）。
-- **0.25.0 未发布**：0052 / 0053 代码已提交、自动测试绿，spec 已归档；真机项见下面挂账 1–2。
-  发版时把 `CHANGELOG.md` 的 `## 未发布` 转正、改 `dsh-plugin/package.json`、跑全量 gate、打 tag。
+- **0.25.0 已发布**：npm latest 0.25.0（发布 2026-11-23T08:42:54Z，tag `v0.25.0`，市场索引
+  已指向）；三项真机验收见挂账 1–3，验出问题按新 spec 开，不重开旧 spec。
 - **市场收录待合并**：条目 PR [#11669](https://github.com/awesome-dsh-plugin/awesome-dsh-plugin/pull/11669)。
 - **验证环境**：3080 用 `IM_STANDIN_DIR=/tmp/im-standin-accept` 隔离状态；没有向真实客户外发。
 
@@ -46,10 +47,9 @@
 
 1. 刷新真实面板确认 0054 的搜索 / 筛选（挂账 3）；验完划掉。
 2. 真机验 0052 / 0053（挂账 1 / 2）；验出问题按新 spec 开，不重开旧 spec。
-3. 发 0.25.0：未发布小节转正 → 改版本 → 全量 gate → tag → 市场索引。
-4. 等真实客户消息 / 媒体命中；只观察，不主动给真实客户发消息。
-5. 用户确认后清理历史待回。
-6. 钉钉补真人闭环：启用，跑「命中 → 草稿 → 发送 → 重挂」。
+3. 等真实客户消息 / 媒体命中；只观察，不主动给真实客户发消息。
+4. 用户确认后清理历史待回。
+5. 钉钉补真人闭环：启用，跑「命中 → 草稿 → 发送 → 重挂」。
 
 ## 规则性提醒
 
