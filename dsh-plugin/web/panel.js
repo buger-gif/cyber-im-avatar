@@ -189,21 +189,30 @@
     ".ims-habitchip{font-size:11px;color:var(--fg2);background:var(--bg);border:1px solid var(--line);border-radius:999px;",
     "padding:2px 9px;max-width:42ch;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}",
     /* 记忆文件：「群聊」看会话工作本、「人物」看人物档案（单聊只有这一份），分段与可点小 chip */
-    ".ims-seg{display:flex;gap:6px;padding:10px var(--pad) 2px;flex-wrap:wrap;align-items:center;min-width:0}",
-    ".ims-seg-btn{padding:4px 12px;border-radius:999px;border:1px solid var(--line);background:transparent;color:var(--fg3);",
-    "font-size:12px;cursor:pointer;white-space:nowrap;min-width:0}",
-    ".ims-seg-btn:hover{color:var(--fg);border-color:var(--line2)}",
-    ".ims-seg-btn.on{border-color:var(--accent);color:var(--accent);background:color-mix(in srgb,var(--accent) 9%,transparent);font-weight:600}",
-    /* 服务对象列表的搜索 / 筛选：纯前端派生，不写 state；只在这里放控件样式 */
-    ".ims-filterbox{display:flex;flex-direction:column;gap:7px;min-width:0}",
-    ".ims-filters{display:flex;gap:6px;flex-wrap:wrap;align-items:center;min-width:0}",
-    ".ims-fbtn{padding:2px 9px;border-radius:999px;border:1px solid var(--line);background:transparent;",
-    "color:var(--fg3);font:inherit;font-size:11px;line-height:1.65;cursor:pointer;white-space:nowrap}",
-    ".ims-fbtn:hover{color:var(--fg);border-color:var(--line2)}",
-    ".ims-fbtn.on{border-color:var(--accent);color:var(--accent);",
-    "background:color-mix(in srgb,var(--accent) 9%,transparent);font-weight:600}",
-    ".ims-fbtn:focus-visible{outline:2px solid var(--blue);outline-offset:1px}",
-    ".ims-fsel{height:26px;font-size:11px;flex:0 0 auto;max-width:120px;margin-left:auto}",
+    ".ims-seg{display:flex;gap:2px;padding:10px var(--pad) 2px;flex-wrap:wrap;align-items:center;min-width:0}",
+    ".ims-seg-btn{padding:0 10px;border-radius:var(--r-sm);border:0;background:transparent;color:var(--fg3);",
+    "font:inherit;font-size:12.5px;font-weight:500;line-height:20px;height:30px;cursor:pointer;",
+    "white-space:nowrap;min-width:0;display:inline-flex;align-items:center;gap:5px}",
+    ".ims-seg-btn:hover{background:var(--hover);color:var(--fg)}",
+    ".ims-seg-btn.on{background:var(--sunk);color:var(--fg);font-weight:600}",
+    ".ims-seg-btn.on .ims-fcount{color:var(--fg2)}",
+    /* 服务对象列表的搜索 / 筛选：纯前端派生，不写 state。
+       视觉走 DSH 的紧凑控件语言：无描边、悬停才有淡底、选中加粗并铺 hover 填色 */
+    ".ims-filterbox{display:flex;flex-direction:column;gap:6px;min-width:0}",
+    ".ims-filters{display:flex;gap:2px;flex-wrap:wrap;align-items:center;min-width:0}",
+    ".ims-fbtn{appearance:none;border:0;background:transparent;color:var(--fg3);",
+    "font:inherit;font-size:12px;font-weight:500;line-height:20px;height:28px;padding:0 8px;",
+    "border-radius:var(--r-sm);cursor:pointer;white-space:nowrap;",
+    "display:inline-flex;align-items:center;gap:5px}",
+    ".ims-fbtn:hover{background:var(--hover);color:var(--fg)}",
+    ".ims-fbtn.on{background:var(--sunk);color:var(--fg);font-weight:600}",
+    ".ims-fbtn:focus-visible{outline:2px solid var(--blue);outline-offset:-1px}",
+    ".ims-fcount{font-size:10.5px;font-weight:500;color:var(--fg3);font-variant-numeric:tabular-nums}",
+    ".ims-fbtn.on .ims-fcount{color:var(--fg2)}",
+    ".ims-fbtn.zero .ims-fcount{opacity:.55}",
+    ".ims-fsel{height:28px;font-size:12px;flex:0 0 auto;max-width:124px;margin-left:auto;",
+    "border-color:transparent;background:transparent;color:var(--fg2)}",
+    ".ims-fsel:hover{border-color:var(--line);color:var(--fg)}",
     ".ims-filterbox .ims-inp{height:28px;font-size:12px}",
     ".ims-empty .ims-btn{margin-top:7px}",
     /* 发送方式：全局两段开关；自动档用 warn 色，和「已屏蔽/异常」区分开但仍醒目 */
@@ -2567,13 +2576,15 @@
       var chipBox = h("div", { class: "ims-filters" });
       var chips = [];
       (o.specs || []).forEach(function (spec) {
-        var btn = h("button", { class: "ims-fbtn", type: "button", title: spec[2] || spec[1] }, spec[1]);
+        var num = h("span", { class: "ims-fcount" });
+        var btn = h("button", { class: "ims-fbtn", type: "button", title: spec[2] || spec[1] },
+          spec[1], num);
         btn.addEventListener("click", function () {
           if (f.kind === spec[0]) return;
           f.kind = spec[0];
           sync();
         });
-        chips.push({ kind: spec[0], label: spec[1], el: btn });
+        chips.push({ kind: spec[0], label: spec[1], el: btn, num: num });
         chipBox.appendChild(btn);
       });
 
@@ -2604,8 +2615,8 @@
         clearBtn.style.display = String(f.q || "").trim() ? "" : "none";
         chips.forEach(function (c) {
           var n = facetCount(c.kind);
-          c.el.textContent = c.label + " · " + n;
-          c.el.className = "ims-fbtn" + (f.kind === c.kind ? " on" : "");
+          c.num.textContent = String(n);
+          c.el.className = "ims-fbtn" + (f.kind === c.kind ? " on" : "") + (n ? "" : " zero");
           c.el.setAttribute("aria-pressed", f.kind === c.kind ? "true" : "false");
         });
         if (sel) sel.value = f.platform || "";
@@ -2658,7 +2669,7 @@
       var bar = h("div", { class: "ims-seg" });
       [["targets", "群聊", bookRows().length, S.targetsLoaded],
        ["persons", "人物", (S.persons || []).length, S.personsLoaded]].forEach(function (d) {
-        bar.appendChild(h("button", {
+        var btn = h("button", {
           class: "ims-seg-btn" + (S.personSegment === d[0] ? " on" : ""), type: "button",
           title: d[0] === "targets" ? "按群聊看：会话工作本" : "按人看：人物档案（单聊与群共用）",
           onclick: function () {
@@ -2667,7 +2678,9 @@
             paintBody();
             if (d[0] === "persons") loadPersons(); else loadTargets();
           }
-        }, d[1] + (d[3] ? " · " + d[2] : "")));
+        }, d[1]);
+        if (d[3]) btn.appendChild(h("span", { class: "ims-fcount", text: String(d[2]) }));
+        bar.appendChild(btn);
       });
       bar.appendChild(h("span", { class: "ims-grow" }));
       bar.appendChild(h("span", { class: "ims-hint", text: "单聊只有一份人物档案；群才有会话工作本" }));
