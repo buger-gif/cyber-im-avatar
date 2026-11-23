@@ -3,7 +3,7 @@
 > 状态: 已验收
 > 编号: 0018
 > 版本: 0.8.x
-> 关联: `docs/specs/active/0015-profile-compaction.md`、`docs/specs/active/0016-wake-payload-incremental.md`、`docs/specs/contracts/02-storage.md`、`docs/specs/contracts/03-config.md`
+> 关联: `docs/specs/archive/0015-profile-compaction.md`、`docs/specs/archive/0016-wake-payload-incremental.md`、`docs/specs/contracts/02-storage.md`、`docs/specs/contracts/03-config.md`
 
 ## 背景
 

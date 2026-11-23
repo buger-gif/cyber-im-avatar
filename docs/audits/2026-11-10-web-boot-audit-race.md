@@ -1,7 +1,7 @@
 # 2026-11-10 web boot 审计把「还没结算的导入」报成 import failed
 
 > 一次性检查。结论与证据留着，不随修复回改。关联 spec
-> `docs/specs/active/0042-宿主入口懒加载与客户端立即预取.md`。
+> `docs/specs/archive/0042-宿主入口懒加载与客户端立即预取.md`。
 
 ## 现象
 
@@ -96,7 +96,7 @@ if (row === void 0) {
 
 ## 本仓库的止损
 
-`docs/specs/active/0042-宿主入口懒加载与客户端立即预取.md`：客户端半 `immediately: true`
+`docs/specs/archive/0042-宿主入口懒加载与客户端立即预取.md`：客户端半 `immediately: true`
 （页面在 `entries.start` 前预取该行）+ 宿主入口只静态 import Node 内置、重模块挪进 `boot()`
 （fiber 更早出现）。这两条不改变上游语义，只把触发面压到最小。
 

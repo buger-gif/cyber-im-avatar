@@ -41,6 +41,8 @@
 | **冻结区** | `docs/implementation/log/`、`docs/specs/archive/`、`docs/decisions/{implemented,rejected}/` | 只追加，不回改。写清日期与当时的事实 | 不删 |
 | **一次性** | `docs/audits/` | 一份检查一份文件，结论与证据留着 | 不删 |
 
+冻结区只追加、不回改；唯一例外是文件搬家时把指向它的旧路径改成新路径，不动内容与结论。
+
 活文档的两个机械闸（`scripts/verify_docs.py` 强制）：
 
 - **必须登记行数预算**：新增活文档要在 `scripts/doc_budgets.json` 里写上限。没预算 = 无界增长入口。
@@ -48,14 +50,16 @@
 
 ## 4. spec 流程（后续所有功能改动都走这条）
 
-1. **先写 spec**，落在 `docs/specs/active/NNNN-短名.md`，用 `docs/specs/_template.md`。
-   编号取 `docs/specs/README.md` 里的「下一个号」，写完把指针 +1。
-2. **非平凡改动配 plan**：同一编号 `NNNN-短名-plan.md`，按「一步一验证」拆成可勾选的步骤。
-   小改动（单文件、无新接口）只写 spec，不写 plan。
+1. **先写 spec**，落在 `docs/specs/active/NNNN-短名.md`，用 `docs/specs/_template.md`；
+   编号取 `docs/specs/README.md` 的「下一个号」，写完 +1。**active 至多 2 项**（spec 与其
+   plan 算一项），满了先归档再开新的——`scripts/verify_docs.py` 会拦。
+2. **plan 按需写**：要跨多个提交 / 多阶段迁移 / 先探路，才加 `NNNN-短名-plan.md`
+   （一步一验证、可勾选）；其余把 3–6 步写进 spec 的「方案」末尾，不另开文件。
 3. **实施中改主意** → 先改 spec 再改代码。spec 与代码不一致时，spec 里写明「已放弃」并说明原因，
    不留两套方案。
-4. **验收通过** → 把 spec 里「验收」逐条对勾，`git mv` 到 `docs/specs/archive/`，
-   在 `docs/specs/archive/README.md` 登记一行（编号 / 标题 / 版本 / 一句话结论）。
+4. **归档不等于发版**：实现完成且自动测试绿就 `git mv` 到 `docs/specs/archive/`，
+   在 `docs/specs/archive/README.md` 登记一行（编号 / 标题 / 版本 / 一句话结论）；
+   没做的真机项写进 `PROGRESS.md` 的挂账，不留在 active 里等。
 5. **拍过板的选择**（有被否掉的备选方案）单独落一份 `docs/decisions/`，格式见该目录 README。
 
 什么算「非平凡」：新增或改变接口、表结构、配置键、状态机、用户可见交互，或跨两个以上文件。

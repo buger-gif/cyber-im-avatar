@@ -54,9 +54,10 @@
 
 1. **先 spec 后代码。** 非平凡改动（新接口 / 表列 / 配置键 / 状态机 / 用户可见交互 / 跨两个以上文件）
    先写 `docs/specs/active/NNNN-短名.md`（模板 `docs/specs/_template.md`，编号规则见
-   `docs/specs/README.md`）；非平凡再配 `-plan.md`，一步一验证。
+   `docs/specs/README.md`）。active 至多 2 项；只有跨多提交 / 要探路才另写 `-plan.md`。
 2. **同 commit 改契约。** 动路由 / 表 / 配置键，必须同时改 `docs/specs/contracts/` 对应文件，否则对账测试红。
-3. **实施中改主意先改 spec**，不留两套方案；验收逐条对勾后 `git mv` 进 `docs/specs/archive/` 并登记。
+3. **实施中改主意先改 spec**，不留两套方案；实现 + 自动测试绿即可 `git mv` 进
+   `docs/specs/archive/` 并登记，真机项写进 `PROGRESS.md` 挂账。
 4. **提交前**：`bash scripts/gate.sh --quick` 全绿（秒级；`scripts/install-hooks.sh` 一次性接上钩子）。
 5. **收尾**：`PROGRESS.md` 更新断点 + 当日 `docs/implementation/log/YYYY-MM-DD.md`；
    用户可见行为变了改 `CHANGELOG.md`；架构取舍变了补 `docs/architecture/` + ADR。

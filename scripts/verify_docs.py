@@ -9,6 +9,7 @@
   5. 归档登记：archive/ 里每个 spec 必须在 archive/README.md 登记表里有一行。
   6. spec / decision 结构：必备小节与状态行，decision 的状态必须与所在目录一致。
   7. 契约文件格式：三份契约的表格列头必须保持可被 tests/test_docs.py 解析的形状。
+  8. active 卫生：至多 2 项；只放「待实施 / 实施中」；目标版本不得已经发布；plan 不能孤立。
 
 冻结区（docs/implementation/log/**、docs/specs/archive/**、docs/decisions/{implemented,rejected,proposed}/**、
 docs/audits/**、CHANGELOG.md）不做预算与反流水账检查——历史不改写；但指向它们的链接仍会校验。
@@ -25,6 +26,10 @@ from pathlib import Path
 
 REPO = Path(__file__).resolve().parent.parent
 BUDGETS = REPO / "scripts" / "doc_budgets.json"
+PKG_JSON = REPO / "dsh-plugin" / "package.json"
+ACTIVE_LIMIT = 2
+ACTIVE_STATUS = ("待实施", "实施中")
+SPEC_VERSION_RE = re.compile(r"^>\s*版本[：:]\s*(\d+)\.(\d+)\.(\d+)", re.M)
 
 SKIP_DIRS = {".git", ".workbuddy", ".zcode", "node_modules", "__pycache__",
              "market", "dist", "screenshots", "cordis.patch.yml"}
@@ -149,7 +154,45 @@ def check_append_residue(rel, p, errs):
             errs.append(f"{rel}:{i}: 活文档禁「此前：/原先：」状态链，直接写成当前事实")
 
 
+def released_version():
+    """当前已发布版本（唯一真源 dsh-plugin/package.json）；读不到就跳过版本闸。"""
+    try:
+        raw = json.loads(PKG_JSON.read_text(encoding="utf-8")).get("version", "")
+    except (OSError, ValueError):
+        return None
+    m = re.match(r"(\d+)\.(\d+)\.(\d+)", str(raw))
+    return tuple(int(x) for x in m.groups()) if m else None
+
+
+def check_active(files, errs):
+    """active 目录的卫生：数量、状态、目标版本、孤立 plan（docs/specs/README.md §active 上限与清理）。"""
+    active = [(rel, p, Path(rel).name) for rel, p in files
+              if rel.startswith("docs/specs/active/") and SPEC_FILE_RE.match(Path(rel).name)]
+    numbers = sorted({base[:4] for _, _, base in active if not base.endswith("-plan.md")})
+    if len(numbers) > ACTIVE_LIMIT:
+        errs.append(f"docs/specs/active/: 在办 spec {len(numbers)} 项（{'、'.join(numbers)}）"
+                    f"超过上限 {ACTIVE_LIMIT} 项——先归档做完的，见 docs/specs/README.md §active 上限与清理")
+    released = released_version()
+    for rel, p, base in active:
+        if base.endswith("-plan.md"):
+            spec = base[:-len("-plan.md")] + ".md"
+            if not (p.parent / spec).exists():
+                errs.append(f"{rel}: 孤立的 -plan，没有同名 spec（{spec}）——删 plan 或补 spec")
+            continue
+        text = p.read_text(encoding="utf-8")
+        m = re.search(r"^>\s*状态[：:]\s*(\S+)", text, re.M)
+        if m and m.group(1).rstrip("。") not in ACTIVE_STATUS:
+            errs.append(f"{rel}: 状态「{m.group(1)}」不该留在 active——实现完就 git mv 到 docs/specs/archive/")
+        v = SPEC_VERSION_RE.search(text)
+        if not v:
+            errs.append(f"{rel}: active spec 缺「> 版本: X.Y.Z」行（归档闸与版本闸都靠它）")
+        elif released and tuple(int(x) for x in v.groups()) <= released:
+            errs.append(f"{rel}: 目标版本 {'.'.join(v.groups())} 已发布（当前 "
+                        f"{'.'.join(map(str, released))}）——归档，或把版本抬到下一个")
+
+
 def check_specs(files, errs):
+    check_active(files, errs)
     specs = []
     for rel, p in files:
         base = Path(rel).name

@@ -1,7 +1,7 @@
 # 0023 插件壳支持钉钉 · 实施计划
 
 > 状态: 实施中
-> 关联: `docs/specs/active/0023-dingtalk-adapter.md`
+> 关联: `docs/specs/archive/0023-dingtalk-adapter.md`
 
 一步一验证；每步完成后勾掉，失败就在这一步停下修。
 

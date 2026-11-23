@@ -4,7 +4,7 @@
 
 ## 1. 写 spec 与登记编号
 
-- [x] `docs/specs/active/0007-follow-dsh-theme.md`
+- [x] `docs/specs/archive/0007-follow-dsh-theme.md`
 - [x] `docs/specs/README.md` 已登记（0009 被并行 spec 占用，下一个号 0010）
 - 验证：`python3 scripts/verify_docs.py`
 

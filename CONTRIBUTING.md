@@ -38,7 +38,8 @@ python3 service/rpc.py '{"path":"/api/inbox","query":"filter=todo&limit=5"}'
 | 想加「本地服务 / 监听端口」 | **别加**。走 `ctx.webServer` 的同源路由，后端用 stdio；`dsh-plugin/tests/test_stdio.py` 的静态断言会拦住任何重建监听的做法 |
 
 非平凡改动（新接口 / 新表列 / 用户可见交互 / 跨多文件）**先写 spec 再动手**：
-`docs/specs/_template.md` 起一份，编号规则在 `docs/specs/README.md`。拍板过备选方案的，
+`docs/specs/_template.md` 起一份，编号规则在 `docs/specs/README.md`。active 至多 2 项，
+默认只写 spec，跨多提交 / 要探路的再配 `-plan.md`。拍板过备选方案的，
 再落一份 `docs/decisions/`。流程详见 `docs/AGENTS.md §4`。
 
 ## 提交
