@@ -5,12 +5,13 @@
 
 ## 更新时间
 
-2026-11-23（0052 私聊进度卡已实现，待真机：全局 + 单聊三态默认关，2 分钟建卡，动作计数 + 可选 `[进度]`；Node 335 绿、skill 213 绿；0.24.2 仍是 npm latest）
+2026-11-23（0053 引用消息进载荷已实现，待真机；0052 私聊进度卡仍待真机。Node 352 绿、skill 213 绿；0.24.2 仍是 npm latest）
 
 ## 最近批次
 
 | 日期 | 主题 | 证据 |
 | --- | --- | --- |
+| 2026-11-23 | 引用消息进载荷（0053，待真机）：飞书 `reply_to` + `+messages-mget` 补被引用原文；`recent` 增 `reply_to` / `quote`，载荷加缩进 `↪ 引用` 行（取不到明说）；引用正文清洗 / 截断 300 字，媒体引用只给 `msg_id` 不下载；面板会话详情显示引用；企微 / 钉钉未实测不接；Node 352 绿、skill 213 绿、gate quick 绿 | `dsh-plugin/lib/{im,state,poller,turns,command}.js`、`dsh-plugin/web/panel.js`、`dsh-plugin/lib/client.js`、`dsh-plugin/tests/`、契约 01/02、`docs/specs/active/0053-引用消息进载荷.md`、`SKILL.md`、`references/{feishu,wecom,dingtalk}.md`、`CHANGELOG.md` |
 | 2026-11-23 | 私聊进度卡（0052，待真机）：全局 `dsh.progress_card` 默认关 + `chats[].progress_card` 三态（null 跟随 / true 开 / false 关）；2 分钟建卡，Card 2.0 第一行固定“已做：查资料/改文件/执行操作 N 次”，`[进度]` 标记可选；2/10 长任务实测 0 标记也能显示计数；轮询器按 `progress.ids` 排除卡片；进程重启补“已暂停”；Node 335 绿、skill 213 绿；真机待验全局/单点、计数、标记与 2 分钟门限 | `dsh-plugin/lib/{progress,state,im,turns,poller,app}.js`、`dsh-plugin/web/panel.js`、`dsh-plugin/lib/client.js`、`dsh-plugin/tests/progress.test.mjs`、契约 01/02/03、`docs/specs/active/0052-私聊进度卡.md` |
 | 2026-11-19 | CI 去告警：`checkout` / `setup-node` / `setup-python` 统一升到 v7（node24 运行时），test 四个 job 与 publish 干跑的 run 页 ANNOTATIONS 都为空、日志无弃用告警；publish 走 `gh workflow run`（dry_run 默认 true）验证，tag 发布路径的 shell 步骤未动 | `.github/workflows/test.yml`、`.github/workflows/publish.yml`、`docs/implementation/runbooks/dev-loop.md`、[run 44472280506](https://github.com/buger-gif/cyber-im-avatar/actions/runs/44472280506)、[run 44472466403](https://github.com/buger-gif/cyber-im-avatar/actions/runs/44472466403) |
 | 2026-11-19 | 0.24.2 发布（交付本人文档不再当成「授权」+ 开权限不带重复通知）：功能提交 `3abef89` + 规则书与产物对照 `0d1340f` + 发布提交 `e17c6f6` + 市场索引 `a33c30b`；Trusted Publishing 发布成功（[run 44467966239](https://github.com/buger-gif/cyber-im-avatar/actions/runs/44467966239)，3m16s，含版本自检）；tag / main 两套回归矩阵绿；公开 packument `time["0.24.2"]=2026-11-19T05:54:00Z`、`dist-tags.latest=0.24.2`，索引经 format-1 校验后指向它；`SKILL.md` 明确把本人新建文档交给当前会话对象属于回复的一部分，只有扩大范围（租户/外部可读、给第三方、改他人权限、公开空间）才停，`turns.js` 载荷同步，开权限省略 `--need-notification`；根 `SKILL.md`、构建产物、安装副本三份一致 | `CHANGELOG.md`、`SKILL.md`、`dsh-plugin/lib/turns.js`、`dsh-plugin/package.json`、`dsh-plugin/market/index.json`、`docs/implementation/runbooks/dev-loop.md`、[run 44467966239](https://github.com/buger-gif/cyber-im-avatar/actions/runs/44467966239) |

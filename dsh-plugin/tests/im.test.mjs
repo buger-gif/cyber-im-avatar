@@ -467,3 +467,103 @@ test("IM.sendCard/patchCard are feishu-only", async () => {
   assert.equal((await im.sendCard("wecom", "oc_dm", {})).unsupported, true);
   assert.equal((await im.patchCard("wecom", "om_card", {})).unsupported, true);
 });
+
+test("norm keeps feishu reply_to, including object-shaped parent ids", () => {
+  const a = new Adapter("feishu", { dir: "/nonexistent-im-test" });
+  const m = a.norm({
+    message_id: "om_1", msg_type: "text", content: "回复",
+    sender: { id: "ou_a" }, create_time: "2026-11-23 14:51", reply_to: "om_0",
+  });
+  assert.equal(m.reply_to, "om_0");
+  assert.equal(a.norm({
+    message_id: "om_2", content: "x", reply_to: { message_id: "om_9" },
+  }).reply_to, "om_9");
+  assert.equal(a.norm({ message_id: "om_3", content: "x" }).reply_to, "");
+  assert.equal(new Adapter("wecom", { dir: "/nonexistent-im-test" }).norm({
+    content: "x", reply_to: "m0",
+  }).reply_to, "", "企微没有实测字段，不给候选路径");
+});
+
+test("resolveQuotes takes the quoted message from the batch without mget", async () => {
+  const a = new Adapter("feishu", { dir: "/nonexistent-im-test" });
+  let calls = 0;
+  a.run = async () => { calls += 1; throw new Error("should not spawn"); };
+  const msgs = [
+    { msg_id: "om_2", sender_id: "ou_b", sender_name: "李四", content: "回复",
+      ts: "2026-11-23 14:51", ts_epoch: 200, msg_type: "text", reply_to: "om_1" },
+    { msg_id: "om_1", sender_id: "ou_a", sender_name: "张三", content: "原文",
+      ts: "2026-11-23 14:49", ts_epoch: 100, msg_type: "text" },
+  ];
+  await a.resolveQuotes(msgs);
+  assert.equal(calls, 0);
+  assert.equal(msgs[0].quote.content, "原文");
+  assert.equal(msgs[0].quote.sender_name, "张三");
+  assert.equal(msgs[0].quote.ts, "2026-11-23 14:49");
+});
+
+test("resolveQuotes mgets quoted messages missing from the batch and caches them", async () => {
+  const a = new Adapter("feishu", { dir: "/nonexistent-im-test" });
+  const calls = [];
+  a.run = async (args) => {
+    calls.push(args);
+    assert.ok(args.includes("+messages-mget"));
+    assert.ok(!args.includes("--download-resources"), "取引用不该顺带下载媒体");
+    const ids = args[args.indexOf("--message-ids") + 1].split(",");
+    return {
+      rc: 0, raw: "",
+      json: { data: { messages: ids.map((id) => ({
+        message_id: id, msg_type: "text", content: `原文-${id}`,
+        create_time: "2026-11-23 14:49", sender: { id: "ou_a", name: "张三" },
+      })) } },
+    };
+  };
+  const msgs = [
+    { msg_id: "om_3", content: "回复", ts_epoch: 300, reply_to: "om_1" },
+    { msg_id: "om_4", content: "另一条", ts_epoch: 300, reply_to: "om_2" },
+  ];
+  await a.resolveQuotes(msgs, { since: 200 });
+  assert.equal(calls.length, 2, "两个 ID 逐个查，避免一个失效拖累另一个");
+  assert.equal(msgs[0].quote.content, "原文-om_1");
+  assert.equal(msgs[0].quote.sender_name, "张三");
+  assert.equal(msgs[1].quote.content, "原文-om_2");
+
+  const again = [{ msg_id: "om_5", content: "再回", ts_epoch: 400, reply_to: "om_1" }];
+  await a.resolveQuotes(again, { since: 300 });
+  assert.equal(calls.length, 2, "同一引用走缓存，不重复 spawn");
+  assert.equal(again[0].quote.content, "原文-om_1");
+});
+
+test("resolveQuotes degrades without throwing when mget fails", async () => {
+  const a = new Adapter("feishu", { dir: "/nonexistent-im-test" });
+  let calls = 0;
+  a.run = async () => {
+    calls += 1;
+    return {
+      rc: 1, json: null,
+      raw: JSON.stringify({ ok: false, error: { type: "api", code: 99992354, message: "not exists" } }),
+    };
+  };
+  const msgs = [{ msg_id: "om_2", content: "回复", ts_epoch: 300, reply_to: "om_1" }];
+  await a.resolveQuotes(msgs);
+  assert.equal(msgs[0].quote, undefined);
+  assert.equal(calls, 1);
+  await a.resolveQuotes([{ msg_id: "om_3", content: "又回", ts_epoch: 300, reply_to: "om_1" }]);
+  assert.equal(calls, 1, "失败也缓存 2 分钟，不每轮重试");
+});
+
+test("resolveQuotes skips replies at or below the watermark and platforms without the hook", async () => {
+  const a = new Adapter("feishu", { dir: "/nonexistent-im-test" });
+  let calls = 0;
+  a.run = async () => { calls += 1; return { rc: 0, raw: "", json: { data: { messages: [] } } }; };
+  const old = [{ msg_id: "om_2", content: "回复", ts_epoch: 100, reply_to: "om_1" }];
+  await a.resolveQuotes(old, { since: 200 });
+  assert.equal(calls, 0, "水位之前的老消息不重复 mget");
+  const baseline = [{ msg_id: "om_3", content: "回复", ts_epoch: 300, reply_to: "om_1" }];
+  await a.resolveQuotes(baseline, { since: Number.POSITIVE_INFINITY });
+  assert.equal(calls, 0, "首次基线不取引用");
+
+  const w = new Adapter("wecom", { dir: "/nonexistent-im-test" });
+  w.run = async () => { calls += 1; return { rc: 0, raw: "", json: {} }; };
+  await w.resolveQuotes([{ msg_id: "m1", content: "回复", ts_epoch: 1, reply_to: "m0" }]);
+  assert.equal(calls, 0, "没有 cmd_mget_quote 的平台直接跳过");
+});

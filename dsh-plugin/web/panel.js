@@ -175,6 +175,8 @@
     ".ims-profile p{margin:3px 0}",
     ".ims-md-li{margin:2px 0;padding-left:2px}",
     ".ims-md-quote{color:var(--fg3);font-size:11.5px;margin:3px 0}",
+    ".ims-quote{color:var(--fg3);font-size:11px;line-height:1.5;margin:0 0 4px;padding:3px 7px;",
+    "border-left:2px solid var(--line);background:var(--sunk);border-radius:4px;word-break:break-word}",
     ".ims-profile code{font-family:var(--mono);font-size:11px;background:var(--bg);border-radius:4px;padding:0 3px}",
     ".ims-note{display:flex;gap:8px;align-items:flex-start;font-size:12px;color:var(--fg2);line-height:1.6;",
     "padding:7px 9px;border-radius:var(--r-sm);background:var(--sunk)}",
@@ -1824,6 +1826,17 @@
       S.thread.forEach(function (m) {
         var me = !!m.is_self;
         var body = msgText(m.content, m.state, m.kind, m.msg_type) || "（本地只有指针）";
+        var q = m.quote && typeof m.quote === "object" ? m.quote : null;
+        var quoted = null;
+        if (q) {
+          var qt = String(q.content || "").replace(/\s+/g, " ").trim();
+          if (!qt) qt = MEDIA_LABEL[q.msg_type] || "（原消息无正文）";
+          if (qt.length > 200) qt = qt.slice(0, 200) + "…";
+          quoted = h("div", { class: "ims-quote",
+            text: "↪ 引用 " + (q.sender_name || "对方") + "：" + qt });
+        } else if (m.reply_to) {
+          quoted = h("div", { class: "ims-quote", text: "↪ 引用一条更早的消息（原消息取不到）" });
+        }
         var meta = h("div", { class: "ims-msg-meta",
           text: (me ? "我" : (m.sender_name || "对方")) + " · " + (m.ts || fmtTime(m.ts_epoch)) });
         if (m.skip && m.state !== "new") {
@@ -1840,6 +1853,7 @@
         }
         thread.appendChild(h("div", { class: "ims-msg" + (me ? " me" : "") },
           meta,
+          quoted,
           body));
       });
       wrap.appendChild(thread);

@@ -15,7 +15,7 @@
 | GET | `/api/status` | — | 总状态：counts、poll、platforms、dsh、instances、turns、running。`platforms` 恒为三项（feishu / wecom / dingtalk），每项带 `enabled`；未启用的不跑 `whoami` |
 | GET | `/api/inbox` | `filter`、`limit`、`group` | 待回聚合；默认按会话聚合，`group=msg` 逐条；只从每会话最近 10 条派生（面板自 spec 0032 起不再展示） |
 | GET | `/api/inbox/cleanup` | — | 把未值守会话的待回批量标成 ignored |
-| GET | `/api/thread` | `platform`、`chat_id`、`fetch`、`limit` | 会话正文：默认在线拉 30 条；`fetch=1` 先补拉分类（**只读，不唤醒**；冷却中直接用本地指针）；失败回退本地 10 条并带 `offline` / `error`；每条带 `skip`（没唤醒的原因，空串=进过批次） |
+| GET | `/api/thread` | `platform`、`chat_id`、`fetch`、`limit` | 会话正文：默认在线拉 30 条；`fetch=1` 先补拉分类（**只读，不唤醒**；冷却中直接用本地指针）；失败回退本地 10 条并带 `offline` / `error`；每条带 `skip`（没唤醒的原因，空串=进过批次）与 `reply_to` / `quote`（引用原消息，见契约 02） |
 | GET | `/api/chats` | — | 会话清单，含 `blocked` / `timer` / `timed` / `watching` / `wake_mode` / `send_mode` / `progress_card` / `progress` / `mentionable` / `dsh_session` / `session_turns` / `turn_state` / `duty` / `command`（含 `reply` 回执）；`send_mode` 是该值班实际生效的 `draft` / `auto`；`mentionable=false` 表示该平台判不了 @（面板置灰「只盯 @我」）；`command` 是最近一次 IM 启动指令结果（见契约 02）；`silent` = 最近未唤醒的消息条数与主因 `{count, skip}`（`skip` 见契约 02 的 `recent[].skip`）。工作区字段见下 |
 | GET | `/api/duty` | — | 值守候选：`enabled`、`counts`（排队/判断中/试用/失败/忽略/值守/复核 + 配额与上限）、`desk`（session_id/workspace/session_turns/session_max_turns/last_turn/last_error/baseline_at/full_baseline_at/last_sweep_at）、`last_sweep`、`items`（每个非 none 的会话 + duty） |
 | GET | `/api/send` | `platform`、`chat_id`、`text`、`msg_id` | 以本人身份发出；不写发送历史 |

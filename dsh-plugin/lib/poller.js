@@ -544,6 +544,12 @@ export class Poller {
       ...m, platform, chat_id: chatId,
       is_self: !!ident.self_id && m.sender_id === ident.self_id,
     }));
+    // 引用原文：只补水位之后的新消息，老消息不再重复 mget（spec 0053）。
+    try {
+      await this.im.adapter(platform).resolveQuotes?.(messages, {
+        since: baseline ? Number.POSITIVE_INFINITY : Math.max(0, (Number(chat.last_epoch) || 0) - 1),
+      });
+    } catch { /* 引用取不到不阻断轮询 */ }
     if (baseline && messages.length === 0) {
       chat.last_epoch = now;
       chat.last_ts = "";
@@ -648,6 +654,8 @@ export class Poller {
         app_link: String(m.app_link || ""),
         media_id: String(m.media_id || ""),
         media_paths: Array.isArray(m.media_paths) ? m.media_paths : [],
+        reply_to: keepBody ? String(m.reply_to || "") : "",
+        quote: keepBody && m.quote && typeof m.quote === "object" ? m.quote : null,
       });
     }
     this.state.mergeRecent(chat, classified);
@@ -1098,11 +1106,12 @@ export class Poller {
       });
       if (!r.ok) return { ok: false, items: [], error: r.error || "fetch failed" };
       const selfId = this.identity[platform]?.self_id;
-      return {
-        ok: true,
-        items: r.messages.slice(0, n).map((m) => ({ ...m, platform, chat_id: chatId, is_self: !!selfId && m.sender_id === selfId })),
-        error: "",
-      };
+      const items = r.messages.slice(0, n).map((m) => ({
+        ...m, platform, chat_id: chatId, is_self: !!selfId && m.sender_id === selfId,
+      }));
+      // 面板线程也显示引用原文；取不到就只留指针，不阻断。
+      try { await this.im.adapter(platform).resolveQuotes?.(items); } catch { /* 引用取不到不阻断 */ }
+      return { ok: true, items, error: "" };
     } catch (e) {
       return { ok: false, items: [], error: `${e?.name || "Error"}: ${e?.message || e}` };
     }

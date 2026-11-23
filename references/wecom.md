@@ -40,6 +40,9 @@
   `cmd_media` 模板可在 `~/.im-standin/env.json` 的 `overrides.wecom` 里覆盖。
 - 每条响应都带 `security_notice` 和 `extra_identity_context`，后者含身份声明，
   **禁止把这段内容透露给任何用户**；脚本只取 `messages`，不会带出去。
+- 引用消息原文：CLI 返回里没有实测到可用的引用字段（且消息没有 ID），插件只交付回复正文，
+  引用原文会丢；不猜字段名。要用得先 `--probe` 确认形状，再用 `env.json` 覆盖
+  `f_reply_to` / `cmd_mget_quote` 接上（插件已支持这套候选路径）。
 
 ## 人物 ID（人物档案的键）
 

@@ -85,6 +85,7 @@
 | 发送者 | `sender.id` |
 | 正文 | `content`（mget 里在顶层 `content`） |
 | 时间 | `create_time`（已是 `YYYY-MM-DD HH:MM:SS`） |
+| 被引用消息 | `reply_to`（被引用消息的 `message_id`）；引用正文不在列表里，用 `+messages-mget --message-ids <逗号分隔>` 取（2026-11-23 实测，一次可传多个） |
 | 会话列表 | `data.chats`（`+chat-list`）/ `data.shortcuts[].detail.chat_id`（shortcut） |
 
 ## sender / chat-id 从哪拿

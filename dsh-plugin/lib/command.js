@@ -125,6 +125,8 @@ export function commandRow(msg) {
     app_link: String(msg?.app_link || ""),
     media_id: String(msg?.media_id || ""),
     media_paths: Array.isArray(msg?.media_paths) ? msg.media_paths : [],
+    reply_to: String(msg?.reply_to || ""),
+    quote: msg?.quote && typeof msg.quote === "object" ? msg.quote : null,
   };
 }
 

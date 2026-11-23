@@ -39,6 +39,10 @@ class FakeAdapter {
     this.sent = [];
     this.sendOk = true;
     this.sendError = "";
+    this.quoteCalls = [];
+  }
+  async resolveQuotes(messages, opts = {}) {
+    this.quoteCalls.push({ messages, opts });
   }
   async whoami() { return this.self; }
   async fetchMessages(chatId, { limit = 10 } = {}) {
@@ -1608,4 +1612,70 @@ test("progress card is excluded from selfEpoch and recent", async () => {
   assert.equal(r.batch[0].msg_id, "om_new");
   assert.equal(r.batch[0].state, "new");
   assert.equal(chat.recent.some((m) => m.msg_id === "om_card"), false);
+});
+
+test("pollChat resolves quotes only for new replies and carries them into the batch", async () => {
+  const { state, poller, adapter, turns } = setup();
+  const chat = state.ensureChat("feishu", "oc_dm", { name: "客户", kind: "p2p" });
+  chat.watching = true;
+  adapter.messages = [msg("m1", 1010)];
+  await poller.pollChat("feishu", "oc_dm");
+  assert.equal(adapter.quoteCalls.at(-1).opts.since, Number.POSITIVE_INFINITY,
+    "首次基线不取引用");
+
+  adapter.resolveQuotes = async (messages, opts) => {
+    adapter.quoteCalls.push({ messages, opts });
+    for (const m of messages) {
+      if (m.reply_to) {
+        m.quote = {
+          msg_id: m.reply_to, sender_id: "ou_other", sender_name: "客户",
+          content: "原文", ts: "2026-11-23 14:49", msg_type: "text",
+        };
+      }
+    }
+  };
+  adapter.messages = [msg("m2", 1020, { reply_to: "om_q" }), msg("m1", 1010)];
+  const r = await poller.pollChat("feishu", "oc_dm", { force: true });
+  assert.equal(r.woke, true);
+  const last = adapter.quoteCalls.at(-1);
+  assert.ok(last.opts.since >= 1009, "只补水位之后的新消息");
+  const batch = turns.wakes[0].opts.batch;
+  assert.equal(batch[0].msg_id, "m2");
+  assert.equal(batch[0].quote.content, "原文");
+  const row = chat.recent.find((m) => m.msg_id === "m2");
+  assert.equal(row.quote.content, "原文", "引用随指针落 state");
+  assert.equal(row.reply_to, "om_q");
+});
+
+test("a quote lookup failure never blocks polling or waking", async () => {
+  const { state, poller, adapter, turns } = setup();
+  const chat = state.ensureChat("feishu", "oc_dm", { name: "客户", kind: "p2p" });
+  chat.watching = true;
+  adapter.messages = [msg("m1", 1010)];
+  await poller.pollChat("feishu", "oc_dm");
+
+  adapter.resolveQuotes = async () => { throw new Error("mget down"); };
+  adapter.messages = [msg("m2", 1020, { reply_to: "om_q" }), msg("m1", 1010)];
+  const r = await poller.pollChat("feishu", "oc_dm", { force: true });
+  assert.equal(r.fetched, true);
+  assert.equal(r.woke, true);
+  assert.equal(turns.wakes.length, 1);
+  const row = chat.recent.find((m) => m.msg_id === "m2");
+  assert.equal(row.quote, null);
+  assert.equal(row.reply_to, "om_q");
+});
+
+test("fetchThread fills quotes for the panel thread", async () => {
+  const { poller, adapter } = setup();
+  adapter.messages = [msg("m1", 1010, { reply_to: "om_q" })];
+  adapter.resolveQuotes = async (messages, opts) => {
+    adapter.quoteCalls.push({ messages, opts });
+    for (const m of messages) {
+      if (m.reply_to) m.quote = { msg_id: "om_q", content: "原文", msg_type: "text" };
+    }
+  };
+  const r = await poller.fetchThread("feishu", "oc_dm", 10);
+  assert.equal(r.ok, true);
+  assert.equal(r.items[0].quote.content, "原文");
+  assert.equal(adapter.quoteCalls.length, 1);
 });

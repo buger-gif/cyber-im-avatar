@@ -270,6 +270,26 @@ function normalizeProgress(input) {
 export const SKIP_REASONS = ["baseline", "no-mention", "you-replied"];
 
 /**
+ * 被引用消息的归一化（spec 0053）：只留载荷要用的六个字段与 800 字正文，
+ * 不恢复整条原始 JSON；空对象/空正文也保留（媒体引用只有类型）。
+ */
+function normalizeQuote(q) {
+  if (!q || typeof q !== "object") return null;
+  const msgId = String(q.msg_id || "");
+  const content = String(q.content || "").slice(0, 800);
+  const msgType = String(q.msg_type || "");
+  if (!msgId && !content && !msgType) return null;
+  return {
+    msg_id: msgId,
+    sender_id: String(q.sender_id || ""),
+    sender_name: String(q.sender_name || ""),
+    content,
+    ts: String(q.ts || ""),
+    msg_type: msgType,
+  };
+}
+
+/**
  * 一条消息指针的归一化。字段顺序就是契约 02 的顺序：新字段只能往后追加。
  * media_paths 只存插件下载后的本地绝对路径，不存二进制。
  */
@@ -294,6 +314,9 @@ function normalizeMessage(m) {
     media_id: String(m.media_id || ""),
     media_paths: (Array.isArray(m.media_paths) ? m.media_paths : [])
       .filter((p) => typeof p === "string" && p && path.isAbsolute(p)),
+    // 引用与被引用正文跟正文同生命周期：正文清了，引用也清（spec 0053）。
+    reply_to: keepBody ? String(m.reply_to || "") : "",
+    quote: keepBody ? normalizeQuote(m.quote) : null,
   };
 }
 
@@ -587,7 +610,11 @@ export class State {
       const m = chat.recent.find((x) => x.msg_id === msgId);
       if (!m) continue;
       m.state = state;
-      if (state === "replied" || state === "ignored") m.content = "";
+      if (state === "replied" || state === "ignored") {
+        m.content = "";
+        m.reply_to = "";
+        m.quote = null;
+      }
       this.save();
       return { ok: true, chat, message: m };
     }
@@ -603,6 +630,8 @@ export class State {
       m.state = "replied";
       m.skip = "you-replied";
       m.content = "";
+      m.reply_to = "";
+      m.quote = null;
       n += 1;
     }
     return n;
@@ -623,6 +652,8 @@ export class State {
       if (!cur.msg_type && next.msg_type) cur.msg_type = next.msg_type;
       if (!cur.app_link && next.app_link) cur.app_link = next.app_link;
       if (!cur.media_id && next.media_id) cur.media_id = next.media_id;
+      if (!cur.reply_to && next.reply_to) cur.reply_to = next.reply_to;
+      if (!cur.quote && next.quote) cur.quote = next.quote;
       if ((!cur.media_paths || !cur.media_paths.length) && next.media_paths.length) {
         cur.media_paths = next.media_paths;
       }
@@ -722,6 +753,8 @@ export class State {
         if (!(m.state === "new" || m.state === "opened")) continue;
         m.state = "ignored";
         m.content = "";
+        m.reply_to = "";
+        m.quote = null;
         n += 1;
       }
     }

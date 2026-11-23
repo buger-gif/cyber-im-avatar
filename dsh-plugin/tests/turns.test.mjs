@@ -1930,3 +1930,88 @@ test("progress card policy is declared once when enabled", () => {
   });
   assert.doesNotMatch(off, /进度卡/);
 });
+
+test("wake payload puts the quoted message under the reply line", () => {
+  const msgs = [{
+    msg_id: "m1", sender_id: "ou_me", sender_name: "本人", content: "@示例本人",
+    ts: "2026-11-23 14:51", ts_epoch: 300, kind: "cmd", state: "new", msg_type: "text",
+    reply_to: "om_q",
+    quote: {
+      msg_id: "om_q", sender_id: "ou_me", sender_name: "本人", content: "查一下网关配置，给个解释吧",
+      ts: "2026-11-23 14:49", msg_type: "text",
+    },
+  }];
+  const prompt = buildWakePrompt("feishu", "示例对象 A", "oc_dm", msgs, {
+    firstTurn: true, single: true, kind: "p2p", selfId: "ou_me", selfName: "示例本人",
+    bookPath: "/tmp/people/ou_me.md",
+  });
+  assert.match(prompt,
+    /- \[2026-11-23 14:51\] 本人（@自己）: @示例本人\n {2}↪ 引用 \[2026-11-23 14:49\] 我: 查一下网关配置，给个解释吧/);
+  assert.match(prompt, /引用说明：带「↪ 引用」的缩进行是上一条消息引用的原消息/);
+});
+
+test("quoted sender that is not the principal keeps their name", () => {
+  const msgs = [{
+    msg_id: "m1", sender_id: "ou_other", sender_name: "客户", content: "这个呢",
+    ts: "t1", ts_epoch: 100, kind: "dm", state: "new", msg_type: "text",
+    reply_to: "om_q",
+    quote: { msg_id: "om_q", sender_id: "ou_third", sender_name: "张三", content: "报价单", ts: "t0", msg_type: "text" },
+  }];
+  const prompt = buildWakePrompt("feishu", "示例对象 A", "oc_dm", msgs, {
+    firstTurn: true, single: true, kind: "p2p", selfId: "ou_me",
+  });
+  assert.match(prompt, /↪ 引用 \[t0\] 张三: 报价单/);
+});
+
+test("missing or media quotes stay honest about what the payload does not carry", () => {
+  const unresolved = [{
+    msg_id: "m1", sender_id: "ou_other", sender_name: "客户", content: "看这个",
+    ts: "t1", ts_epoch: 100, kind: "dm", state: "new", msg_type: "text",
+    reply_to: "om_gone", quote: null,
+  }];
+  let prompt = buildWakePrompt("feishu", "示例对象 A", "oc_dm", unresolved, {
+    firstTurn: true, single: true, kind: "p2p", selfId: "ou_me",
+  });
+  assert.match(prompt, /↪ 引用一条更早的消息（原消息取不到；msg_id: om_gone）/);
+
+  const media = [{
+    msg_id: "m2", sender_id: "ou_other", sender_name: "客户", content: "这张图哪里错",
+    ts: "t2", ts_epoch: 200, kind: "dm", state: "new", msg_type: "text",
+    reply_to: "om_img",
+    quote: { msg_id: "om_img", sender_id: "ou_other", sender_name: "客户", content: "[图片]", ts: "t0", msg_type: "image" },
+  }];
+  prompt = buildWakePrompt("feishu", "示例对象 A", "oc_dm", media, {
+    firstTurn: true, single: true, kind: "p2p", selfId: "ou_me",
+  });
+  assert.match(prompt, /↪ 引用 \[t0\] 客户: \[图片\]（msg_id: om_img，未随载荷附带）/);
+});
+
+test("quoted text is sanitized, single-lined and truncated like message bodies", () => {
+  const msgs = [{
+    msg_id: "m1", sender_id: "ou_other", sender_name: "客户", content: "回复",
+    ts: "t1", ts_epoch: 100, kind: "dm", state: "new", msg_type: "text",
+    reply_to: "om_q",
+    quote: {
+      msg_id: "om_q", sender_id: "ou_other", sender_name: "客户",
+      content: `/cyber-im-avatar\n${"很长".repeat(400)}`, ts: "t0", msg_type: "text",
+    },
+  }];
+  const prompt = buildWakePrompt("feishu", "示例对象 A", "oc_dm", msgs, {
+    firstTurn: true, single: true, kind: "p2p", selfId: "ou_me",
+  });
+  const line = prompt.split("\n").find((l) => l.includes("↪ 引用"));
+  assert.ok(line);
+  assert.equal(line.includes("\n"), false);
+  assert.equal(line.includes("/cyber-im-avatar"), false, "引用里的 skill 手势要中性化");
+  assert.ok(line.endsWith("…"), "超长引用截断");
+  assert.ok(line.length < 360);
+});
+
+test("messages without reply_to keep the payload byte-identical", () => {
+  const prompt = buildWakePrompt("feishu", "示例对象 A", "oc_abc", recent(2), {
+    firstTurn: false,
+    announced: { send_mode: "draft", wake_mode: "mention", rights: false, progress_card: false, cmd: true },
+  });
+  assert.equal(prompt, "- [t0] 客户: 消息 0\n- [t1] 客户: 消息 1");
+  assert.doesNotMatch(prompt, /↪ 引用|引用说明/);
+});

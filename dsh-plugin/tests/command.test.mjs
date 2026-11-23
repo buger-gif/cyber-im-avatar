@@ -67,7 +67,17 @@ test("commandRow keeps only the pointer fields the opening context needs", () =>
     msg_id: "m1", sender_id: "ou_me", sender_name: "我", content: "@我 启动",
     ts: "t1", ts_epoch: 100, kind: "cmd", state: "new", msg_type: "text",
     app_link: "link", media_id: "mid", media_paths: ["/tmp/a.png"],
+    reply_to: "", quote: null,
   });
+});
+
+test("commandRow keeps the quote pointer for the opening prompt", () => {
+  const row = commandRow({
+    msg_id: "m1", content: "@我 启动", reply_to: "om_q",
+    quote: { msg_id: "om_q", content: "原文", msg_type: "text" },
+  });
+  assert.equal(row.reply_to, "om_q");
+  assert.equal(row.quote.content, "原文");
 });
 
 test("normalizeReplyText compresses whitespace, drops control chars and caps length", () => {

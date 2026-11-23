@@ -39,6 +39,12 @@ const PLACEHOLDER = {
 };
 export const MEDIA_LABELS = PLACEHOLDER;
 
+/** 引用消息（spec 0053）：正文与结果都只在本机内存/state 里，截断只是防状态膨胀。 */
+const QUOTE_BODY_MAX = 800;
+const QUOTE_CACHE_OK_SEC = 30 * 60;
+const QUOTE_CACHE_FAIL_SEC = 2 * 60;
+const QUOTE_CACHE_MAX = 500;
+
 /**
  * 命中回执的表情类型。飞书 emoji_type 区分大小写，`Get` 就是客户端里的
  * 「收到 / get」那个点击表情；不传时 Adapter/IM 都回落到它。
@@ -91,6 +97,9 @@ export const ADAPTERS = {
       "--no-reactions", "--format", "json"],
     cmd_chat_members: ["im", "+chat-members-list", "--chat-id", "{chat_id}",
       "--member-types", "user", "--page-all", "--format", "json"],
+    // 引用消息（spec 0053）：列表只给被引用消息 ID，正文要单独 mget；
+    // 不能复用带 --download-resources 的 cmd_mget，取引用不该顺带下载媒体。
+    cmd_mget_quote: ["im", "+messages-mget", "--message-ids", "{msg_id}", "--as", "user"],
     f_at_messages: [["data", "messages"]],
     f_at_chat_name: [["chat_name"], ["chat", "name"]],
     f_at_chat_type: [["chat_type"], ["chat", "type"]],
@@ -106,6 +115,7 @@ export const ADAPTERS = {
     f_type: [["msg_type"]],
     f_mentions: [["mentions"]],
     f_app_link: [["message_app_link"], ["app_link"]],
+    f_reply_to: [["reply_to"], ["parent_id"], ["root_id"]],
     f_media_id: [["media_id"]],
     f_chat_name: [["name"]],
     f_chat_mode: [["chat_mode"]],
@@ -462,6 +472,33 @@ function displayContent(msgType, raw) {
   return PLACEHOLDER[msgType];
 }
 
+/** 被引用消息 ID：CLI 版本可能给字符串，也可能包成对象；认不出就当没有。 */
+function messageIdOf(value) {
+  if (value == null) return "";
+  if (typeof value === "object") {
+    return String(value.message_id || value.id || "");
+  }
+  return String(value);
+}
+
+/** 只留载荷/状态要用的六个字段：不把整条原始 JSON 搬进 state。 */
+function quoteOf(m) {
+  return {
+    msg_id: String(m?.msg_id || ""),
+    sender_id: String(m?.sender_id || ""),
+    sender_name: String(m?.sender_name || ""),
+    content: String(m?.content || "").slice(0, QUOTE_BODY_MAX),
+    ts: String(m?.ts || ""),
+    msg_type: String(m?.msg_type || ""),
+  };
+}
+
+function groupList(list, size) {
+  const out = [];
+  for (let i = 0; i < list.length; i += size) out.push(list.slice(i, i + size));
+  return out;
+}
+
 function kindForType(msgType, key = "") {
   if (msgType === "image" || /^img_/.test(key)) return "image";
   if (msgType === "audio" || msgType === "voice") return "audio";
@@ -505,6 +542,7 @@ export class Adapter {
     })();
     this.ad = { ...ADAPTERS[platform], ...((this.env.overrides || {})[platform] || {}) };
     this.cli = this.resolveCli();
+    this.quoteCache = new Map();
   }
 
   /**
@@ -892,12 +930,104 @@ export class Adapter {
       msg_type: mtype,
       mentions: dig(it, this.ad.f_mentions) || [],
       app_link: String(dig(it, this.ad.f_app_link) || ""),
+      // 被引用消息 ID（飞书 reply_to）；正文不在这里，由 resolveQuotes 补（spec 0053）。
+      reply_to: messageIdOf(dig(it, this.ad.f_reply_to)),
       media_id: "",
     };
     msg.media_id = this.platform === "wecom"
       ? String(dig(it, this.ad.f_media_id) || "")
       : mediaIdOf(this.platform, { ...msg, content: rawContent });
     return msg;
+  }
+
+  /**
+   * 引用原文（spec 0053）。飞书列表只给 reply_to，正文要单独 mget。
+   * 先在本批消息里找（最常见，零调用），再按 `since` 只补新消息，结果进缓存；
+   * mget 失败只把这一组标成「取不到」，不抛、不阻断拉取与唤醒。
+   */
+  async resolveQuotes(messages, { since = 0 } = {}) {
+    const list = Array.isArray(messages) ? messages : [];
+    if (!this.ad.f_reply_to || !this.ad.cmd_mget_quote) return list;
+    const byId = new Map();
+    for (const m of list) {
+      if (m?.msg_id) byId.set(String(m.msg_id), m);
+    }
+    const now = Date.now() / 1000;
+    const floor = Number(since) || 0;
+    const need = [];
+    for (const m of list) {
+      if (!m || !m.msg_id || m.quote) continue;
+      const rid = String(m.reply_to || "");
+      if (!rid || rid === String(m.msg_id)) continue;
+      const ts = Number(m.ts_epoch) || 0;
+      if (ts && ts < floor) continue;
+      // 本批里有原文就先用它：免费且比缓存新，也避免失败缓存挡住真实消息。
+      const hit = byId.get(rid);
+      if (hit) {
+        m.quote = quoteOf(hit);
+        continue;
+      }
+      const cached = this.quoteCache.get(rid);
+      if (cached) {
+        const ttl = cached.quote ? QUOTE_CACHE_OK_SEC : QUOTE_CACHE_FAIL_SEC;
+        if (now - cached.at < ttl) {
+          m.quote = cached.quote;
+          continue;
+        }
+        this.quoteCache.delete(rid);
+      }
+      need.push({ m, rid });
+    }
+    if (!need.length) return list;
+    this.pruneQuoteCache(now);
+    const ids = [...new Set(need.map((x) => x.rid))];
+    // 少量逐个查：一条被删的引用不拖累其它；多了再按 20 个一组批量。
+    const groups = ids.length <= 4 ? ids.map((id) => [id]) : groupList(ids, 20);
+    for (const group of groups) {
+      const r = await this.mgetQuote(group);
+      if (!r.ok) {
+        for (const id of group) this.quoteCache.set(id, { at: now, quote: null });
+        continue;
+      }
+      const found = new Set();
+      for (const it of r.items) {
+        const m = this.norm(it);
+        if (!m) continue;
+        const q = quoteOf(m);
+        this.quoteCache.set(String(q.msg_id), { at: now, quote: q });
+        found.add(String(q.msg_id));
+        for (const x of need) {
+          if (x.rid === String(q.msg_id)) x.m.quote = q;
+        }
+      }
+      // mget 对个别失效 ID 可能整组报错；没回来的就记成取不到，2 分钟后再试。
+      for (const id of group) {
+        if (!found.has(id)) this.quoteCache.set(id, { at: now, quote: null });
+      }
+    }
+    return list;
+  }
+
+  async mgetQuote(ids) {
+    const { rc, json, raw } = await this.run(
+      this.argv(this.ad.cmd_mget_quote, { msg_id: ids.join(",") }), 30);
+    if (rc !== 0 || !json || json.ok === false) {
+      return { ok: false, items: [], error: describeCliError(raw).summary };
+    }
+    const items = dig(json, this.ad.f_items);
+    if (!Array.isArray(items)) return { ok: false, items: [], error: "SCHEMA_MISMATCH" };
+    return { ok: true, items, error: "" };
+  }
+
+  pruneQuoteCache(now = Date.now() / 1000) {
+    for (const [id, v] of this.quoteCache) {
+      const ttl = v?.quote ? QUOTE_CACHE_OK_SEC : QUOTE_CACHE_FAIL_SEC;
+      if (now - (Number(v?.at) || 0) >= ttl) this.quoteCache.delete(id);
+    }
+    for (const id of this.quoteCache.keys()) {
+      if (this.quoteCache.size <= QUOTE_CACHE_MAX) break;
+      this.quoteCache.delete(id);
+    }
   }
 
   async listChats(limit = 15, { all = false } = {}) {

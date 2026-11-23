@@ -316,11 +316,13 @@ test("old state without last_msg_id / media fields loads with safe defaults", ()
   assert.equal(chat.last_msg_id, "");
   assert.deepEqual(Object.keys(chat.recent[0]), [
     "msg_id", "sender_id", "sender_name", "content", "ts", "ts_epoch", "kind", "state", "skip",
-    "msg_type", "app_link", "media_id", "media_paths",
+    "msg_type", "app_link", "media_id", "media_paths", "reply_to", "quote",
   ]);
   assert.equal(chat.recent[0].skip, "", "老数据没有 skip，读出来是空串");
   assert.equal(chat.recent[0].msg_type, "");
   assert.deepEqual(chat.recent[0].media_paths, []);
+  assert.equal(chat.recent[0].reply_to, "");
+  assert.equal(chat.recent[0].quote, null);
 });
 
 test("mergeRecent fills media metadata without rolling back state or content", () => {
@@ -531,4 +533,52 @@ test("progress card config defaults off and chat override is tri-state", () => {
   assert.equal(third.getChat("feishu", "oc_progress_state").progress_card, false);
   assert.equal(normalizeConfig({ dsh: { progress_card: "false" } }).dsh.progress_card, false);
   assert.equal(normalizeConfig({ dsh: { progress_card: "true" } }).dsh.progress_card, true);
+});
+
+test("recent keeps reply_to / quote only while the body is kept", () => {
+  const { state } = tempState();
+  const chat = state.ensureChat("feishu", "oc_x", {});
+  state.mergeRecent(chat, [msg("m1", 10, {
+    reply_to: "om_0",
+    quote: {
+      msg_id: "om_0", sender_id: "ou_a", sender_name: "张三", content: "原文",
+      ts: "t0", msg_type: "text", junk: "drop me",
+    },
+  })]);
+  const row = chat.recent[0];
+  assert.equal(row.reply_to, "om_0");
+  assert.deepEqual(Object.keys(row.quote),
+    ["msg_id", "sender_id", "sender_name", "content", "ts", "msg_type"]);
+  assert.equal(row.quote.content, "原文");
+  state.setMessageState("feishu", "m1", "replied");
+  assert.equal(row.quote, null, "正文清了引用也清");
+  assert.equal(row.reply_to, "", "引用指针也清，避免面板把「已处理」显示成「取不到」");
+});
+
+test("old state rows without quote fields normalize to empty and null", () => {
+  const { dir } = tempState();
+  fs.writeFileSync(path.join(dir, "state.json"), JSON.stringify({
+    version: STATE_VERSION,
+    chats: { "feishu:oc_old": { platform: "feishu", chat_id: "oc_old", recent: [msg("m1", 10)] } },
+  }));
+  const state = new State(dir);
+  state.load();
+  const row = state.getChat("feishu", "oc_old").recent[0];
+  assert.equal(row.reply_to, "");
+  assert.equal(row.quote, null);
+});
+
+test("mergeRecent backfills a quote onto an existing pointer without touching state or content", () => {
+  const { state } = tempState();
+  const chat = state.ensureChat("feishu", "oc_x", {});
+  state.mergeRecent(chat, [msg("m1", 10)]);
+  const row = chat.recent[0];
+  state.mergeRecent(chat, [msg("m1", 10, {
+    content: "新正文不该覆盖", state: "opened", reply_to: "om_0",
+    quote: { msg_id: "om_0", content: "原文", msg_type: "text", ts: "t0" },
+  })]);
+  assert.equal(row.content, "正文-m1");
+  assert.equal(row.state, "new");
+  assert.equal(row.reply_to, "om_0");
+  assert.equal(row.quote.content, "原文");
 });

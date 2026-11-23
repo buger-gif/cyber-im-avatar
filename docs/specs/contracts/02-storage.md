@@ -124,10 +124,12 @@
 | app_link | string | 平台提供的“在 IM 客户端打开”链接（飞书 `message_app_link`）；没有为空 |
 | media_id | string | 平台结构化媒体键（企微 `media_id`；飞书从 content 解析出的 `img_`/`file_` key，多个逗号分隔） |
 | media_paths | array | 插件下载后的本地绝对路径；只在命中唤醒时写入，清理失效文件时回写 |
+| reply_to | string | 这条消息引用的原消息 ID（飞书 `reply_to`）；空串=没有引用或平台不提供（spec 0053）；与 `content` 同生命周期，正文清空时一起清空 |
+| quote | object/null | 被引用的原消息：`msg_id` / `sender_id` / `sender_name` / `content` / `ts` / `msg_type`（正文截 800 字）；取不到为 null。与 `content` 同生命周期，正文清空时它一起清空 |
 
-老 state 缺字段时按默认补：`last_msg_id` 为空串、`msg_type` / `app_link` / `media_id` 为空串、
-`media_paths` 为空数组、`last_warm_at` / `last_warm_ok` 为 0 / null、`last_reset` 为
-`{at:0, reason:""}`；不改变存量会话行为。
+老 state 缺字段时按默认补：`last_msg_id` 为空串、`msg_type` / `app_link` / `media_id` / `reply_to`
+为空串、`media_paths` 为空数组、`quote` 为 null、`last_warm_at` / `last_warm_ok` 为 0 / null、
+`last_reset` 为 `{at:0, reason:""}`；不改变存量会话行为。
 
 待回口径：`dm` / `mention` / `service`，以及 `wake_mode="all"` 群里的 `fyi`；`isPendingMessage()` 一处定义，`pendingCount` / `pendingMessages` / `counts()` 共用。
 
