@@ -301,7 +301,7 @@ test("rightsFor：空段 = 默认口径，不是「没定义」", () => {
   assert.equal(r.exists, true);
   assert.equal(r.custom, false, "没写过就是默认口径");
   assert.equal(r.text, RIGHTS_DEFAULT, "默认口径必须有内容，不能是空串");
-  assert.match(r.text, /没点任何人/);
+  assert.match(r.text, /默认：沉默/);
   const dm = { platform: "feishu", chat_id: "oc_dm", name: "张三", kind: "p2p" };
   const d = profiles.rightsFor("feishu", dm, "ou_self");
   assert.equal(d.applicable, false);

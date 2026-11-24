@@ -34,7 +34,7 @@
 | `config` | 插件配置，改动即时生效 | `poll.*`、`platforms`、`send_mode_default`、`dsh.timeout`、`dsh.full_access`、`dsh.warm_min` |
 | `chats` | 一个会话（一个人或一个群） | `watching`、`timer`、`wake_mode`、`send_mode`、`blocked`、`last_msg_id`、`last_epoch`、`dsh_session`、`prompt_session`、`last_warm_at`、`last_reset` |
 | `desk` | 全局值守台（一个会话） | `workspace`、`dsh_session`、`baseline_at`、`last_sweep_at`、`session_turns` |
-| `chats[].duty` | 一个会话的分诊记录 | `state`、`trigger`、`event_id`、`member_count`、`sweep_epoch`、`review_at` |
+| `chats[].duty` | 一个会话的分诊记录 | `state`（含自动退役 `retired`、任务完成观察 `closing`）、`trigger`、`event_id`、`member_count`、`sweep_epoch`、`review_at`、`last_hit_at`、`close_at` |
 | `chats[].recent` | 最近 10 条消息**指针** | `kind`(dm/mention/fyi/out)、`state`(new/opened/replied/ignored)、`msg_id`、`msg_type`、`app_link`、`media_id`、`media_paths` |
 
 `recent` 不是聊天记录库：最多 10 条、最新在前，`content` 只在 `new`/`opened` 的私聊与 @我 上保留；

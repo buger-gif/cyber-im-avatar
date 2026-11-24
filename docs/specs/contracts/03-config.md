@@ -38,7 +38,9 @@
 | `duty.max_groups` | `20` | 0–200 | 自动开监听的值守群上限；0=不限；手动不受限 |
 | `duty.max_per_day` | `20` | 0–200 | 每天自动分诊 turn 上限；0=不限；复核与手动不占 |
 | `duty.session_max_turns` | `20` | 0–200 | 已废弃：值守台每次判断新建会话；保留读取兼容，不再生效 |
-| `duty.record_keep_days` | `30` | 0–365 天 | ignore/failed 记录保留；0=永不清；watch/trial 不清 |
+| `duty.record_keep_days` | `30` | 0–365 天 | ignore/failed 记录保留；0=永不清；watch/trial/retired 不清 |
+| `duty.retire_after_days` | `7` | 0–365 天 | 连续这么多天没有「命中」（私聊来信、个人 @、或全量模式的群消息）就自动退出值守；`0` = 关闭。待回 / 在飞 / trial 中的会话不退役；群退役后新的个人 @ 仍会重新分诊，私聊需手动重新加入 |
+| `duty.close_after_days` | `2` | 0–30 天 | 保活轮判断任务已完成后的观察期；期间有新消息 / 待回 / 在飞就取消，到期没有新活才退役；`0` = 关闭（已有的 closing 取消回 watch） |
 | `duty.sweep_min` | `10` | 0 或 10–1440 分钟 | @ 清查间隔；0=关；>0 时最小 10 |
 | `duty.sweep_lookback_hours` | `24` | 1–168 小时 | 清查回看窗口；更早不自动补 |
 | `duty.max_group_members` | `10` | 0–1000 人 | 自动开监听的群成员上限（只数人）；超过/未知只能 ignore；0=不限；手动不受限 |
@@ -70,6 +72,8 @@
 | `duty.max_per_day` | 0 | 200 |
 | `duty.session_max_turns` | 0 | 200 |
 | `duty.record_keep_days` | 0 | 365 |
+| `duty.retire_after_days` | 0 | 365 |
+| `duty.close_after_days` | 0 | 30 |
 | `duty.sweep_min` | 0 | 1440 |
 | `duty.sweep_lookback_hours` | 1 | 168 |
 | `duty.max_group_members` | 0 | 1000 |

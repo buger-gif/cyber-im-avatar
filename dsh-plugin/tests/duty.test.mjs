@@ -216,3 +216,85 @@ test("auto watch does not overwrite an existing workspace binding", async () => 
   assert.equal(r.ok, true);
   assert.equal(chat.workspace, bound);
 });
+
+test("retire flips watching/timer and leaves a durable retired record", () => {
+  const { chat } = setup();
+  chat.watching = true;
+  chat.timer = 1;
+  chat.last_epoch = 1234;
+  chat.duty.state = "watch";
+  chat.duty.last_hit_at = 100;
+  chat.duty.event_id = "d-stale";
+  assert.equal(duty.retire(chat, { days: 7, now: 2000 }), true);
+  assert.equal(chat.watching, false);
+  assert.equal(chat.timer, -1);
+  assert.equal(chat.duty.state, "retired");
+  assert.equal(chat.duty.by, "system");
+  assert.equal(chat.duty.decided_at, 2000);
+  assert.equal(chat.duty.event_id, "");
+  assert.equal(chat.duty.last_hit_at, 100, "命中时间保留，供面板解释");
+  assert.equal(chat.duty.sweep_epoch, 1234);
+  assert.match(chat.duty.reason, /7 天没有新的命中/);
+});
+
+test("activityAt prefers hits and never uses group chatter timestamps", () => {
+  const { chat } = setup();
+  chat.added_at = 100;
+  chat.last_epoch = 9999;
+  chat.last_turn = { at: 300 };
+  chat.duty.decided_at = 200;
+  chat.duty.last_hit_at = 400;
+  assert.equal(duty.activityAt(chat), 400);
+  chat.duty.last_hit_at = 0;
+  assert.equal(duty.activityAt(chat), 300);
+  chat.last_turn = { at: 0 };
+  assert.equal(duty.activityAt(chat), 200);
+});
+
+test("markClosing enters a 2-day observation; cancelClosing returns to watch", () => {
+  const { chat } = setup();
+  chat.watching = true;
+  chat.duty.state = "watch";
+  assert.equal(duty.markClosing(chat, { reason: "任务已完成：已上线", now: 1000, days: 2 }), true);
+  assert.equal(chat.duty.state, "closing");
+  assert.equal(chat.duty.trigger, "warm");
+  assert.equal(chat.duty.by, "agent");
+  assert.equal(chat.duty.decided_at, 1000);
+  assert.equal(chat.duty.close_at, 1000 + 2 * 86400);
+  assert.match(chat.duty.reason, /已上线/);
+
+  assert.equal(duty.cancelClosing(chat, { now: 2000, reason: "有新消息" }), true);
+  assert.equal(chat.duty.state, "watch");
+  assert.equal(chat.duty.close_at, 0);
+  assert.match(chat.duty.reason, /有新消息/);
+});
+
+test("markClosing refuses empty reasons, unwatched chats, and non-watch states", () => {
+  const { chat } = setup();
+  chat.watching = false;
+  assert.equal(duty.markClosing(chat, { reason: "已验收" }), false);
+  chat.watching = true;
+  assert.equal(duty.markClosing(chat, { reason: "  " }), false);
+  chat.duty.state = "trial";
+  assert.equal(duty.markClosing(chat, { reason: "已验收" }), false);
+});
+
+test("parseClosingMarker only accepts the exact task-done line", () => {
+  assert.equal(duty.parseClosingMarker("[值守收尾] 任务已完成：已验收"), "已验收");
+  assert.equal(duty.parseClosingMarker("前文\n[值守收尾] 任务已完成: 已关单\n后文"), "已关单");
+  assert.equal(duty.parseClosingMarker("[值守收尾] 继续值守：还有待办"), "");
+  assert.equal(duty.parseClosingMarker("普通回复 [值守收尾] 任务已完成：不算"), "");
+  const long = "一".repeat(80);
+  assert.equal(duty.parseClosingMarker(`[值守收尾] 任务已完成：${long}`).length, 40);
+});
+
+test("retire accepts a custom reason for task-done closing", () => {
+  const { chat } = setup();
+  chat.watching = true;
+  chat.duty.state = "closing";
+  chat.duty.close_at = 1234;
+  assert.equal(duty.retire(chat, { days: 2, now: 2000, reason: "任务已完成，2 天无新活" }), true);
+  assert.equal(chat.duty.state, "retired");
+  assert.equal(chat.duty.close_at, 0);
+  assert.equal(chat.duty.reason, "任务已完成，2 天无新活");
+});

@@ -45,6 +45,13 @@ poller 判定命中
   档案；群工作本 + 最多 3 份档案），不扫目录。再过一个 `warm_min` 仍无真实消息就不再保温，
   下一条消息换会话。它不写 `session_turns` / `last_turn`，真实消息到达即取消；结果记
   `chats.last_warm_at` / `last_warm_ok`。
+- **自动退役**（spec 0057）：后台维护 tick 里另有 `maybeRetire()`，和保温共用节拍但不依赖
+  `dsh.warm_min` 或宿主就绪；连续 `duty.retire_after_days`（默认 7）天没有命中就把
+  `watching=false`、`timer=-1`、`duty.state=retired`；待回 / 在飞 / trial 不动。群的新个人 @
+  由 sweep 重新分诊，私聊需手动重新加入。
+- **任务完成收尾**（spec 0059）：保活轮的 assistant 消息可带一行
+  `[值守收尾] 任务已完成：…`；插件记 `duty.state=closing` + `close_at=now+close_after_days`
+  （默认 2 天）。观察期内新命中 / 待回 / 在飞 / 手动操作取消收尾，到期没有新活才退役。
 - 首轮带 `/cyber-im-avatar`、平台/对象、chat_id、运行形态与记忆文件路径：单聊只给
   `人物档案：<路径>`；群给 `会话工作本` 与本次发言人的「人物档案」行（≤5，去重、@我优先）。
   之后同一 `dsh_session` 只发本次新消息行，不再重复这些说明。`chats.prompt_session == dsh_session`
@@ -113,6 +120,8 @@ poller 发现新群 / sweep 命中 @
 - `poll.dm_scope` 是 legacy no-op：老配置还能加载，实际候选只看 `watching` 私聊，群只有 `timer=1`。
 - `dsh.full_access` 默认 `false`；为 `true` 时插件把值守会话切到 `danger-full-access`，agent 才能写工作区外的画像（单聊人物档案 / 群工作本）。这是唯一放开沙箱的开关。
 - `dsh.warm_min` 是会话寿命的唯一时钟（默认 55 分钟，0 = 关闭保温与自动换会话）：每段闲置先保温一次，第二个周期后下一条消息换会话；保温轮不推进闲置时钟。
+- `duty.retire_after_days` 控制自动退役（默认 7 天，0=关）；退役扫描不依赖保温窗口。
+- `duty.close_after_days` 控制任务完成收尾观察（默认 2 天，0=关）；只有保活轮的标记会进入观察。
 - `send_mode_default` 是新建值守的默认发送方式（`draft` 仓库默认 / `auto`），面板设置页写入；
   已有值班的 `chats[].send_mode` 单独存，改默认不覆盖。老 state 缺键回 `draft`。
 - `command.enabled` / `command.start_keyword` 控制「本人 @ 自己 + 关键词启动值班」；关键词

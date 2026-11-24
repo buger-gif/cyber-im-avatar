@@ -76,8 +76,8 @@
 
 | 键 | 类型 | 说明 |
 | --- | --- | --- |
-| state | string | `none` / `queued` / `triaging` / `watch` / `trial` / `reviewing` / `ignore` / `failed` |
-| trigger | string | `added` / `mentioned` / `manual` / `review` / `sweep`；空=没进过事件 |
+| state | string | `none` / `queued` / `triaging` / `watch` / `trial` / `reviewing` / `ignore` / `failed` / `retired` / `closing` |
+| trigger | string | `added` / `mentioned` / `manual` / `review` / `sweep` / `warm`；空=没进过事件 |
 | event_id | string | 当前事件 ID；决策文件用 |
 | event_at | number | 事件入队时刻 |
 | triaged_at | number | 最近一次非复核分诊开始时刻；配额按今天计数；复核不写 |
@@ -90,6 +90,16 @@
 | error | string | 最近失败原因（`no_decision` / `invalid` / `group_too_large` / `member_unknown` …） |
 | sweep_epoch | number | @ 清查水位；清理记录时保留 |
 | member_count | number | 群成员数（只数人）；0=未知；清理记录时保留 |
+| last_hit_at | number | 最近一次「命中」的消息时间（epoch 秒）：私聊来信、个人 @、或全量模式的群消息；本人消息 / 群里的非 @ 闲聊不算。0=还没有命中。自动退役用它起算，老 state 缺省 0 |
+| close_at | number | 任务完成收尾的观察截止时刻（epoch 秒）；只有 `state=closing` 有意义，0=没有收尾 |
+
+`retired` 是自动退役：`watching=false`、`timer=-1`、`by=system`，`decided_at` 为退役时刻，
+`reason` 说明「N 天没有新的命中」或「任务已完成，N 天无新活」。不清 `target` / `recent` /
+`dsh_session` / 记忆文件；群的新个人 @ 可重新分诊，私聊需用户重新加入。`record_keep_days` 只清
+`ignore` / `failed`，不自动清 `retired`。
+
+`closing` 是保活轮判断「任务已完成」后的观察态：`by=agent`、`trigger=warm`、`close_at=now+close_after_days`。
+观察期内任何新命中 / 待回 / 在飞 / 手动操作回到 `watch` 并清 `close_at`；到期没有新活转 `retired`。
 
 ## desk 对象
 

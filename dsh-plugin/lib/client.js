@@ -430,6 +430,8 @@ window.__ModuleLoader__.load({
       chats: [], targets: [], workspaces: [], doctor: null, cfg: null,
       // 服务对象两段各自的内存过滤条件（q / 状态 / 平台）；不写 state.json。
       targetFilter: { q: "", kind: "all", platform: "" },
+      // 分身页「值守中」列表的内存过滤条件（q / 状态 / 平台）；同样不写盘。
+      dutyFilter: { q: "", kind: "all", platform: "" },
       logs: [],
       search: { q: "", platform: "feishu", items: null, err: "", seq: 0,
                 wc: { name: "", id: "", kind: "group" } },
@@ -504,11 +506,13 @@ window.__ModuleLoader__.load({
      * 未定义时该群只能出草稿——这是依赖关系，不是开关。
      */
     var RIGHTS_PLACEHOLDER =
-      "- 点我名：回\n" +
-      "- 点了别人：只当知会，不代答\n" +
-      "- 没点任何人：先判断是派给我/问到我/要我表态，还是纯告警寒暄\n" +
-      "- 信息同步：已确认的进度、结论、事实可以发\n" +
-      "- 判不准：沉默，等下一次点名";
+      "- 默认：沉默。没有需要我出手的具体事，就不发\n" +
+      "- 发言门槛：有对方还不知道、且会改变他动作的信息，或有人在问我、要我表态\n" +
+      "- 机器消息（告警、催办卡）里的 @ 多是角色字段（处理人 / 跟进人 / 知会人），" +
+      "正文指向别人就只当知会、不代答\n" +
+      "- 不重复：机器人刚发过的、卡片里写着的都不算增量；平台催过的不跟催\n" +
+      "- 轮到我出手的节点才发（截止已过、状态变了、要我拍板）\n" +
+      "- 判不准：沉默，只记日报";
 
     function rightsOf(d) {
       if (!d || !d.chat || d.chat.kind !== "group") return null;
@@ -518,7 +522,7 @@ window.__ModuleLoader__.load({
 
     function rightsHint(t) {
       if (!t) return "读不到工作本；去「记忆文件 → 群聊」看这份会话";
-      if (t.rights_custom !== true) return "默认口径：点我名的回；点了别人的不代答；没点任何人的先判断要不要接；信息同步可以发";
+      if (t.rights_custom !== true) return "默认口径：沉默优先；发言要有对方不知道的增量，或真人明确在问；机器告警 / 催办卡的角色 @ 不算；判不准就不说";
       var first = String(t.rights || "").split("\n").filter(function (l) { return l.trim(); })[0] || "";
       return first ? first.replace(/^\s*[-*]\s*/, "") : "本群单独改过";
     }
@@ -1487,6 +1491,16 @@ window.__ModuleLoader__.load({
         return h("span", { class: "ims-tag", style: "color:var(--ok)",
                            title: "agent 正在处理这通会话", text: "处理中" });
       }
+      if (chat.duty && chat.duty.state === "closing") {
+        return h("span", { class: "ims-tag", style: "color:var(--warn)",
+          title: chat.duty.reason || "任务已完成，观察期内没有新活就退出值守",
+          text: "任务已完成 · 观察中" });
+      }
+      if (chat.duty && chat.duty.state === "retired") {
+        return h("span", { class: "ims-tag", style: "color:var(--fg3)",
+          title: chat.duty.reason || "连续多日没有新命中，已自动退出值守",
+          text: "已自动退役" });
+      }
       if (chat.last_ok === false) {
         return h("span", { class: "ims-tag", style: "color:var(--danger)", text: "上一轮失败" });
       }
@@ -2082,31 +2096,85 @@ window.__ModuleLoader__.load({
     }
 
     // ---- 分身实例（原「客服」页）----------------------------------------
+    /** 「值守中」列表的状态筛选：只看这通会话此刻在干什么，纯前端派生。 */
+    function dutyStateHit(kind, c) {
+      if (kind === "running") return c.turn_state === "running";
+      if (kind === "failed") {
+        return c.last_ok === false && c.turn_state !== "running" && c.turn_state !== "warm";
+      }
+      if (kind === "pending") return (c.pending || 0) > 0;
+      return true;
+    }
+
     function serviceView() {
       var scroll = h("div", { class: "ims-scroll" });
       var all = S.chats || [];
       // 这个页签只放「正在值守」的会话；找新会话用顶部搜索，
       // 群清单与已屏蔽都收起来（屏蔽恢复在设置里）。
       var watched = all.filter(function (c) { return c.watching && !c.blocked; });
+      var f = S.dutyFilter;
+      var countEl = h("span");
+      var listWrap = h("div");
+      var cardOf = {};
+
+      function hit(c) {
+        if (f.platform && c.platform !== f.platform) return false;
+        if (!dutyStateHit(f.kind, c)) return false;
+        return nameHit(c.name, queryTokens(f.q));
+      }
+      function resetAll() {
+        f.q = ""; f.kind = "all"; f.platform = "";
+        paintBody(true);
+      }
+      function apply() {
+        var rows = watched.filter(hit);
+        countEl.textContent = listCountText(rows.length, watched.length, "个会话");
+        listWrap.textContent = "";
+        if (!watched.length) {
+          if (S.chatsLoaded) listWrap.appendChild(h("div", { class: "ims-empty",
+            text: "还没有值守会话。用上面的搜索加入一个人或一个群。" }));
+          return;
+        }
+        if (!rows.length) {
+          listWrap.appendChild(filterEmpty("没有匹配的值守会话。", resetAll));
+          return;
+        }
+        rows.forEach(function (c) {
+          var card = cardOf[c.platform + ":" + c.chat_id];
+          if (card) listWrap.appendChild(card);
+        });
+      }
 
       scroll.appendChild(searchCard());
       scroll.appendChild(dutyCard());
 
+      var bar = watched.length ? filterBar({
+        store: f, rows: watched,
+        specs: [
+          ["all", "全部", "不加状态筛选"],
+          ["running", "处理中", "只看 agent 正在这通会话里处理的"],
+          ["failed", "上轮失败", "只看上一轮失败、还没恢复的会话"],
+          ["pending", "待回", "只看还有没回的待回消息的会话"]
+        ],
+        platforms: platformList(watched), placeholder: "搜索值守会话名称",
+        nameOf: function (c) { return c.name; },
+        stateHit: dutyStateHit, onApply: apply
+      }) : null;
+
       scroll.appendChild(h("div", { class: "ims-card" },
         h("div", { class: "ims-card-h" },
           h("span", { class: "ims-ico", html: icon("headset", 15) }),
-          "值守中 " + (watched.length || "")),
-        h("div", { class: "ims-hint", text: "值守 = 这通会话的新消息会唤醒 agent。一通会话绑一个 DSH 会话，默认永久复用；工作区决定 agent 调研的范围。" })));
+          "值守中", countEl),
+        h("div", { class: "ims-hint", text: "值守 = 这通会话的新消息会唤醒 agent。一通会话绑一个 DSH 会话，默认永久复用；工作区决定 agent 调研的范围。" }),
+        bar));
+      scroll.appendChild(listWrap);
 
-      if (!watched.length && S.chatsLoaded) {
-        scroll.appendChild(h("div", { class: "ims-empty", text: "还没有值守会话。用上面的搜索加入一个人或一个群。" }));
-      }
       watched.forEach(function (c) {
         var p = PLAT[c.platform] || { label: c.platform, color: "var(--fg3)" };
         var running = c.turn_state === "running";
         var tgt = targetOfChat(c.platform, c.chat_id);
         var prof = (tgt && tgt.profile_excerpt) || "";
-        scroll.appendChild(h("div", { class: "ims-card" },
+        cardOf[c.platform + ":" + c.chat_id] = h("div", { class: "ims-card" },
           h("div", { class: "ims-card-h" },
             h("div", { class: "ims-avatar", style: "--pc:" + p.color, text: (c.name || "?")[0] }),
             h("span", { class: "ims-name", text: c.name || "未命名会话" }),
@@ -2114,9 +2182,11 @@ window.__ModuleLoader__.load({
             running ? h("span", { class: "ims-tag", style: "color:var(--ok)", text: "处理中" })
                     : (c.turn_state === "warm"
                         ? h("span", { class: "ims-tag", style: "color:var(--fg3)", text: "记忆整理中" })
-                        : (c.last_ok === false
-                            ? h("span", { class: "ims-tag", style: "color:var(--danger)", text: "上轮失败" })
-                            : h("span", { class: "ims-tag", style: "color:var(--accent)", text: "值守中" }))),
+                        : (c.duty && c.duty.state === "closing"
+                            ? h("span", { class: "ims-tag", style: "color:var(--warn)", text: "任务已完成" })
+                            : (c.last_ok === false
+                                ? h("span", { class: "ims-tag", style: "color:var(--danger)", text: "上轮失败" })
+                                : h("span", { class: "ims-tag", style: "color:var(--accent)", text: "值守中" })))),
             c.kind === "group" ? h("span", { class: "ims-tag", style: "color:var(--fg3)", text: "群" }) : null,
             h("span", { class: "ims-grow" }),
             c.dsh_session ? goSessionBtn(c.platform, c.chat_id, true) : null,
@@ -2210,9 +2280,10 @@ window.__ModuleLoader__.load({
                 api("/api/unwatch", { body: { platform: c.platform, chat_id: c.chat_id } })
                   .then(function () { say("已移出值守"); loadChats(); });
               }
-            }, "移出"))));
+            }, "移出")));
       });
 
+      if (bar) bar.sync(); else apply();
       return scroll;
     }
 
@@ -2813,7 +2884,11 @@ window.__ModuleLoader__.load({
           h("span", { class: "ims-name", text: t.name }),
           h("span", { class: "ims-tag", style: "color:" + p.color, text: p.label }),
           t.kind === "group" ? h("span", { class: "ims-tag", style: "color:var(--fg3)", text: "群" }) : null,
-          chat.watching ? h("span", { class: "ims-tag", style: "color:var(--ok)", text: "值守中" }) : null,
+          chat.duty && chat.duty.state === "closing"
+            ? h("span", { class: "ims-tag", style: "color:var(--warn)", text: "任务已完成" })
+            : (chat.duty && chat.duty.state === "retired"
+                ? h("span", { class: "ims-tag", style: "color:var(--fg3)", text: "已自动退役" })
+                : (chat.watching ? h("span", { class: "ims-tag", style: "color:var(--ok)", text: "值守中" }) : null)),
           h("span", { class: "ims-grow" }),
           editBtn),
         h("div", { class: "ims-rowline" },
@@ -3535,12 +3610,16 @@ window.__ModuleLoader__.load({
       var card = h("div", { class: "ims-card" },
         h("div", { class: "ims-card-h" },
           h("span", { class: "ims-ico", html: icon("spark", 15) }),
-          "值守候选" + (counts.queued ? " · " + counts.queued + " 排队" : ""),
+          "值守候选" + (counts.queued ? " · " + counts.queued + " 排队" : "") +
+            (counts.closing ? " · 待收尾 " + counts.closing : "") +
+            (counts.retired ? " · 已退役 " + counts.retired : ""),
           h("span", { class: "ims-grow" }),
           h("span", { class: "ims-tag", style: "color:" + (d.enabled ? "var(--ok)" : "var(--fg3)"),
             text: d.enabled ? "自动分诊开" : "自动分诊关" })),
         h("div", { class: "ims-hint", text: "新群判一次；之后只在新的个人 @ 时再判。飞书直接拉 @我，" +
-          "钉钉逐新群回退，企微没有 mentions。群成员超过 10 人或人数未知，自动只能不盯；手动可开。" }),
+          "钉钉逐新群回退，企微没有 mentions。群成员超过 10 人或人数未知，自动只能不盯；手动可开。" +
+          "连续多日没有新命中会自动退役（天数在设置里调）；保活轮判断任务完成后先进 2 天观察，" +
+          "有新活自动取消；退役群的新个人 @ 仍会重新分诊，私聊需手动重新加入。" }),
         h("div", { class: "ims-kv" },
           h("span", { text: "值守台" }),
           h("span", { text: (desk.session_turns || 0) + " 次判断（每次新建会话） · " +
@@ -3655,7 +3734,11 @@ window.__ModuleLoader__.load({
       var card = h("div", { class: "ims-card" },
         h("div", { class: "ims-card-h" }, h("span", { class: "ims-ico", html: icon("bell", 15) }), "值守分诊"),
         h("div", { class: "ims-hint", text: "判定在独立值守台工作区，不碰项目。分诊轮不发消息；" +
-          "新群一律只盯 @我；群成员超过上限或人数未知时自动不盯，手动可开。" }));
+          "新群一律只盯 @我；群成员超过上限或人数未知时自动不盯，手动可开。" }),
+        h("div", { class: "ims-hint", text: "自动退役只算会叫醒分身的消息：私聊来信、群里点你名；" +
+          "群里的非 @ 闲聊不算。待回未处理、正在处理、试用复核中的会话不会退役。" }),
+        h("div", { class: "ims-hint", text: "任务完成收尾只由保活轮判断：群的任务干完 / 某人的活结束，" +
+          "记 2 天观察；期间有新消息、待回或在飞就取消，到期没新活才退出。" }));
       function num(key, label, min, max) {
         return h("div", { class: "ims-rowline" },
           h("span", { text: label }),
@@ -3669,6 +3752,8 @@ window.__ModuleLoader__.load({
       card.appendChild(num("max_per_day", "每日分诊上限", 0, 200));
       card.appendChild(num("max_group_members", "群成员上限（只数人）", 0, 1000));
       card.appendChild(num("record_keep_days", "记录保留天数", 0, 365));
+      card.appendChild(num("retire_after_days", "无命中自动退役（天，0=关）", 0, 365));
+      card.appendChild(num("close_after_days", "任务完成收尾（天，0=关）", 0, 30));
       card.appendChild(num("sweep_min", "@ 清查间隔（分钟，0=关）", 0, 1440));
       card.appendChild(num("sweep_lookback_hours", "@ 清查回看小时", 1, 168));
       card.appendChild(h("div", { class: "ims-rowline" },

@@ -65,6 +65,8 @@ export const DEFAULT_CONFIG = {
     max_per_day: 20,
     session_max_turns: 20,
     record_keep_days: 30,
+    retire_after_days: 7,
+    close_after_days: 2,
     sweep_min: 10,
     sweep_lookback_hours: 24,
     max_group_members: 10,
@@ -162,6 +164,8 @@ export function normalizeConfig(input) {
   du.max_per_day = int(du.max_per_day, 0, 200, 20);
   du.session_max_turns = int(du.session_max_turns, 0, 200, 20);
   du.record_keep_days = int(du.record_keep_days, 0, 365, 30);
+  du.retire_after_days = int(du.retire_after_days, 0, 365, 7);
+  du.close_after_days = int(du.close_after_days, 0, 30, 2);
   du.sweep_min = int(du.sweep_min, 0, 1440, 10);
   if (du.sweep_min > 0 && du.sweep_min < 10) du.sweep_min = 10;
   du.sweep_lookback_hours = int(du.sweep_lookback_hours, 1, 168, 24);
@@ -455,9 +459,9 @@ export class State {
         : { at: 0, failed: false, turn_id: "", active: false },
       added_at: Number(input.added_at) || 0,
       duty: {
-        state: ["none", "queued", "triaging", "watch", "trial", "reviewing", "ignore", "failed"]
+        state: ["none", "queued", "triaging", "watch", "trial", "reviewing", "ignore", "failed", "retired", "closing"]
           .includes(input.duty?.state) ? input.duty.state : "none",
-        trigger: ["added", "mentioned", "manual", "review", "sweep"]
+        trigger: ["added", "mentioned", "manual", "review", "sweep", "warm"]
           .includes(input.duty?.trigger) ? input.duty.trigger : "",
         event_id: String(input.duty?.event_id || ""),
         event_at: Number(input.duty?.event_at) || 0,
@@ -471,6 +475,8 @@ export class State {
         error: String(input.duty?.error || "").slice(0, 160),
         sweep_epoch: Number(input.duty?.sweep_epoch) || 0,
         member_count: Math.max(0, Number(input.duty?.member_count) || 0),
+        last_hit_at: Number(input.duty?.last_hit_at) || 0,
+        close_at: Number(input.duty?.close_at) || 0,
       },
       recent: [],
       prompt_session: typeof input.prompt_session === "string" ? input.prompt_session : "",

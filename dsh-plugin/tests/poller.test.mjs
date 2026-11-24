@@ -1282,6 +1282,198 @@ test("heartbeat skips a platform whose auth is gone", async () => {
   assert.equal(turns.warmCalls, 1);
 });
 
+test("auto-retires a watched chat after N days without a hit", () => {
+  const { state, poller } = setup();
+  const now = Date.now() / 1000;
+  const chat = state.ensureChat("feishu", "oc_stale", { name: "旧值守", kind: "p2p" });
+  chat.watching = true;
+  chat.timer = 1;
+  chat.added_at = now - 30 * 86400;
+  chat.duty.state = "watch";
+  chat.duty.decided_at = now - 20 * 86400;
+  chat.duty.last_hit_at = now - 8 * 86400;
+  // 退役不依赖保温窗口：保温关掉、宿主未就绪也照跑。
+  state.data.config.dsh.warm_min = 0;
+  poller.turns.hostReady = () => false;
+  state.save();
+
+  assert.equal(poller.maybeRetire(), 1);
+  assert.equal(chat.watching, false);
+  assert.equal(chat.timer, -1);
+  assert.equal(chat.duty.state, "retired");
+  assert.equal(chat.duty.by, "system");
+  assert.match(chat.duty.reason, /7 天没有新的命中/);
+  assert.equal(poller.maybeRetire(), 0, "retired is not counted twice");
+});
+
+test("auto-retire leaves pending, active and trial chats alone; 0 disables it", () => {
+  const { state, poller, turns } = setup();
+  const now = Date.now() / 1000;
+  const mk = (id, extra = {}) => {
+    const chat = state.ensureChat("feishu", id, { name: id, kind: "p2p" });
+    chat.watching = true;
+    chat.timer = 1;
+    chat.added_at = now - 30 * 86400;
+    chat.duty.state = "watch";
+    chat.duty.last_hit_at = now - 8 * 86400;
+    Object.assign(chat, extra);
+    return chat;
+  };
+  const pending = mk("oc_pending");
+  state.mergeRecent(pending, [msg("m1", now - 60, { kind: "dm", state: "new" })]);
+  const trial = mk("oc_trial");
+  trial.duty.state = "trial";
+  const active = mk("oc_active");
+  turns.active.add("feishu:oc_active");
+  assert.equal(poller.maybeRetire(), 0);
+  for (const chat of [pending, trial, active]) {
+    assert.equal(chat.watching, true);
+    assert.equal(chat.duty.state, chat === trial ? "trial" : "watch");
+  }
+
+  turns.active.clear();
+  state.setMessageState("feishu", "m1", "replied");
+  state.data.config.duty.retire_after_days = 0;
+  assert.equal(poller.maybeRetire(), 0);
+  assert.equal(pending.watching, true);
+});
+
+test("a new personal message stamps duty.last_hit_at; group chatter does not", async () => {
+  const { state, poller, adapter } = setup();
+  const now = Date.now() / 1000;
+  const dm = state.ensureChat("feishu", "oc_dm_hit", { name: "私聊", kind: "p2p" });
+  dm.watching = true;
+  dm.last_epoch = 1000;
+  adapter.messages = [msg("m1", now)];
+  await poller.pollChat("feishu", "oc_dm_hit", { force: true });
+  assert.equal(dm.duty.last_hit_at, now);
+
+  const group = state.ensureChat("feishu", "oc_group_hit", { name: "群", kind: "group" });
+  group.watching = true;
+  group.timer = 1;
+  group.last_epoch = 1000;
+  adapter.messages = [msg("m2", now, { mentions: [] })];
+  await poller.pollChat("feishu", "oc_group_hit", { force: true });
+  assert.equal(group.duty.last_hit_at, 0, "non-@ group chatter is not a hit");
+});
+
+test("task-done closing retires after the grace period with a custom reason", () => {
+  const { state, poller } = setup();
+  const now = Date.now() / 1000;
+  const chat = state.ensureChat("feishu", "oc_closing", { name: "收尾对象", kind: "p2p" });
+  chat.watching = true;
+  chat.timer = 1;
+  chat.duty.state = "closing";
+  chat.duty.decided_at = now - 3 * 86400;
+  chat.duty.close_at = now - 100;
+  chat.duty.last_hit_at = now - 4 * 86400;
+  state.save();
+
+  assert.equal(poller.maybeClose(), 1);
+  assert.equal(chat.watching, false);
+  assert.equal(chat.timer, -1);
+  assert.equal(chat.duty.state, "retired");
+  assert.equal(chat.duty.close_at, 0);
+  assert.match(chat.duty.reason, /任务已完成，2 天无新活/);
+  assert.equal(poller.maybeRetire(), 0, "already retired");
+});
+
+test("task-done closing cancels on pending, active and post-mark turn", () => {
+  const { state, poller, turns } = setup();
+  const now = Date.now() / 1000;
+  const mk = (id) => {
+    const chat = state.ensureChat("feishu", id, { name: id, kind: "p2p" });
+    chat.watching = true;
+    chat.timer = 1;
+    chat.duty.state = "closing";
+    chat.duty.decided_at = now - 200;
+    chat.duty.close_at = now + 86400;
+    chat.duty.last_hit_at = now - 300;
+    return chat;
+  };
+  const pending = mk("oc_pending");
+  state.mergeRecent(pending, [msg("m1", now - 10, { kind: "dm", state: "new" })]);
+  const active = mk("oc_active");
+  turns.active.add("feishu:oc_active");
+  const turned = mk("oc_turn");
+  turned.last_turn = { ok: true, reason: "", at: now - 100 };
+
+  assert.equal(poller.maybeClose(), 3);
+  for (const chat of [pending, active, turned]) {
+    assert.equal(chat.duty.state, "watch");
+    assert.equal(chat.duty.close_at, 0);
+    assert.equal(chat.watching, true);
+  }
+});
+
+test("close_after_days=0 cancels an existing closing without retiring", () => {
+  const { state, poller } = setup();
+  const now = Date.now() / 1000;
+  const chat = state.ensureChat("feishu", "oc_closing_off", { name: "收尾关闭", kind: "p2p" });
+  chat.watching = true;
+  chat.timer = 1;
+  chat.duty.state = "closing";
+  chat.duty.close_at = now - 100;
+  chat.duty.decided_at = now - 200;
+  state.data.config.duty.close_after_days = 0;
+  assert.equal(poller.maybeClose(), 1);
+  assert.equal(chat.watching, true);
+  assert.equal(chat.duty.state, "watch");
+  assert.equal(chat.duty.close_at, 0);
+});
+
+test("7-day retirement skips a closing chat", () => {
+  const { state, poller } = setup();
+  const now = Date.now() / 1000;
+  const chat = state.ensureChat("feishu", "oc_closing_skip", { name: "收尾观察", kind: "p2p" });
+  chat.watching = true;
+  chat.timer = 1;
+  chat.added_at = now - 30 * 86400;
+  chat.duty.state = "closing";
+  chat.duty.decided_at = now - 20 * 86400;
+  chat.duty.close_at = now + 2 * 86400;
+  chat.duty.last_hit_at = now - 20 * 86400;
+  assert.equal(poller.maybeRetire(), 0);
+  assert.equal(chat.watching, true);
+  assert.equal(chat.duty.state, "closing");
+});
+
+test("a new hit during polling cancels task-done closing", async () => {
+  const { state, poller, adapter } = setup();
+  const now = Date.now() / 1000;
+  const chat = state.ensureChat("feishu", "oc_closing_hit", { name: "收尾命中", kind: "p2p" });
+  chat.watching = true;
+  chat.timer = 1;
+  chat.last_epoch = 1000;
+  chat.duty.state = "closing";
+  chat.duty.decided_at = now - 100;
+  chat.duty.close_at = now + 2 * 86400;
+  adapter.messages = [msg("m1", now)];
+  await poller.pollChat("feishu", "oc_closing_hit", { force: true });
+  assert.equal(chat.duty.state, "watch");
+  assert.equal(chat.duty.close_at, 0);
+  assert.match(chat.duty.reason, /取消收尾/);
+});
+
+test("sweep re-queues a retired group on a new personal @", async () => {
+  const { state, poller, adapter } = setup();
+  const now = Date.now() / 1000;
+  state.data.desk.baseline_at = now - 10000;
+  const chat = state.ensureChat("feishu", "oc_retired", { name: "退役群", kind: "group" });
+  chat.added_at = now - 5000;
+  chat.duty.state = "retired";
+  chat.duty.decided_at = now - 500;
+  chat.duty.sweep_epoch = now - 200;
+  adapter.atMe = [{
+    msg_id: "om_new", sender_id: "ou_x", sender_name: "同事", content: "新排期",
+    ts_epoch: now - 10, mentions: [{ id: "ou_me" }], chat_id: "oc_retired", chat_name: "退役群",
+  }];
+  await poller.maybeSweep();
+  assert.equal(chat.duty.state, "queued");
+  assert.equal(chat.duty.trigger, "sweep");
+  assert.ok(chat.duty.last_hit_at >= now - 10);
+});
+
 
 test("duty baseline queues only groups added after the baseline", async () => {
   const { state, poller, adapter } = setup();

@@ -48,8 +48,9 @@ export const DEFAULT_POLICY = `# 值守方针
 ## 硬约束
 
 - 新监听群一律只盯 @我，不开全部消息。
-- 发言权默认口径：点我名的回；没人被点名而答得了的答；信息同步可以发；别人被点名的不代答；判不准就沉默。发言要说清为什么由本人出面。
-- 分诊轮不向群里发消息；不替用户答应钱、合同、承诺或对外发言。
+- 发言权默认口径：默认沉默；发言要有增量（对方还不知道、会改变他动作的信息），或真人明确在问；机器告警 / 催办卡里的 @ 多是角色字段，不算叫我干活；判不准就沉默。发言要说清为什么由本人出面。
+- 分诊轮不向群里发消息；不替用户答应参会、约时间、出差、签字、付款、授权、拍板或接受风险；
+  分身能自己做完的查证 / 复测 / 修复 / 文档 / 解释 / 催办不在此列。
 - 不确定就 ignore；等新的个人 @ 再判，不猜。
 `;
 export function dutyDir(state) {
@@ -86,9 +87,9 @@ export function normalizeDuty(chat, out) {
   if (!chat) return out;
   const d = out || chat.duty || {};
   chat.duty = {
-    state: ["none", "queued", "triaging", "watch", "trial", "reviewing", "ignore", "failed"]
+    state: ["none", "queued", "triaging", "watch", "trial", "reviewing", "ignore", "failed", "retired", "closing"]
       .includes(d.state) ? d.state : "none",
-    trigger: ["added", "mentioned", "manual", "review", "sweep"].includes(d.trigger) ? d.trigger : "",
+    trigger: ["added", "mentioned", "manual", "review", "sweep", "warm"].includes(d.trigger) ? d.trigger : "",
     event_id: String(d.event_id || ""),
     event_at: Number(d.event_at) || 0,
     triaged_at: Number(d.triaged_at) || 0,
@@ -101,6 +102,8 @@ export function normalizeDuty(chat, out) {
     error: String(d.error || "").slice(0, 160),
     sweep_epoch: Number(d.sweep_epoch) || 0,
     member_count: Math.max(0, Number(d.member_count) || 0),
+    last_hit_at: Number(d.last_hit_at) || 0,
+    close_at: Number(d.close_at) || 0,
   };
   return chat.duty;
 }
@@ -123,6 +126,8 @@ export function newEvent(chat, trigger, { id = "", at = 0 } = {}) {
     error: "",
     sweep_epoch: prev.sweep_epoch || 0,
     member_count: prev.member_count || 0,
+    last_hit_at: prev.last_hit_at || 0,
+    close_at: 0,
   };
   chat.duty = event;
   return event;
@@ -166,6 +171,94 @@ export function watchGroups(state) {
 
 export function publicDuty(chat) {
   return chat?.duty ? { ...chat.duty } : null;
+}
+
+/**
+ * 值班活跃时钟：最后一次「需要本人知道」的证据。命中消息优先，其次加入 / 判断 / 打开 /
+ * 真实 turn / 唤醒；不用 `last_epoch`（群里的非 @ 闲聊也会推进它）。
+ */
+export function activityAt(chat) {
+  return Math.max(
+    Number(chat?.duty?.last_hit_at) || 0,
+    Number(chat?.duty?.decided_at) || 0,
+    Number(chat?.added_at) || 0,
+    Number(chat?.last_turn?.at) || 0,
+    Number(chat?.last_wake_at) || 0,
+    Number(chat?.session_bound_at) || 0,
+  );
+}
+
+/**
+ * 自动退役：只做状态迁移，不删会话 / 记忆 / DSH 会话。调用方负责删旧决策文件与 save。
+ * 返回 false 只在 chat 为空时；其余情况视为已退役。
+ */
+export function retire(chat, { now = nowSec(), days = 7, reason = "" } = {}) {
+  if (!chat) return false;
+  const d = normalizeDuty(chat);
+  const n = Math.max(1, Math.round(Number(days) || 7));
+  chat.watching = false;
+  chat.timer = -1;
+  d.state = "retired";
+  d.by = "system";
+  d.decided_at = now;
+  d.reason = String(reason || `${n} 天没有新的命中，自动退出值守`).slice(0, 160);
+  d.review_at = 0;
+  d.error = "";
+  d.attempts = 0;
+  d.event_id = "";
+  d.event_at = 0;
+  d.close_at = 0;
+  // 退役前的旧 @ 不再翻出来；新的个人 @ 仍由 sweep 正常入队。
+  d.sweep_epoch = Math.max(Number(d.sweep_epoch) || 0, Number(chat.last_epoch) || 0);
+  return true;
+}
+
+/**
+ * 保活轮判断「任务已完成」后进入 2 天观察。只做状态迁移；调用方检查 pending /
+ * 在飞等条件并 save。返回 false 表示当前状态不接受收尾（排队 / 试用 / 已退役等）。
+ */
+export function markClosing(chat, { reason = "", now = nowSec(), days = 2 } = {}) {
+  if (!chat || !chat.watching || chat.blocked) return false;
+  const d = normalizeDuty(chat);
+  if (!["watch", "none"].includes(d.state)) return false;
+  const text = String(reason || "").replace(/[\u0000-\u001f\u007f]/g, " ")
+    .replace(/\s+/g, " ").trim().slice(0, 160);
+  if (!text) return false;
+  const n = Math.max(1, Math.round(Number(days) || 2));
+  d.state = "closing";
+  d.trigger = "warm";
+  d.by = "agent";
+  d.decided_at = now;
+  d.reason = text;
+  d.close_at = now + n * 86400;
+  d.review_at = 0;
+  d.error = "";
+  return true;
+}
+
+/** 观察期内来了新活 / 手动操作 / 收尾开关被关：取消收尾，回到正常值守。 */
+export function cancelClosing(chat, { now = nowSec(), reason = "有新消息，取消收尾" } = {}) {
+  if (!chat || chat.duty?.state !== "closing") return false;
+  const d = normalizeDuty(chat);
+  d.state = "watch";
+  d.by = "system";
+  d.decided_at = now;
+  d.reason = String(reason || "有新消息，取消收尾").slice(0, 160);
+  d.close_at = 0;
+  d.review_at = 0;
+  d.error = "";
+  return true;
+}
+
+/** 解析保活轮 assistant 消息里的收尾标记；只认 exact 行首 `[值守收尾] 任务已完成：…`。 */
+export function parseClosingMarker(text) {
+  let reason = "";
+  for (const line of String(text || "").split(/\r?\n/)) {
+    const m = line.match(/^\s*\[值守收尾\]\s*任务已完成\s*[：:]\s*(.*)$/u);
+    if (!m) continue;
+    reason = m[1].replace(/[\u0000-\u001f\u007f]/g, " ").replace(/\s+/g, " ").trim().slice(0, 40);
+  }
+  return reason;
 }
 
 function assertFile(file) {
@@ -273,6 +366,7 @@ export async function applyDecision({ state, chat, decision, turns = null, profi
     d.review_at = 0;
     d.error = "";
     d.attempts = 0;
+    d.close_at = 0;
     d.sweep_epoch = Math.max(Number(d.sweep_epoch) || 0, Number(chat.last_epoch) || 0);
     clearPending(chat);
     if (turns?.cancel) turns.cancel(chat.platform, chat.chat_id, "duty_ignore");
@@ -296,6 +390,7 @@ export async function applyDecision({ state, chat, decision, turns = null, profi
   }
   d.error = "";
   d.attempts = 0;
+  d.close_at = 0;
   // 首次开监听时，探针已经把这批消息交给接手轮；把正常水位推到探针最新，
   // 避免下一轮快车道把同一批 @ 再唤醒一次。sweep 探针本身仍是只读的。
   if (firstOpen && Array.isArray(contextMessages) && contextMessages.length) {
@@ -407,7 +502,7 @@ export function cleanupRecords(state, cfg = null) {
 
 export function dutyCounts(state) {
   const out = { queued: 0, triaging: 0, trial: 0, failed: 0, ignore: 0, watch: 0,
-    reviewing: 0, quota_used: quotaUsed(state), watch_groups: watchGroups(state) };
+    reviewing: 0, retired: 0, closing: 0, quota_used: quotaUsed(state), watch_groups: watchGroups(state) };
   for (const chat of state.listChats()) {
     const st = chat.duty?.state || "none";
     if (st in out) out[st] += 1;

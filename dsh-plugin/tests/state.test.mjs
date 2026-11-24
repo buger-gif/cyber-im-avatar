@@ -59,6 +59,43 @@ test("unreleased global send_mode migrates to send_mode_default and is dropped",
   assert.equal(cfg.send_mode, undefined);
 });
 
+test("duty keeps retired state and last_hit_at through normalization", () => {
+  const { state } = tempState();
+  const chat = state.ensureChat("feishu", "oc_duty", { kind: "p2p" });
+  const normalized = state.normalizeChat({
+    platform: "feishu", chat_id: "oc_duty2", kind: "p2p",
+    duty: { state: "retired", last_hit_at: 123, reason: "7 天没有新的命中" },
+  }, "");
+  assert.equal(normalized.duty.state, "retired");
+  assert.equal(normalized.duty.last_hit_at, 123);
+  assert.equal(chat.duty.last_hit_at, 0);
+});
+
+test("retire_after_days defaults to 7 and clamps to 0..365", () => {
+  assert.equal(normalizeConfig({}).duty.retire_after_days, 7);
+  assert.equal(normalizeConfig({ duty: { retire_after_days: 0 } }).duty.retire_after_days, 0);
+  assert.equal(normalizeConfig({ duty: { retire_after_days: -1 } }).duty.retire_after_days, 0);
+  assert.equal(normalizeConfig({ duty: { retire_after_days: 999 } }).duty.retire_after_days, 365);
+});
+
+test("close_after_days defaults to 2 and clamps to 0..30", () => {
+  assert.equal(normalizeConfig({}).duty.close_after_days, 2);
+  assert.equal(normalizeConfig({ duty: { close_after_days: 0 } }).duty.close_after_days, 0);
+  assert.equal(normalizeConfig({ duty: { close_after_days: -1 } }).duty.close_after_days, 0);
+  assert.equal(normalizeConfig({ duty: { close_after_days: 99 } }).duty.close_after_days, 30);
+});
+
+test("duty keeps closing state and close_at through normalization", () => {
+  const { state } = tempState();
+  const normalized = state.normalizeChat({
+    platform: "feishu", chat_id: "oc_closing", kind: "p2p",
+    duty: { state: "closing", trigger: "warm", close_at: 1234, reason: "任务已完成" },
+  }, "");
+  assert.equal(normalized.duty.state, "closing");
+  assert.equal(normalized.duty.trigger, "warm");
+  assert.equal(normalized.duty.close_at, 1234);
+});
+
 test("new chats keep send_mode empty until they become watched", () => {
   const { state } = tempState();
   state.data.config.send_mode_default = "auto";

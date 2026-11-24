@@ -135,6 +135,7 @@ export class App {
     d.reason = String(reason || "你在面板设置").slice(0, 160);
     d.review_at = 0;
     d.error = "";
+    d.close_at = 0;
     if (action !== "ignore") return;
     // 手动停盯/屏蔽 = 停盯前已经看到的 @ 视为处理完：把定期清查的水位推到现在。
     // 否则下一轮 sweep 只看 ts > sweep_epoch，会把停盯前的旧 @ 原样再翻出来分诊一次。

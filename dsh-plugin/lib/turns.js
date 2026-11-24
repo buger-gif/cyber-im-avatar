@@ -13,12 +13,26 @@ import { chatKey, RECENT_LIMIT } from "./state.js";
 import { ACK_EMOJI, MEDIA_ADAPTERS, MEDIA_LABELS, imageMediaType } from "./im.js";
 import { chatPersonId, personRefs, RIGHTS_TITLE } from "./profiles.js";
 import { ProgressCards } from "./progress.js";
+import * as duty from "./duty.js";
 import * as workspaces from "./workspaces.js";
 
 const PLAT_LABEL = { feishu: "飞书", wecom: "企业微信", dingtalk: "钉钉" };
 
 function nowSec() {
   return Date.now() / 1000;
+}
+
+/** 取 assistant 消息里的 text 块；只认正文，不读 reasoning / tool 参数。 */
+function assistantText(data) {
+  const msg = data && typeof data === "object" ? data.message : null;
+  const parts = msg && typeof msg === "object" && msg.content != null
+    ? msg.content
+    : (data && typeof data === "object" ? data.content : null);
+  if (!Array.isArray(parts)) return "";
+  return parts
+    .filter((p) => p && typeof p === "object" && p.type === "text")
+    .map((p) => String(p.text || ""))
+    .join("\n");
 }
 
 /**
@@ -103,9 +117,10 @@ export function silentNoMention(chat) {
 export function rightsLine(custom = false) {
   return custom
     ? `发言权：本群单独改过（工作本「${RIGHTS_TITLE}」），按那一段判断。`
-    : "发言权（默认口径）：点我名的回；点了别人的只当知会、不代答；" +
-      "没点任何人的先判断（问题悬着、任务派我、要我表态就回；纯告警寒暄不回）；" +
-      "信息同步可以发；判不准就沉默。要按群改口径，在面板会话详情的「发言权」里改，只影响这个群。";
+    : "发言权（默认口径）：默认沉默。发言要有增量——对方还不知道、且会改变他动作的信息，" +
+      "或有人在问我/要我表态；机器告警、催办卡里的 @ 多是角色字段，不算叫我干活；" +
+      "机器人刚发过、卡片里写着、我说过的不重复，平台催过的不跟催；判不准就不说。" +
+      "要按群改口径，在面板会话详情的「发言权」里改，只影响这个群。";
 }
 
 /** 本人身份行：插件只说事实，取不到 name / open_id 就省略对应部分，不猜。 */
@@ -341,15 +356,22 @@ function sendModeNote(mode, { from = "" } = {}) {
       "本轮该回的，按 skill 以本人身份直接发出，不要征求确认，也不要问「要不要发」；" +
       "发完在本会话里只回一行「已发送」或失败原因，不复述全文，也不要把执行结果再发到 IM；" +
       "用户当轮说「先别发」时以当轮指令为准。只改变发送动作，不改变唤醒范围。" +
-      "涉及钱、合同、承诺、账号/系统权限或凭据、外部群，不许自动发：把正文与风险点留给用户确认。" +
+      "涉及钱、合同、价格、付款、账号/系统权限或凭据、公开发布，以及参会、约时间、出差、" +
+      "签字、拍板、接受风险 / 批准例外等需要本人到场或拍板的事，不许自动发：把正文与风险点" +
+      "留给用户确认，并记 P1。其余能查、能核、能测、能修、能写的，直接做掉再回结果，" +
+      "不要留成 P1。发送前自检：这句话是在替本人到场或拍板吗？是就删掉，只回" +
+      "「收到，具体安排我确认后答复」并记 P1。" +
       "但把本人新建的文档交付给当前会话对象（开阅读权限 + 发链接）属于正常回复，直接做、不要问。" +
       "开权限时不要带 --need-notification，避免对方收到权限通知 + 消息两次提醒。";
   }
   return head +
     "把要发的回复正文留在本会话，末尾另起一行「草稿待确认」；不要自己发，也不要反问" +
     "「要不要发」，用户说「发」再发；用户当轮说「先别发」时以当轮指令为准。" +
-    "只改变发送动作，不改变唤醒范围。涉及钱、合同、承诺、账号/系统权限或凭据、外部群，" +
-    "一律停下等确认。";
+    "只改变发送动作，不改变唤醒范围。涉及钱、合同、价格、付款、账号/系统权限或凭据、" +
+    "公开发布，以及参会、约时间、出差、签字、拍板、接受风险 / 批准例外等需要本人到场或" +
+    "拍板的事，一律停下等确认并记 P1。其余能查、能核、能测、能修、能写的，直接做掉再回结果，" +
+    "不要留成 P1。发送前自检：这句话是在替本人到场或拍板吗？是就删掉，只回" +
+    "「收到，具体安排我确认后答复」并记 P1。";
 }
 
 /**
@@ -568,9 +590,10 @@ export function buildOpenPrompt(platform, chatName, chatId, messages, {
   }
   if (kind === "group" && lines.length) {
     parts.push(mentionFactLine(messages, kind));
-    parts.push("判断顺序：先看这条点名了谁——点你名的是给你的；点了别人的只当知会；" +
-      "谁都没点的，按内容判断是不是派给我、问到我、需要我表态。" +
-      "判不准就沉默，并在回复里说清为什么由你出面。");
+    parts.push("判断顺序：先看正文要谁做什么，不是看点名。机器告警/催办卡里的 @ 多是角色字段" +
+      "（处理人/跟进人/知会人），指向别人的只当知会、不代答；人问我、派到我头上才接。" +
+      "默认沉默；发言要有增量（对方还不知道、会改变他动作的信息），机器人刚发过/卡片里写着的" +
+      "不算增量。判不准就沉默；发之前说得出「为什么由我出面」。");
   } else if (kind === "group") {
     parts.push("默认动作是沉默：没有该你说的，就不要为了确认值守往群里发消息。");
   }
@@ -679,7 +702,7 @@ export function buildDeskPrompt(chat, {
  */
 export function buildWarmPrompt(platform, chatName, chatId, {
   bookPath = "", people = [], idleMin = 0, single = false,
-  legacyPath = "", legacyHistory = "",
+  legacyPath = "", legacyHistory = "", closeAfterDays = 0,
 } = {}) {
   const label = PLAT_LABEL[platform] || platform;
   const safeName = sanitizeUntrusted(chatName || chatId);
@@ -693,7 +716,9 @@ export function buildWarmPrompt(platform, chatName, chatId, {
   if (peopleBlock.length) parts.push(...peopleBlock);
   const legacy = legacyLine(legacyPath, legacyHistory);
   if (legacy) parts.push(legacy);
-  parts.push("这一轮只做两件事：");
+  parts.push(closeAfterDays > 0
+    ? "这一轮做两件事，外加一个可选的收尾判断："
+    : "这一轮只做两件事：");
   parts.push("1. 续上下文缓存——不需要输出正文，也不需要汇报缓存状态。");
   const scope = single
     ? "这一类文件：上面那份人物档案"
@@ -703,6 +728,13 @@ export function buildWarmPrompt(platform, chatName, chatId, {
   parts.push(`2. 按 skill 的画像整理规则，只整理${scope}；该归并就归并` +
     "（合并重复、删一次性/已失效、把日期流水改写成结论）；没列出的文件不要动，不要扫目录；" +
     "不需要改就一个字都别改。");
+  if (closeAfterDays > 0) {
+    parts.push(`3. 可选收尾判断：只根据上面的记忆文件与本会话已有上下文，看这个群的任务是否已经` +
+      `干完、或这个人的活是否已经结束；确认完成且没有待办，就在 assistant 消息末尾单独写一行` +
+      ` [值守收尾] 任务已完成：<≤40 字原因>。插件会记成 ${closeAfterDays} 天观察，` +
+      `期间有新消息会自动取消；不确定、还有待办、或只是暂时没消息，就不要写。` +
+      `这行只写在 assistant 消息里，不要写进发给会话的正文。`);
+  }
   parts.push("边界：不要拉 IM 消息，不要给任何人发消息，不要调用发送类命令，" +
     "不要把这一轮当成客户来信回复。");
   parts.push("写不进去（沙箱拒绝）就跳过，不要重试、不要换路径；" +
@@ -1020,6 +1052,12 @@ export class Turns {
 
   isActive(platform, chatId) {
     return this.active.has(chatKey(platform, chatId));
+  }
+
+  /** 当前是否在跑保温轮：收尾判断不能把心跳自己当成「新活」。 */
+  warmActive(platform, chatId) {
+    const key = chatKey(platform, chatId);
+    return this.warming.has(key) || this.active.get(key)?.warm === true;
   }
 
   /** 落一条 turn 事件；日志永远不能拖垮值守（字段白名单在 turn-log.js）。 */
@@ -1721,8 +1759,11 @@ export class Turns {
         const lastReal = Math.max(Number(current.last_turn?.at) || 0,
           Number(current.session_bound_at) || 0);
         const idleMin = lastReal ? Math.round((nowSec() - lastReal) / 60) : 0;
+        const closeAfterDays = Math.max(0,
+          Number(this.state.data.config?.duty?.close_after_days) || 0);
         const prompt = buildWarmPrompt(current.platform, current.name, current.chat_id, {
           bookPath: memory.path, single: memory.single, legacyPath, legacyHistory, people, idleMin,
+          closeAfterDays,
         });
         const message = await makeUserMessage(prompt);
         // 构造载荷期间可能已有真实消息进来：再确认一次，别把心跳插到真实回复后面。
@@ -1766,6 +1807,7 @@ export class Turns {
       const capSec = Math.max(0, Number(cfgDsh.turn_cap_sec ?? 3600) || 0);
       const startedAt = Date.now();
       let promptSeen = false;
+      const warmTexts = [];
       let lastTurnStart = null;
       let turnStarted = false;
       let turnNumber = null;
@@ -1832,6 +1874,14 @@ export class Turns {
           handle.lastOk = !!result.ok;
           handle.lastReason = result.ok ? "" : (result.reason || "turn_failed");
           handle.lastAt = nowSec();
+          if (result.ok && chat.watching && !chat.blocked &&
+              this.state.pendingCount(chat) === 0) {
+            const days = Math.max(0, Number(this.state.data.config?.duty?.close_after_days) || 0);
+            const reason = days > 0 ? duty.parseClosingMarker(warmTexts.join("\n")) : "";
+            if (reason && duty.markClosing(chat, { reason, now: nowSec(), days })) {
+              this.logger.info?.(`[im-standin] task-done closing marked: ${key}`);
+            }
+          }
           this.state.save();
           if (!result.ok) {
             this.logger.warn?.(`[im-standin] warm turn ${key}: ${handle.lastReason}`);
@@ -1884,6 +1934,13 @@ export class Turns {
       const collect = (event) => {
         const type = event?.type;
         if (!warm && !desk) this.progressCards.note(chat.platform, chat.chat_id, event);
+        if (type === "assistant/message" && warm) {
+          const text = assistantText(event.data);
+          if (text.trim()) {
+            warmTexts.push(text);
+            if (warmTexts.length > 6) warmTexts.shift();
+          }
+        }
         if (type === "user/message") {
           if (event?.data?.id && event.data.id === handle.promptId) {
             promptSeen = true;

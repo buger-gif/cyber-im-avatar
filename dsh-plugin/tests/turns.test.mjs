@@ -104,6 +104,33 @@ test("warm prompt for a DM tidies only the person file", () => {
   assert.doesNotMatch(p, /会话工作本：/);
 });
 
+test("warm prompt offers the optional task-done marker only when enabled", () => {
+  const on = buildWarmPrompt("feishu", "示例群", "oc_grp", {
+    bookPath: "/tmp/book.md", closeAfterDays: 2,
+  });
+  assert.match(on, /\[值守收尾\] 任务已完成/);
+  assert.match(on, /2 天观察/);
+  assert.match(on, /不要写进发给会话的正文/);
+  const off = buildWarmPrompt("feishu", "示例群", "oc_grp", { bookPath: "/tmp/book.md" });
+  assert.doesNotMatch(off, /值守收尾/);
+  assert.match(off, /这一轮只做两件事/);
+});
+
+test("warm turn parses the task-done marker into a 2-day closing", async () => {
+  const { state, chat, host, turns } = setup({ reply: "已归并\n[值守收尾] 任务已完成：已验收" });
+  await turns.wake(chat);
+  state.setMessageState("feishu", "base", "replied");
+  const r = await turns.warm(chat);
+  assert.equal(r.ok, true);
+  await new Promise((resolve) => setTimeout(resolve, 20));
+  assert.equal(chat.duty.state, "closing");
+  assert.equal(chat.duty.trigger, "warm");
+  assert.match(chat.duty.reason, /已验收/);
+  assert.ok(chat.duty.close_at > Date.now() / 1000);
+  assert.equal(chat.watching, true);
+  assert.equal(host.followups.length >= 2, true);
+});
+
 test("open prompt for a DM reads the one file", () => {
   const p = buildOpenPrompt("feishu", "示例对象 A", "oc_dm", [], {
     bookPath: "/tmp/people/ou_other.md", single: true, kind: "p2p",
@@ -177,6 +204,36 @@ test("wake and open prompts declare the send mode on first turn and after a swit
     firstTurn: false, kind: "p2p", sendMode: "unknown",
   });
   assert.match(fallback, /发送方式：草稿审批/, "缺省/非法模式按草稿审批");
+});
+
+test("send mode notes carry the human commitment hard stop", () => {
+  for (const mode of ["draft", "auto"]) {
+    const wake = buildWakePrompt("feishu", "示例对象 A", "oc_dm", recent(1), {
+      firstTurn: true, kind: "p2p", sendMode: mode,
+    });
+    assert.match(wake, /参会/, mode);
+    assert.match(wake, /到场或拍板/, mode);
+    assert.match(wake, /P1/, mode);
+    assert.match(wake, /具体安排我确认后答复/, mode);
+    // 分身自己能做完的活不能进硬停清单；修漏洞 / 查状态 / 写文档照做。
+    assert.match(wake, /能查、能核、能测、能修、能写/, mode);
+    assert.match(wake, /直接做掉/, mode);
+    assert.doesNotMatch(wake, /准备材料|审文档|修问题|安排别人|代问/, mode);
+    const open = buildOpenPrompt("feishu", "示例群", "oc_grp", [], {
+      kind: "group", sendMode: mode,
+    });
+    assert.match(open, /参会/, mode);
+    assert.match(open, /P1/, mode);
+    assert.match(open, /直接做掉/, mode);
+  }
+  const auto = buildWakePrompt("feishu", "示例对象 A", "oc_dm", recent(1), {
+    firstTurn: true, kind: "p2p", sendMode: "auto",
+  });
+  assert.match(auto, /不许自动发/);
+  const draft = buildWakePrompt("feishu", "示例对象 A", "oc_dm", recent(1), {
+    firstTurn: true, kind: "p2p", sendMode: "draft",
+  });
+  assert.match(draft, /一律停下等确认/);
 });
 
 test("later wakes append the batch senders' profile pointers without the workbook line", () => {
@@ -1276,7 +1333,7 @@ test("open prompt carries the recent context and the group mode rule", () => {
   const prompt = buildOpenPrompt("feishu", "示例群", "oc_grp", rows, { wakeMode: "all" });
   assert.match(prompt, /最近上下文（最近 30 分钟，共 1 条）/);
   assert.match(prompt, /- \[t1\] 同事: 这个谁看下/);
-  assert.match(prompt, /判断顺序：先看这条点名了谁/);
+  assert.match(prompt, /判断顺序：先看正文要谁做什么/);
   assert.match(prompt, /关?注程度：全部消息/);
 });
 
@@ -1790,9 +1847,13 @@ test("事故 A：@ 的是别人时，载荷给事实与默认口径，不降级�
   assert.match(prompt, /本批 0 条点你名/);
   // 默认口径本来就有，用户不用配：不降级、不要求先写。
   assert.match(prompt, /发言权（默认口径）/);
-  assert.match(prompt, /点了别人的只当知会、不代答/);
-  assert.match(prompt, /没点任何人的先判断/);
-  assert.match(prompt, /信息同步可以发/);
+  assert.match(prompt, /默认沉默。发言要有增量/);
+  assert.match(prompt, /机器告警、催办卡里的 @ 多是角色字段/);
+  assert.match(prompt, /先看正文要谁做什么，不是看点名/);
+  assert.match(prompt, /指向别人的只当知会、不代答/);
+  assert.match(prompt, /机器人刚发过、卡片里写着、我说过的不重复/);
+  assert.doesNotMatch(prompt, /信息同步可以发/, "信息同步不再是无门槛动作");
+  assert.doesNotMatch(prompt, /点我名的回/, "bot 卡片的 @ 不等于要我接话");
   assert.match(prompt, /发送方式：全自动/);
   assert.doesNotMatch(prompt, /全自动暂停|发言权：未定义/);
   assert.doesNotMatch(prompt, /有该回的就按 skill 回/);
@@ -1809,10 +1870,10 @@ test("场景 B：没人点名也要能出手——载荷给默认值与例外，
     kind: "group", sendMode: "auto", selfId: "ou_me", selfName: "我", rightsDefined: true,
   });
   assert.match(prompt, /本批 0 条点你名/);
-  assert.match(prompt, /判断顺序：先看这条点名了谁/);
+  assert.match(prompt, /判断顺序：先看正文要谁做什么/);
   assert.match(prompt, /判不准就沉默/);
-  assert.match(prompt, /没点任何人的先判断（问题悬着、任务派我、要我表态就回；纯告警寒暄不回）/, "默认口径要能覆盖「没人点名」");
-  assert.match(prompt, /信息同步可以发/, "默认口径要能覆盖信息同步");
+  assert.match(prompt, /默认沉默；发言要有增量/, "默认动作是沉默");
+  assert.match(prompt, /人问我、派到我头上才接/, "没人点名、但事派到我头上要能接");
   assert.doesNotMatch(prompt, /不需要处理/, "不能写成机械禁令");
   assert.doesNotMatch(prompt, /不要往这个群发任何消息/);
 });
@@ -1875,8 +1936,8 @@ test("点名三分类：点我 / 点了别人 / 谁都没点，分开报给 agen
   assert.match(prompt, /本批 1 条点你名；1 条点了别人（不是给你的）；1 条谁都没点。/);
   assert.match(prompt, /- \[t1\] 值班机器人（@周明）: @周明 进度如何/);
   // 「谁都没点」的那条不能被载荷判死：问在群里、要表态的就是要回。
-  assert.match(prompt, /没点任何人的先判断（问题悬着、任务派我、要我表态就回；纯告警寒暄不回）/);
-  assert.doesNotMatch(prompt, /没点任何人的.*(不用回|不需要处理|一律不回)/);
+  assert.match(prompt, /人问我、派到我头上才接/);
+  assert.doesNotMatch(prompt, /不需要处理|一律不回/);
 });
 
 test("C 型态：没点你名的消息不占唤醒，但下一轮带条数提示，按需在线拉", () => {

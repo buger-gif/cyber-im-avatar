@@ -159,6 +159,16 @@ export class Poller {
       this.logError(null, null, "duty: " + (e && e.message ? e.message : e));
     }
     try {
+      this.maybeClose();
+    } catch (e) {
+      this.logError(null, null, "close: " + (e && e.message ? e.message : e));
+    }
+    try {
+      this.maybeRetire();
+    } catch (e) {
+      this.logError(null, null, "retire: " + (e && e.message ? e.message : e));
+    }
+    try {
       await this.maybeWarm();
     } catch (e) {
       this.logError(null, null, "warm: " + (e && e.message ? e.message : e));
@@ -209,6 +219,94 @@ export class Poller {
       return true;
     }
     return false;
+  }
+
+  chatBusy(chat) {
+    return typeof this.turns?.busy === "function"
+      ? this.turns.busy(chat.platform, chat.chat_id)
+      : !!this.turns?.isActive?.(chat.platform, chat.chat_id);
+  }
+
+  /**
+   * 任务完成收尾：保活轮标记后给 N 天观察。观察期内任何新命中 / 待回 / 在飞 / 手动活动
+   * 都取消收尾；到期没有新活才退役。和 maybeRetire 共用 tick，不跑模型。
+   */
+  maybeClose() {
+    const days = Math.max(0, Number(this.dutyCfg().close_after_days) || 0);
+    const now = nowSec();
+    let changed = 0;
+    for (const chat of this.state.listChats()) {
+      if (chat.duty?.state !== "closing") continue;
+      if (!days) {
+        if (duty.cancelClosing(chat, { now, reason: "任务完成收尾已关闭" })) changed += 1;
+        continue;
+      }
+      if (!chat.watching || chat.blocked) continue;
+      // 保活轮本身不是新活：它跑到一半时不要取消收尾，也不要把它当关闭障碍。
+      if (this.turns?.warmActive?.(chat.platform, chat.chat_id)) continue;
+      const mark = Number(chat.duty.decided_at) || 0;
+      const newWork = this.state.pendingCount(chat) > 0 ||
+        chat.wake?.active || chat.progress?.state === "running" || this.chatBusy(chat) ||
+        Number(chat.duty.last_hit_at) > mark ||
+        Number(chat.last_turn?.at) > mark ||
+        Number(chat.last_wake_at) > mark;
+      if (newWork) {
+        if (duty.cancelClosing(chat, { now, reason: "有新活动，取消收尾" })) changed += 1;
+        continue;
+      }
+      const closeAt = Number(chat.duty.close_at) || 0;
+      if (!closeAt) {
+        if (duty.cancelClosing(chat, { now, reason: "收尾截止缺失，取消收尾" })) changed += 1;
+        continue;
+      }
+      if (now < closeAt) continue;
+      const event = String(chat.duty.event_id || "");
+      if (!duty.retire(chat, { now, days, reason: `任务已完成，${days} 天无新活` })) continue;
+      if (event) {
+        try { fs.unlinkSync(duty.decisionPath(this.state, event)); } catch { /* best effort */ }
+      }
+      changed += 1;
+    }
+    if (changed) {
+      this.state.save();
+      this.logger.info?.(`[im-standin] task-done closing: ${changed} chat(s) updated`);
+    }
+    return changed;
+  }
+
+  /**
+   * 自动退役：连续 N 天没有命中 → 退出值守。和保温共用后台维护节拍，但不依赖保温窗口、
+   * 不依赖 DSH 宿主、不跑模型；只扫 state，一次 save。待回 / 在飞 / 试用中的会话不动。
+   */
+  maybeRetire() {
+    const days = Math.max(0, Number(this.dutyCfg().retire_after_days) || 0);
+    if (!days) return 0;
+    const now = nowSec();
+    const floor = now - days * 86400;
+    let retired = 0;
+    for (const chat of this.state.listChats()) {
+      if (!chat.watching || chat.blocked) continue;
+      const st = chat.duty?.state || "none";
+      if (["queued", "triaging", "trial", "reviewing", "closing"].includes(st)) continue;
+      if (this.state.pendingCount(chat) > 0) continue;
+      if (chat.wake?.active) continue;
+      if (chat.progress?.state === "running") continue;
+      if (this.chatBusy(chat)) continue;
+      const last = duty.activityAt(chat);
+      if (!last || last > floor) continue;
+      const event = String(chat.duty?.event_id || "");
+      if (!duty.retire(chat, { now, days })) continue;
+      // 旧决策文件不能再把刚退役的会话拉回值守。
+      if (event) {
+        try { fs.unlinkSync(duty.decisionPath(this.state, event)); } catch { /* best effort */ }
+      }
+      retired += 1;
+    }
+    if (retired) {
+      this.state.save();
+      this.logger.info?.(`[im-standin] auto-retired ${retired} duty chat(s) after ${days}d without a hit`);
+    }
+    return retired;
   }
 
   /**
@@ -658,6 +756,25 @@ export class Poller {
         quote: keepBody && m.quote && typeof m.quote === "object" ? m.quote : null,
       });
     }
+    // 值班活跃：只记「会叫醒分身」的新消息；本人消息、基线、群里的非 @ 闲聊不算。
+    // 用消息自身时间而不是 now，补拉旧消息不会把退役时钟往后推。
+    let hitEpoch = 0;
+    for (const m of classified) {
+      if (!newIds.has(m.msg_id)) continue;
+      if (m.kind === "out" || m.kind === "cmd") continue;
+      const hit = m.kind === "dm" || m.kind === "mention" || m.kind === "service" ||
+        (chat.kind === "group" && chat.wake_mode === "all" && m.kind === "fyi");
+      if (hit) hitEpoch = Math.max(hitEpoch, Number(m.ts_epoch) || 0);
+    }
+    if (hitEpoch) {
+      chat.duty = chat.duty || {};
+      chat.duty.last_hit_at = Math.max(Number(chat.duty.last_hit_at) || 0,
+        Math.min(hitEpoch, nowSec()));
+    }
+    const newCmd = classified.some((m) => newIds.has(m.msg_id) && m.kind === "cmd");
+    if ((hitEpoch || newCmd) && chat.duty?.state === "closing") {
+      duty.cancelClosing(chat, { now: nowSec(), reason: "有新消息，取消收尾" });
+    }
     this.state.mergeRecent(chat, classified);
     if (!baseline && selfEpoch) this.state.markEarlierReplied(chat, selfEpoch);
     // 点开只读（wake=false）不推进水位：这次发现的新消息留给下一轮定时唤醒，
@@ -910,6 +1027,7 @@ export class Poller {
       d.review_at = 0;
       d.error = "";
       d.attempts = 0;
+      d.close_at = 0;
       d.event_id = "";
       d.event_at = 0;
       d.triaged_at = 0;
@@ -1544,9 +1662,11 @@ export class Poller {
               if ((Number(m.ts_epoch) || 0) < floor) continue;
               const chat = this.state.getChat("feishu", m.chat_id);
               if (!chat || chat.kind !== "group") continue;
-              if (!baseline || Number(chat.added_at) <= baseline) continue;
+              const dstate = chat.duty?.state || "none";
+              // 存量群不自动重判；自动退役的群是新信号（退役后又有人 @），允许重新入队。
+              if ((!baseline || Number(chat.added_at) <= baseline) && dstate !== "retired") continue;
               if (chat.blocked || chat.watching) continue;
-              if (!["none", "ignore", "failed"].includes(chat.duty?.state || "none")) continue;
+              if (!["none", "ignore", "failed", "retired"].includes(dstate)) continue;
               if ((Number(m.ts_epoch) || 0) <= (Number(chat.duty?.sweep_epoch) || 0)) continue;
               // 用户手动停盯过：停盯时刻之前的 @ 视为已看过，不再重复入队。
               const dismissed = Number(chat.duty?.decided_at) || 0;
@@ -1558,6 +1678,8 @@ export class Poller {
             }
             for (const { chat, newest } of byChat.values()) {
               duty.newEvent(chat, "sweep");
+              chat.duty.last_hit_at = Math.max(Number(chat.duty.last_hit_at) || 0,
+                Math.min(newest, nowSec()));
               chat.duty.sweep_epoch = Math.max(Number(chat.duty.sweep_epoch) || 0, newest);
               queued += 1;
             }
@@ -1568,8 +1690,9 @@ export class Poller {
         // 钉钉没有跨群 @我 搜索：退回逐新群；成员数未知，后续自动只能 ignore。
         for (const chat of this.state.listChats()) {
           if (chat.platform !== "dingtalk" || chat.kind !== "group" || chat.blocked || chat.watching) continue;
-          if (!baseline || Number(chat.added_at) <= baseline) continue;
-          if (!["none", "ignore", "failed"].includes(chat.duty?.state || "none")) continue;
+          const dstate = chat.duty?.state || "none";
+          if ((!baseline || Number(chat.added_at) <= baseline) && dstate !== "retired") continue;
+          if (!["none", "ignore", "failed", "retired"].includes(dstate)) continue;
           let r;
           try {
             r = await this.im.adapter("dingtalk").fetchMessages(chat.chat_id, { limit: 10 });
@@ -1591,6 +1714,8 @@ export class Poller {
           }
           if (newest) {
             duty.newEvent(chat, "sweep");
+            chat.duty.last_hit_at = Math.max(Number(chat.duty.last_hit_at) || 0,
+              Math.min(newest, nowSec()));
             chat.duty.sweep_epoch = Math.max(Number(chat.duty.sweep_epoch) || 0, newest);
             queued += 1;
           }

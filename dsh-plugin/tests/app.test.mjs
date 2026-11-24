@@ -1209,7 +1209,7 @@ test("rights: 群只读写发言权那一段，其余字节不变；stale 拒写
   assert.equal(out.body.ok, true);
   assert.equal(out.body.applicable, true);
   assert.equal(out.body.custom, false, "没写过 = 默认口径");
-  assert.match(out.body.text, /没点任何人/, "默认口径必须有内容");
+  assert.match(out.body.text, /默认：沉默/, "默认口径必须有内容");
   assert.equal(out.body.text, out.body.default_text);
   assert.equal(out.body.title, "## 我在这个群的发言权");
 
@@ -1241,7 +1241,7 @@ test("rights: 群只读写发言权那一段，其余字节不变；stale 拒写
   });
   assert.equal(out.body.ok, true);
   assert.equal(out.body.custom, false);
-  assert.match(out.body.text, /没点任何人/);
+  assert.match(out.body.text, /默认：沉默/);
   assert.match(fs.readFileSync(file, "utf8"), /^## 我在这个群的发言权$/m);
 
   // targets 行带上契约状态
