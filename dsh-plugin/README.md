@@ -2,6 +2,8 @@
 
 把仓库根目录那套 skill（`SKILL.md` + `scripts/`）做成 DeepSeek Harness 里的常驻壳：
 侧边栏一个席位，点开是每日关注、值守实例、服务对象（群工作本 / 人物档案）与手动发送。
+每个版本改了什么、修了哪些平台差异，见
+[CHANGELOG](https://github.com/buger-gif/cyber-im-avatar/blob/main/CHANGELOG.md)。
 
 **分工（spec 0004）：插件只当壳，skill 是唯一的脑子。**
 
