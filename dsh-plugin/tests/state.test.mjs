@@ -554,6 +554,7 @@ test("progress card config defaults off and chat override is tri-state", () => {
   const state = new State(dir);
   state.load();
   assert.equal(state.data.config.dsh.progress_card, false);
+  assert.equal(state.data.config.dsh.progress_card_group, false);
   const chat = state.ensureChat("feishu", "oc_progress_state", { name: "示例", kind: "p2p" });
   assert.equal(chat.progress_card, null);
   assert.deepEqual(chat.progress.ids, []);
@@ -570,6 +571,8 @@ test("progress card config defaults off and chat override is tri-state", () => {
   assert.equal(third.getChat("feishu", "oc_progress_state").progress_card, false);
   assert.equal(normalizeConfig({ dsh: { progress_card: "false" } }).dsh.progress_card, false);
   assert.equal(normalizeConfig({ dsh: { progress_card: "true" } }).dsh.progress_card, true);
+  assert.equal(normalizeConfig({ dsh: { progress_card_group: "true" } }).dsh.progress_card_group, true);
+  assert.equal(normalizeConfig({ dsh: {} }).dsh.progress_card_group, false);
 });
 
 test("recent keeps reply_to / quote only while the body is kept", () => {

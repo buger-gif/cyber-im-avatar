@@ -460,12 +460,20 @@ test("sendCard without message id fails; patchCard wraps card JSON in content", 
   const data = JSON.parse(seen[seen.indexOf("--data") + 1]);
   assert.equal(typeof data.content, "string");
   assert.deepEqual(JSON.parse(data.content), { schema: "2.0", body: {} });
+
+  const recalled = await a.recallCard("om_card");
+  assert.equal(recalled.ok, true);
+  assert.ok(seen.includes("delete"));
+  assert.equal(seen[seen.indexOf("--message-id") + 1], "om_card");
+  assert.equal(seen[seen.indexOf("--as") + 1], "user");
+  assert.ok(seen.includes("--yes"));
 });
 
-test("IM.sendCard/patchCard are feishu-only", async () => {
+test("IM.sendCard/patchCard/recallCard are feishu-only", async () => {
   const im = new IM({ dir: "/nonexistent-im-test" });
   assert.equal((await im.sendCard("wecom", "oc_dm", {})).unsupported, true);
   assert.equal((await im.patchCard("wecom", "om_card", {})).unsupported, true);
+  assert.equal((await im.recallCard("wecom", "om_card")).unsupported, true);
 });
 
 test("norm keeps feishu reply_to, including object-shaped parent ids", () => {

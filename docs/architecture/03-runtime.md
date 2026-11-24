@@ -59,8 +59,9 @@ poller 判定命中
 - **引用消息**（spec 0053）：飞书消息带 `reply_to` 时，插件在拉取后用 `+messages-mget`
   取回被引用原文，载荷在该消息行下追加一行缩进的 `↪ 引用 …`；取不到就写「原消息取不到」。
   引用原文与正文同等按不可信数据处理，只给媒体标记与 `msg_id`，不自动下载引用媒体。
-- **私聊进度卡**（spec 0052）：仅飞书 p2p；全局默认关、单聊三态覆盖；2 分钟后 `turns.ProgressCards`
-  以本人身份发 Card 2.0，第一行是工具名分类计数，不读参数/命令/正文；`progress.ids` 排除轮询误判。
+- **进度卡**（spec 0061，承接 0052）：飞书 p2p / 群聊；全局默认关（群另有 `progress_card_group`），
+  会话三态覆盖。真实 wake 的 followup 起等待期，arm 当前 turn；2 分钟后发 Card 2.0。
+  `tool/call` 看到本会话发信即撤回卡片、面板记 `replied`，没看到才按 turn 结束兜底；连续指令 handoff 同一张卡，`progress.ids` 排除轮询误判。
 - 发送方式由该值班的 `chats[].send_mode` 决定（`draft` / `auto`）；新值班首次加入时从
   `config.send_mode_default` 固化，之后改默认不覆盖它。首轮 / 开场与切档后的第一轮带一行
   声明，以此为准覆盖会话历史里的旧约定；同一会话后续轮次不重复（spec 0045）。插件只声明

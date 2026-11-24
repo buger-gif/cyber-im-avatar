@@ -75,6 +75,8 @@ export const ADAPTERS = {
       "--msg-type", "interactive", "--content", "{content}", "--as", "user"],
     cmd_patch_card: ["im", "messages", "patch", "--message-id", "{msg_id}",
       "--data", "{data}", "--as", "user"],
+    // 进度卡发信后撤回；只对插件自己记录的卡片消息 ID 调用。
+    cmd_recall_card: ["im", "messages", "delete", "--message-id", "{msg_id}", "--as", "user", "--yes"],
     // 表情回执走原生 API（没有 + 快捷命令）；--params/--data 是 lark-cli 的原始入参形状。
     cmd_reaction: ["im", "reactions", "create",
       "--params", "{\"message_id\":\"{msg_id}\"}",
@@ -1108,6 +1110,17 @@ export class Adapter {
     return { ok: true, error: "" };
   }
 
+  /** 撤回本人发出的进度卡；只由 progress 模块对自留 msg_id 调用。 */
+  async recallCard(msgId) {
+    if (!this.ad.cmd_recall_card) return { ok: false, unsupported: true, error: "recall_unavailable" };
+    const id = String(msgId || "");
+    if (!id) return { ok: false, error: "missing_msg_id" };
+    const { rc, json, raw } = await this.run(this.argv(this.ad.cmd_recall_card, { msg_id: id }), 20);
+    if (rc !== 0) return { ok: false, error: redact(raw || `rc=${rc}`, 400) };
+    if (json && json.ok === false) return { ok: false, error: redact(JSON.stringify(json), 400) };
+    return { ok: true, error: "" };
+  }
+
   /**
    * 给一条消息点表情回执。只有配了 cmd_reaction 的平台才走这里；
    * 失败只回错误字符串，由上层降级为日志，不影响 turn。
@@ -1285,6 +1298,18 @@ export class IM {
     }
     if (!adapter.ad?.cmd_send_card) return { ok: false, unsupported: true, error: "card_unavailable" };
     try { return await adapter.sendCard(chatId, card, opts); } catch (e) {
+      return { ok: false, error: `${e?.name || "Error"}: ${e?.message || e}` };
+    }
+  }
+
+  async recallCard(platform, msgId) {
+    if (platform !== "feishu") return { ok: false, unsupported: true, error: "card_unavailable" };
+    let adapter;
+    try { adapter = this.adapter(platform); } catch (e) {
+      return { ok: false, unsupported: true, error: `adapter: ${e?.message || e}` };
+    }
+    if (!adapter.ad?.cmd_recall_card) return { ok: false, unsupported: true, error: "card_unavailable" };
+    try { return await adapter.recallCard(msgId); } catch (e) {
       return { ok: false, error: `${e?.name || "Error"}: ${e?.message || e}` };
     }
   }

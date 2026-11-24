@@ -384,10 +384,11 @@ function progressCardNote(enabled) {
   if (!enabled) return "";
   return "进度卡：本轮超过 2 分钟时插件会用你本人身份发一张 Card 2.0 并原地刷新。" +
     "卡片自动显示“已做：查资料 N 次 · 改文件 N 次 · 执行操作 N 次”，不读命令、路径或正文。" +
-    "如果想让对方知道具体在做什么，在 assistant 消息里单独写一行（不会自动发到 IM）：" +
+    "如果想让会话知道具体在做什么，在 assistant 消息里单独写一行（不会自动发到 IM）：" +
     "[进度] 1/3 现在：核对数据；接着：整理结论。" +
     "只写任务级动作，不写工具名、命令、文件名、路径、链接、ID、人名、金额或未确认结论。" +
-    "不写也有动作计数，不会只剩计时器。不要另发「收到/处理中」。";
+    "不写也有动作计数，不会只剩计时器。**发出消息后插件会撤回这张卡**；发出后不用再写 [进度]，" +
+    "也不要另发「收到/处理中」。";
 }
 
 function wakeModeNote(wakeMode, kind, from = "") {
@@ -828,13 +829,15 @@ export class Turns {
     });
   }
 
-  /** 进度卡生效值：单聊三态覆盖全局；群聊/非飞书永远 false。 */
+  /** 进度卡生效值：私聊 / 群聊分别走全局键，会话三态覆盖；非飞书永远 false。 */
   progressCardFor(chat) {
-    if (!chat || chat.platform !== "feishu" || chat.kind !== "p2p") return false;
+    if (!chat || chat.platform !== "feishu") return false;
+    if (chat.kind !== "p2p" && chat.kind !== "group") return false;
     if (chat.watching !== true || chat.blocked === true) return false;
     if (chat.progress_card === true) return true;
     if (chat.progress_card === false) return false;
-    return this.state.data.config?.dsh?.progress_card === true;
+    const cfg = this.state.data.config?.dsh || {};
+    return chat.kind === "group" ? cfg.progress_card_group === true : cfg.progress_card === true;
   }
 
   setHost(hostCtx, rootCtx = null) {
@@ -1182,6 +1185,7 @@ export class Turns {
     const old = this.active.get(key);
     const hadActive = !!old;
     if (old) {
+      this.progressCards.handoff(chat.platform, chat.chat_id, old.turnId);
       this.logTurn("cancel", chat, { turn_id: old.turnId, owner: "plugin", reason: "wake" });
       old.cancelled = true;
       if (old.cancel) old.cancel();
@@ -1196,7 +1200,11 @@ export class Turns {
     const run = this._wake(chat, { interrupted, batch, hadActive });
     this.starting.set(key, run);
     try {
-      return await run;
+      const result = await run;
+      // 新轮没接手 handoff（没起来 / 开关已关 / 开场）：按取消收口，别让卡片一直挂着。
+      // 已接手时 handoffs 已空，这里是 no-op。
+      this.progressCards.abortHandoff(chat.platform, chat.chat_id, { ok: false, reason: "cancelled" });
+      return result;
     } finally {
       if (this.starting.get(key) === run) this.starting.delete(key);
     }
@@ -1247,6 +1255,7 @@ export class Turns {
     const ack = opening ? [] : this.ackTargets(current, messages);
     const old = this.active.get(key);
     if (old) {
+      this.progressCards.handoff(chat.platform, chat.chat_id, old.turnId);
       old.cancelled = true;
       if (old.cancel) old.cancel();
       else this.cancelHandle(old);
@@ -1325,7 +1334,7 @@ export class Turns {
       // 值班单点优先；还没固化（未值守/老数据）时跟随新建默认。
       const sendMode = current.send_mode || this.state.data.config.send_mode_default || "draft";
       const wakeMode = current.wake_mode || "mention";
-      const progressCard = this.progressCardFor(current);
+      const progressCard = opening ? false : this.progressCardFor(current);
       // 发言权：默认口径一直有效，本群写了自己的那一段就用它（spec 0051）。不改变发送方式。
       const rights = current.kind === "group"
         ? this.profiles.rightsFor(current.platform, current, selfId)
@@ -1365,6 +1374,7 @@ export class Turns {
       this.active.set(key, handle);
       handle.done = this.runTurn(handle, {
         chat: current, agent, sid, cwd: effective, message, ack, onSent: rememberAnnounced,
+        progress: progressCard,
       });
       this.state.save();
       return { ok: true, started: true, turn_id: turnId, state: "running" };
@@ -1798,7 +1808,7 @@ export class Turns {
     }
   }
 
-  runTurn(handle, { chat, agent, sid, cwd, message, warm = false, desk = false, ack = [], onSent = null }) {
+  runTurn(handle, { chat, agent, sid, cwd, message, warm = false, desk = false, progress = false, ack = [], onSent = null }) {
     return new Promise((resolve) => {
       const key = chatKey(chat.platform, chat.chat_id);
       // 停滞超时（默认 600s）+ 单轮总上限兜底（默认 3600s，0 = 不限），见 spec 0034。
@@ -1811,6 +1821,8 @@ export class Turns {
       let lastTurnStart = null;
       let turnStarted = false;
       let turnNumber = null;
+      let progressArmed = false;
+      let progressStarted = false;
       let settled = false;
       let watchdog = null;
       let stop = () => {};
@@ -1824,7 +1836,12 @@ export class Turns {
       };
 
       const finish = (result) => {
-        if (!warm && !desk) this.progressCards.finish(chat.platform, chat.chat_id, handle.turnId, result);
+        if (!warm && !desk && progress) {
+          this.progressCards.finish(chat.platform, chat.chat_id, handle.turnId, result);
+          if (!progressStarted) {
+            this.progressCards.abortHandoff(chat.platform, chat.chat_id, result);
+          }
+        }
         if (handle.cancelled && !handle.timedOut) {
           const wasActive = this.active.get(key)?.turnId === handle.turnId;
           if (wasActive) {
@@ -1931,9 +1948,18 @@ export class Turns {
       };
       handle.cancel = cancel;
 
+      const armProgress = () => {
+        if (warm || desk || !progress || progressArmed || !promptSeen || !turnStarted) return;
+        progressArmed = true;
+        this.progressCards.arm(chat.platform, chat.chat_id, handle.turnId, turnNumber);
+      };
+
       const collect = (event) => {
         const type = event?.type;
-        if (!warm && !desk) this.progressCards.note(chat.platform, chat.chat_id, event);
+        armProgress();
+        if (!warm && !desk && progress && progressArmed) {
+          this.progressCards.note(chat.platform, chat.chat_id, event, handle.turnId);
+        }
         if (type === "assistant/message" && warm) {
           const text = assistantText(event.data);
           if (text.trim()) {
@@ -1964,6 +1990,7 @@ export class Turns {
                 handle.adopted = true;
               }
             }
+            armProgress();
             this.logTurn("prompt_seen", chat, {
               turn_id: handle.turnId, wait_ms: Date.now() - startedAt,
               adopted: !!handle.adopted,
@@ -1977,6 +2004,7 @@ export class Turns {
             turnStarted = true;
             turnNumber = lastTurnStart;
           }
+          armProgress();
           return;
         }
         if (type === "turn/end") {
@@ -2012,6 +2040,10 @@ export class Turns {
         finish({ ok: false, reason: "cancelled" });
         return;
       }
+      // 先挂等待期再 followup：DSH 可能同步回放 turn/start，不能等 followup 返回才建 tracker。
+      if (!warm && !desk && progress) {
+        progressStarted = !!this.progressCards.begin({ chat, turnId: handle.turnId });
+      }
       try {
         agent.followup(message);
       } catch (e) {
@@ -2025,7 +2057,6 @@ export class Turns {
       }
       // 会话已启动、载荷已送出：现在才点回执；失败不影响本轮。
       if (!desk) this.sendAck(chat, ack);
-      if (!warm && !desk) this.progressCards.begin({ chat, turnId: handle.turnId });
       watchdog = turnWatchdog({
         stallSec: timeoutSec,
         capSec,

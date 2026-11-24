@@ -56,7 +56,7 @@ export const DEFAULT_CONFIG = {
   },
   dsh: {
     timeout: 600, turn_cap_sec: 3600, full_access: false, warm_min: 55,
-    ack_reaction: true, progress_card: false,
+    ack_reaction: true, progress_card: false, progress_card_group: false,
   },
   duty: {
     enabled: true,
@@ -153,9 +153,11 @@ export function normalizeConfig(input) {
   d.ack_reaction = d.ack_reaction == null ? true
     : !(d.ack_reaction === false || d.ack_reaction === 0 ||
         ["false", "no", "off", "0", ""].includes(String(d.ack_reaction).trim().toLowerCase()));
-  // 私聊进度卡：全局默认关；只有显式 true 才开。单聊 progress_card 三态覆盖。
+  // 进度卡：私聊 / 群聊分别默认关；只有显式 true 才开。会话 progress_card 三态覆盖。
   d.progress_card = d.progress_card === true || d.progress_card === "true" ||
     d.progress_card === 1 || d.progress_card === "1";
+  d.progress_card_group = d.progress_card_group === true || d.progress_card_group === "true" ||
+    d.progress_card_group === 1 || d.progress_card_group === "1";
   const du = cfg.duty || (cfg.duty = {});
   du.enabled = du.enabled !== false && du.enabled !== 0 && du.enabled !== "0" &&
     du.enabled !== "false" && du.enabled !== "off";
@@ -245,9 +247,9 @@ function safeReadJson(file) {
 
 const RECENT_KINDS = ["dm", "mention", "service", "fyi", "out", "cmd"];
 const RECENT_STATES = ["new", "opened", "replied", "ignored"];
-const PROGRESS_STATES = ["", "running", "done", "failed", "cancelled"];
+const PROGRESS_STATES = ["", "running", "replied", "done", "failed", "cancelled"];
 
-/** 私聊进度卡落盘形状（spec 0052）；ids 只留最近 5 个卡片消息 ID。 */
+/** 进度卡落盘形状（spec 0061）；ids 只留最近 5 个卡片消息 ID。 */
 function normalizeProgress(input) {
   const p = input && typeof input === "object" ? input : {};
   const ids = (Array.isArray(p.ids) ? p.ids : []).map((x) => String(x || "")).filter(Boolean);
@@ -436,7 +438,7 @@ export class State {
       wake_mode: WAKE_MODES.includes(input.wake_mode) ? input.wake_mode : (isGroup ? "mention" : "all"),
       // "" = 还没单独设过（首次加入值守时取 config.send_mode_default）；之后是显式选择。
       send_mode: SEND_MODES.includes(input.send_mode) ? input.send_mode : fallbackSendMode,
-      // 私聊进度卡：null=跟随全局，true=这个人开，false=这个人关；群聊忽略。
+      // 进度卡：null=跟随对应全局键，true=这个会话开，false=这个会话关；私聊/群聊都适用。
       progress_card: input.progress_card === true ? true
         : input.progress_card === false ? false : null,
       progress: normalizeProgress(input.progress),

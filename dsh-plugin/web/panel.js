@@ -1981,9 +1981,11 @@
     }
 
     function progressCardHint(c) {
-      var globalOn = ((S.cfg || {}).dsh || {}).progress_card === true;
-      if (c.progress_card === true) return "仅这个私聊开";
-      if (c.progress_card === false) return "仅这个私聊关";
+      var key = c.kind === "group" ? "progress_card_group" : "progress_card";
+      var globalOn = ((S.cfg || {}).dsh || {})[key] === true;
+      var who = c.kind === "group" ? "群" : "私聊";
+      if (c.progress_card === true) return "仅这个" + who + "开";
+      if (c.progress_card === false) return "仅这个" + who + "关";
       return "跟随全局（当前" + (globalOn ? "开" : "关") + "）";
     }
 
@@ -1994,7 +1996,7 @@
           if (!r.ok) return say("没改成：" + (r.reason || ""));
           c.progress_card = r.progress_card;
           say(mode === "inherit" ? "进度卡已改为跟随全局"
-            : (mode === "on" ? "已只给这个私聊开进度卡" : "已只关这个私聊的进度卡"));
+            : (mode === "on" ? "已只给这个会话开进度卡" : "已只关这个会话的进度卡"));
           loadChats();
           if (S.detail) refreshDetail();
         });
@@ -2002,7 +2004,7 @@
 
     function progressCardControl(c) {
       var sel = h("select", {
-        class: "ims-select", title: "私聊进度卡：跟随全局 / 开 / 关",
+        class: "ims-select", title: "进度卡：跟随全局 / 开 / 关",
         onchange: function (e) { setChatProgress(c, e.target.value); }
       },
         h("option", { value: "inherit", text: "跟随全局" }),
@@ -2015,9 +2017,10 @@
     function progressStateText(p) {
       if (!p || !p.state) return "";
       if (p.state === "running") return "处理中";
+      if (p.state === "replied") return "已回复";
       if (p.state === "done") return "已完成";
       if (p.state === "cancelled") return "已暂停";
-      if (p.state === "failed") return "发送失败";
+      if (p.state === "failed") return "处理中断";
       return "";
     }
 
@@ -2249,7 +2252,7 @@
             sendModeControl(c),
             h("span", { class: "ims-hint", text: chatSendModeHint(c) }),
             h("span", { class: "ims-grow" })),
-          c.kind !== "group" ? h("div", { class: "ims-rowline" },
+          h("div", { class: "ims-rowline" },
             h("span", { class: "ims-hint", text: "进度卡" }),
             progressCardControl(c),
             h("span", { class: "ims-hint", text: progressCardHint(c) }),
@@ -2257,7 +2260,7 @@
             progressStateText(c.progress)
               ? h("span", { class: "ims-tag", text: "进度卡：" + progressStateText(c.progress) +
                   (c.progress.updated_at ? " · " + fmtTime(c.progress.updated_at) : "") })
-              : null) : null,
+              : null),
           h("div", { class: "ims-rowline" },
             modeSelect(c),
             h("span", { class: "ims-grow" }),
@@ -3839,7 +3842,7 @@
             style: "color:" + ((cfg.dsh || {}).progress_card === true ? "var(--ok)" : "var(--fg3)"),
             text: (cfg.dsh || {}).progress_card === true ? "全局开启" : "全局关闭" })),
         h("div", { class: "ims-rowline" },
-          h("span", { class: "ims-hint", text: "默认关闭。开启后所有未单独设置的私聊生效；会话详情可按人覆盖。以你本人身份发 Card 2.0，显示查资料 / 改文件 / 执行操作次数，不读命令、路径或正文；2 分钟内结束不发。" }),
+          h("span", { class: "ims-hint", text: "默认关闭。开启后所有未单独设置的私聊生效；会话详情可按人覆盖。以你本人身份发 Card 2.0，显示查资料 / 改文件 / 执行操作次数，不读命令、路径或正文；2 分钟内结束不发。发信后卡片会撤回。" }),
           h("span", { class: "ims-grow" }),
           h("button", {
             class: "ims-btn", type: "button",
@@ -3852,6 +3855,25 @@
               });
             }
           }, (cfg.dsh || {}).progress_card === true ? "全局关闭" : "全局开启")),
+        h("div", { class: "ims-kv" },
+          h("span", { text: "群聊进度卡" }),
+          h("span", { class: "ims-tag",
+            style: "color:" + ((cfg.dsh || {}).progress_card_group === true ? "var(--ok)" : "var(--fg3)"),
+            text: (cfg.dsh || {}).progress_card_group === true ? "全局开启" : "全局关闭" })),
+        h("div", { class: "ims-rowline" },
+          h("span", { class: "ims-hint", text: "默认关闭，仅飞书群聊生效。开启后所有未单独设置且正在值守的群生效；群卡片全群可见，只显示动作计数与任务级进度，不展示内容。会话详情可按群覆盖。发信后卡片会撤回。" }),
+          h("span", { class: "ims-grow" }),
+          h("button", {
+            class: "ims-btn", type: "button",
+            onclick: function () {
+              var next = ((S.cfg || {}).dsh || {}).progress_card_group !== true;
+              api("/api/config", { body: { dsh: { progress_card_group: next } } }).then(function (c) {
+                S.cfg = c;
+                say(next ? "已全局开启群聊进度卡" : "已全局关闭群聊进度卡");
+                paint();
+              });
+            }
+          }, (cfg.dsh || {}).progress_card_group === true ? "全局关闭" : "全局开启")),
         h("div", { class: "ims-hint", text: "命中值守会话的新消息 → 在绑定的 DSH 会话里跑一轮 agent，由它自己调 IM CLI、查工作区、起草与发送。插件只负责拉取、唤醒、展示与发送方式设置。" })));
 
       // 值守节奏：快车道（值守会话，秒级）+ 慢车道（发现新会话，分钟级）

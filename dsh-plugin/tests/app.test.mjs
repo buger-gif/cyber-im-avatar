@@ -1279,10 +1279,20 @@ test("progress card global config and per-chat tri-state are exposed", async () 
     platform: "feishu", chat_id: "oc_progress_api", mode: "inherit",
   });
   assert.equal(out.body.progress_card, null);
+  out = await app.handle("/api/config", "POST", null, { dsh: { progress_card_group: true } });
+  assert.equal(out.body.dsh.progress_card_group, true);
   state.ensureChat("feishu", "oc_progress_group", { name: "群", kind: "group" });
   out = await app.handle("/api/chat/progress", "POST", null, {
     platform: "feishu", chat_id: "oc_progress_group", mode: "on",
   });
-  assert.equal(out.body.ok, false);
-  assert.equal(out.body.reason, "single_chat");
+  assert.equal(out.body.ok, true);
+  assert.equal(out.body.progress_card, true);
+  out = await app.handle("/api/chat/progress", "POST", null, {
+    platform: "feishu", chat_id: "oc_progress_group", mode: "off",
+  });
+  assert.equal(out.body.progress_card, false);
+  out = await app.handle("/api/chat/progress", "POST", null, {
+    platform: "feishu", chat_id: "oc_progress_group", mode: "inherit",
+  });
+  assert.equal(out.body.progress_card, null);
 });

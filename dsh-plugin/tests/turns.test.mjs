@@ -2076,3 +2076,87 @@ test("messages without reply_to keep the payload byte-identical", () => {
   assert.equal(prompt, "- [t0] 客户: 消息 0\n- [t1] 客户: 消息 1");
   assert.doesNotMatch(prompt, /↪ 引用|引用说明/);
 });
+
+test("progress card starts only for real wakes and is armed on the current turn", async () => {
+  const { state, chat, turns } = setup();
+  state.data.config.dsh.progress_card = true;
+  const calls = { begin: 0, arm: 0, note: 0, finish: 0, abort: 0, handoff: 0 };
+  turns.progressCards = {
+    begin: () => { calls.begin += 1; return {}; },
+    arm: () => { calls.arm += 1; },
+    note: () => { calls.note += 1; },
+    finish: () => { calls.finish += 1; },
+    abortHandoff: () => { calls.abort += 1; },
+    handoff: () => { calls.handoff += 1; },
+    stopAll: () => {},
+  };
+  const r = await turns.wake(chat);
+  assert.equal(r.started, true);
+  await new Promise((resolve) => setTimeout(resolve, 20));
+  assert.equal(calls.begin, 1, "真实 wake 才 begin");
+  assert.equal(calls.arm, 1, "prompt 消费后 arm 当前 turn");
+  assert.ok(calls.note >= 2, "之后的事件都进 tracker");
+  assert.equal(calls.finish, 1, "turn/end 收口");
+  turns.stopAll();
+});
+
+test("opening turn never starts a progress card, even when enabled", async () => {
+  const { state, chat, turns } = setup();
+  state.data.config.dsh.progress_card = true;
+  const calls = { begin: 0, arm: 0, note: 0, finish: 0 };
+  turns.progressCards = {
+    begin: () => { calls.begin += 1; return {}; },
+    arm: () => { calls.arm += 1; },
+    note: () => { calls.note += 1; },
+    finish: () => { calls.finish += 1; },
+    abortHandoff: () => {},
+    handoff: () => {},
+    stopAll: () => {},
+  };
+  const r = await turns.open(chat);
+  assert.equal(r.started, true);
+  await new Promise((resolve) => setTimeout(resolve, 20));
+  assert.equal(calls.begin, 0, "开场是内部动作，不发卡");
+  assert.equal(calls.arm, 0);
+  assert.equal(calls.note, 0);
+  assert.equal(calls.finish, 0);
+  turns.stopAll();
+});
+
+test("wake interrupts a running turn through progress handoff", async () => {
+  const { state, chat, turns } = setup({ auto: false });
+  state.data.config.dsh.progress_card = true;
+  const calls = { handoff: 0 };
+  turns.progressCards = {
+    begin: () => ({ fake: true }),
+    arm: () => {},
+    note: () => {},
+    finish: () => {},
+    abortHandoff: () => {},
+    handoff: () => { calls.handoff += 1; return "handoff"; },
+    stopAll: () => {},
+  };
+  const first = await turns.wake(chat);
+  assert.equal(first.started, true);
+  const second = await turns.wake(chat, { batch: [{
+    msg_id: "m-new", sender_id: "ou_other", sender_name: "客户",
+    content: "新指令", ts: "t2", ts_epoch: 200, kind: "dm", state: "new",
+  }] });
+  assert.equal(second.started, true);
+  assert.equal(calls.handoff, 1);
+  turns.stopAll();
+});
+
+test("progressCardFor uses separate private/group globals and per-chat override", () => {
+  const { state, chat, turns } = setup();
+  assert.equal(turns.progressCardFor(chat), false);
+  state.data.config.dsh.progress_card = true;
+  assert.equal(turns.progressCardFor(chat), true);
+  chat.progress_card = false;
+  assert.equal(turns.progressCardFor(chat), false);
+  chat.kind = "group";
+  chat.progress_card = null;
+  assert.equal(turns.progressCardFor(chat), false, "群不跟私聊全局");
+  state.data.config.dsh.progress_card_group = true;
+  assert.equal(turns.progressCardFor(chat), true);
+});

@@ -622,7 +622,7 @@ export class App {
     };
   }
 
-  /** 私聊进度卡单点覆盖：inherit / on / off；群聊不适用。 */
+  /** 进度卡单点覆盖：inherit / on / off；飞书私聊与群聊都适用。 */
   async chatProgress(q, body = {}) {
     const platform = pick(q, body, "platform");
     const chatId = pick(q, body, "chat_id");
@@ -635,7 +635,9 @@ export class App {
     const chat = this.state.ensureChat(platform, chatId, {
       name: pick(q, body, "name"), kind: pick(q, body, "kind"),
     });
-    if (chat.kind !== "p2p") return { ok: false, reason: "single_chat" };
+    if (chat.platform !== "feishu" || (chat.kind !== "p2p" && chat.kind !== "group")) {
+      return { ok: false, reason: "unsupported" };
+    }
     chat.progress_card = mode === "inherit" ? null : mode === "on";
     this.state.save();
     return { ok: true, progress_card: chat.progress_card, chat: this.publicChat(chat) };

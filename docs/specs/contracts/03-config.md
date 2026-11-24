@@ -45,7 +45,8 @@
 | `duty.sweep_lookback_hours` | `24` | 1–168 小时 | 清查回看窗口；更早不自动补 |
 | `duty.max_group_members` | `10` | 0–1000 人 | 自动开监听的群成员上限（只数人）；超过/未知只能 ignore；0=不限；手动不受限 |
 | `dsh.ack_reaction` | `true` | true / false | 命中回执：本轮载荷已送进 DSH 会话后，用 `lark-cli` 给本批 @ 你的消息点一个 `Get` 表情（表情回复，不是新消息）；只认群的 `mention` 与私聊「只认 @」模式下的 `dm`，`cmd` / `out` / `fyi` 不点。仅飞书；企微 / 钉钉没有反应命令，静默跳过。关闭后不调用 CLI |
-| `dsh.progress_card` | `false` | true / false | 私聊进度卡全局开关：默认关；开=所有未单独设置的 p2p 生效。单聊可用 `chats[].progress_card` 三态覆盖（null 跟随全局 / true 开 / false 关）；群聊与非飞书永远不发（spec 0052） |
+| `dsh.progress_card` | `false` | true / false | 私聊进度卡全局开关：默认关；开=所有未单独设置的 p2p 生效。单聊可用 `chats[].progress_card` 三态覆盖（null 跟随全局 / true 开 / false 关）；群聊与非飞书不发（spec 0061） |
+| `dsh.progress_card_group` | `false` | true / false | 群聊进度卡全局开关：默认关；开=所有未单独设置且 `kind=group` / `watching=true` / `blocked=false` 的飞书群生效。群可用 `chats[].progress_card` 三态覆盖；非飞书群不发。群卡片全群可见，卡面不展示内容（spec 0061） |
 
 > 退役：`llm.*`、`reply.*`、`reply_guard`、`ui.*`、`seed_targets`、`dsh.profile`、
 > `dsh.pre_draft`、`dsh.idle_reset_min` 不再有消费者，`normalizeConfig()` 直接丢掉；老
