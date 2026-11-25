@@ -649,7 +649,8 @@ export class Turns {
       });
       // 值班单点优先；还没固化（未值守/老数据）时跟随新建默认。
       const sendMode = current.send_mode || this.state.data.config.send_mode_default || "draft";
-      const wakeMode = current.wake_mode || "mention";
+      const wakeMode = current.wake_mode ||
+        (current.kind === "group" ? "mention" : "all");
       const progressCard = opening ? false : this.progressCardFor(current);
       // 发言权：默认口径一直有效，本群写了自己的那一段就用它（spec 0051）。不改变发送方式。
       const rights = current.kind === "group"

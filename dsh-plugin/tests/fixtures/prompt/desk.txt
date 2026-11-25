@@ -11,12 +11,12 @@ chat_id：oc_demo
 看上面这行再判断：点你名的才是给你的；有人被点名不等于你被点名。
 群成员：12 人（自动上限 100；可以自动判断）
 当前值守：2 个群 / 上限 9；今日已分诊 1 / 20
-值守方针：/tmp/im-standin/policies/oc_demo.md（可选读；判断口径仍以下面硬门为准）
+值守方针：/tmp/im-standin/policies/oc_demo.md（可选读；判断口径仍以下面分诊红线为准）
 你的任务：
 1. 判断这个群值不值得值守：watch / trial / ignore。
 2. 只写决策文件：/tmp/im-standin/decisions/evt_demo.json（字段见本 prompt；mode 只允许 mention，可省略）。
 3. 不给这个群发消息，不拉更多历史，不改 state.json。
-判断口径：硬门优先（平台判不了 @ / 屏蔽 / 人数超限或未知 / 达上限 → ignore）。
+判断口径：分诊红线优先（平台判不了 @ / 屏蔽 / 人数超限或未知 / 达上限 → ignore）。
 - 点你名（mention.id == 本人 open_id）+ 具体请求 + 工作上下文/认识的人 → watch；不确定 → ignore（trial 关，等新的点名再判）；无工作信号 → ignore。
 - 只是有人在群里被点名（被点的是别人）不算点你名；@所有人 不算个人 @；只允许 mention，不提供 all。
 - 只写一个 JSON：version/decision_id/platform/chat_id/action/watch|trial|ignore/reason/confidence；trial 可另给 review_at（可省略）。

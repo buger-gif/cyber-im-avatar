@@ -267,7 +267,8 @@ function mediaNote(m, info, platform = "") {
 }
 
 const MEDIA_HINT = "媒体说明：已适配的图片随载荷附带，文件/音视频给了本地路径；" +
-  "标注“未适配/下载失败”的再按 skill 用 CLI 取，拿不到就如实说，不要猜。";
+  "标注“未适配/下载失败”的按 skill 用 CLI 取，其它原因（超上限 / 模型不可读 / 格式不支持）" +
+  "读本地路径或转文字；拿不到就如实说，不要猜。";
 
 function mediaFor(map, msgId) {
   if (!map) return null;
@@ -366,8 +367,8 @@ export const DELTAS = {
     render({ hasCmd, prev, fresh }) {
       if (!hasCmd) return [];
       if (!fresh && prev === true) return [];
-      return ["本人（@自己）行是本人指令，不是客户消息：默认只在本地处理，除非它明确要求对外回复；" +
-        "按它执行，别 @ 本人、别为「收到」发言。"];
+      return ["本人（@自己）行是本人指令，不是客户消息：默认只在本地处理，除非它明确要求对外回复" +
+        "或按 skill 确有必要；按它执行，别 @ 本人、别为「收到」发言。"];
     },
   },
   send_mode: {
@@ -544,7 +545,7 @@ export function buildOpenPrompt(platform, chatName, chatId, messages, {
 
 /**
  * 值守台载荷：只做注意力判断，不加载完整 skill，不发消息、不拉历史。
- * 插件只给事实、路径与硬门；判断由 agent 写 decisions/<event_id>.json。
+ * 插件只给事实、路径与分诊红线；判断由 agent 写 decisions/<event_id>.json。
  */
 export function buildDeskPrompt(chat, {
   facts = {}, messages = [], people = [], review = false,
@@ -588,7 +589,7 @@ export function buildDeskPrompt(chat, {
     `${limit > 0 && (count <= 0 || count > limit) ? "超过/未知，自动只能 ignore，手动可开" : "可以自动判断"}）`);
   parts.push(`当前值守：${Number(f.watch_groups) || 0} 个群 / 上限 ${Number(f.watch_max) || "不限"}；` +
     `今日已分诊 ${Number(f.quota_used) || 0} / ${Number(f.quota_max) || "不限"}`);
-  parts.push(`值守方针：${f.policy_path || "（未提供）"}（可选读；判断口径仍以下面硬门为准）`);
+  parts.push(`值守方针：${f.policy_path || "（未提供）"}（可选读；判断口径仍以下面分诊红线为准）`);
   parts.push("你的任务：");
   parts.push("1. 判断这个群值不值得值守：watch / trial / ignore。");
   parts.push(`2. 只写决策文件：${f.decision_path || "（未提供）"}（字段见本 prompt；mode 只允许 mention，可省略）。`);
@@ -596,7 +597,7 @@ export function buildDeskPrompt(chat, {
   const trialOn = Number(f.trial_hours) > 0;
   parts.push(review
     ? "复核只允许 watch / ignore；不能续 trial。watch 不再起接手轮；理由写清这段试用看到了什么。"
-    : "判断口径：硬门优先（平台判不了 @ / 屏蔽 / 人数超限或未知 / 达上限 → ignore）。");
+    : "判断口径：分诊红线优先（平台判不了 @ / 屏蔽 / 人数超限或未知 / 达上限 → ignore）。");
   if (!review) {
     parts.push(`- 点你名（mention.id == 本人 open_id）+ 具体请求 + 工作上下文/认识的人 → watch；不确定 → ${trialOn ? "trial" : "ignore（trial 关，等新的点名再判）"}；无工作信号 → ignore。`);
     parts.push("- 只是有人在群里被点名（被点的是别人）不算点你名；@所有人 不算个人 @；只允许 mention，不提供 all。");
