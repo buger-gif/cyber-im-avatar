@@ -227,6 +227,7 @@ dsh plugin --profile web add "git+https://github.com/buger-gif/cyber-im-avatar.g
 
 - [ ] `python3 scripts/build_client.py` 跑过（改过 `web/panel.js` 就必须跑）
 - [ ] `python3 tests/run_tests.py` 全绿
+- [ ] `node dsh-plugin/scripts/prompt-stats.mjs` 的读数抄进当日 log（载荷劣化看趋势）
 - [ ] `package.json` 版本号动了，`repository` / `homepage` / `bugs` 指回 GitHub
 - [ ] `npm pack --dry-run` 里没有 `__pycache__`、`screenshots`、`.db`、`panel.json`
 - [ ] 走 CI 发版时：npm 包页的 Trusted Publisher 已登记本仓库 + `publish.yml`；tag 与 version 一致

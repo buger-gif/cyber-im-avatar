@@ -5,12 +5,13 @@
 
 ## 更新时间
 
-2026-11-24（0.26.0 已发布：0056–0061 进版；npm latest 0.26.0、tag `v0.26.0`、市场索引已指向；用户确认真机验收通过）
+2026-11-25（0062 载荷瘦身与防腐实现并归档，随下个版本发；0.26.0 仍是已发布版本）
 
 ## 最近批次
 
 | 日期 | 主题 | 证据 |
 | --- | --- | --- |
+| 2026-11-25 | 载荷瘦身与防腐（0062，已归档，真机项挂账）：载荷只留事实 / 变化 / 硬门，开场口径 1904 → 706 字；`DELTAS` 口径注册表 + 三个缺口修复；快照 / 预算 / 矩阵测试与 `prompt-stats`；skill 分载到 `references/standalone.md`（532 → 339 行），`AGENTS.md` 加铁律 9 | `dsh-plugin/lib/prompt.js`、`dsh-plugin/lib/turns.js`、`dsh-plugin/tests/{prompt-snapshot,prompt-rules}.test.mjs`、`dsh-plugin/scripts/prompt-stats.mjs`、`SKILL.md`、`references/standalone.md`、`docs/specs/archive/0062-启动载荷瘦身与防腐.md` |
 | 2026-11-24 | 0.26.0 发布：0056–0061 进版；Trusted Publishing 成功（run 45343717026，4m39s，版本自检通过）；npm latest 0.26.0（06:57:01Z）；tag `v0.26.0`；市场索引指向 0.26.0；npm / 自托管索引 / awesome 收录三处描述同步 | `CHANGELOG.md`、`dsh-plugin/package.json`、`dsh-plugin/market/index.json`、[run 45343717026](https://github.com/buger-gif/cyber-im-avatar/actions/runs/45343717026)、[awesome PR #18426](https://github.com/awesome-dsh-plugin/awesome-dsh-plugin/pull/18426) |
 | 2026-11-24 | 进度卡等待期与群聊（0061，已归档，真机已验）：卡片按等待期而非 turn，发信即撤回、面板记 `replied`；连续指令 handoff 同一张卡；开场不建卡；飞书群聊新增默认关闭的独立开关与单群三态 | `dsh-plugin/lib/{progress,turns,im,state,app}.js`、`dsh-plugin/web/panel.js`、`dsh-plugin/lib/client.js`、契约 01/02/03、`docs/specs/archive/0061-进度卡等待期与群聊.md`、ADR 0020 |
 | 2026-11-24 | 发言权默认沉默（0060，已归档，真机已验）：默认动作改为沉默；发言要有增量或真人明确在问；机器告警 / 催办卡的角色 @ 不算叫我干活，机器人发过 / 卡片写着 / 自己说过的不重复；日报加 `[未回]` | `dsh-plugin/lib/{profiles,turns,duty}.js`、`dsh-plugin/web/panel.js`、`dsh-plugin/lib/client.js`、`SKILL.md`、`docs/decisions/implemented/0019-发言权默认沉默.md` |
@@ -31,7 +32,7 @@
 
 ## 当前断点
 
-- **active 已清空**：0056–0061 实现、归档并发版，下一个 spec 从 0062 起；上限 2。
+- **active 已清空**：0062 已实现并归档（随下个版本进版）；下一个 spec 从 0063 起；上限 2。
 - **0.26.0 已发布**：npm latest 0.26.0（发布 2026-11-24T06:57:01Z），tag `v0.26.0`，
   市场索引指向 0.26.0；0052 / 0053 / 0054 / 0056–0061 的真机验收由用户确认通过，挂账已清。
 - **各市场描述已同步**：npm 描述与 README、自托管索引（`--source npm`）、awesome-dsh-plugin
@@ -43,19 +44,24 @@
 
 ## 挂账（按优先级）
 
-1. **真实客户 live turn / 真实平台媒体**：0013 / 0017 只做过合成验证，真实飞书 / 企微
+1. **0062 真机两项**：面板「加入值守」看一次开场载荷（应 ≤30 行、口径 18 行）、一次真实命中
+   仍按发送方式起草 / 发送；自动测试已覆盖快照与预算，真机等用户在场时补。
+2. **0062 残留（低频）**：会话压缩后只补口径 / 运行形态 / 记忆路径 / 硬门，不重新注入
+   `/cyber-im-avatar` 手势；若规则正文恰被压缩掉，最坏表现是沉默或停手（安全侧）。彻底解决
+   需评估压缩后补手势的 token 成本，下次做载荷相关 spec 时一起看。
+3. **真实客户 live turn / 真实平台媒体**：0013 / 0017 只做过合成验证，真实飞书 / 企微
    图片、文件、语音尚未命中；等用户在场或指定测试会话时补，不主动外发。
-2. **历史待回清理**：旧库迁移带来的约 50 条 pending 是否一次清掉，待用户拍板。
-3. **0.5.0 屏蔽的 UI 端到端截图**：功能已过测试，截图验证仍中断。
-4. **钉钉真发与真人闭环**：轮询 / 唤醒 / 发送已支持，真实发送只到 dry-run；真发前先定
+4. **历史待回清理**：旧库迁移带来的约 50 条 pending 是否一次清掉，待用户拍板。
+5. **0.5.0 屏蔽的 UI 端到端截图**：功能已过测试，截图验证仍中断。
+6. **钉钉真发与真人闭环**：轮询 / 唤醒 / 发送已支持，真实发送只到 dry-run；真发前先定
    `--ai-tag` 口径（默认给消息打 AI 标识），再找真人会话跑「命中 → 草稿 → 发送 → 重挂」。
 
 ## 下一步
 
-1. 等 awesome-dsh-plugin 描述更新 PR #18426 合并；评审要求改就推同一分支，不重开 PR。
-2. 等真实客户消息 / 媒体命中；只观察，不主动给真实客户发消息。
-3. 用户确认后清理历史待回；钉钉补真人闭环。
-4. 补 0.5.0 屏蔽 UI 的端到端截图。
+1. 发版时把 0062 一起进版；按 runbook 把 `prompt-stats` 读数抄进当日 log。
+2. 等 awesome-dsh-plugin 描述更新 PR #18426 合并；评审要求改就推同一分支，不重开 PR。
+3. 等真实客户消息 / 媒体命中；只观察，不主动给真实客户发消息。
+4. 用户确认后清理历史待回；钉钉补真人闭环；补 0.5.0 屏蔽 UI 端到端截图。
 
 ## 规则性提醒
 
