@@ -30,8 +30,9 @@
 | 用户怎么装、怎么用 | `README.md`、`SKILL.md`、`dsh-plugin/README.md` | 改用户可见行为的人 |
 | 每个版本改了什么 | `CHANGELOG.md` | 发版的人 |
 
-`references/` 不属于这套体系：它是**平台事实**（飞书 / 企微 / 钉钉的 CLI 行为与坑位），
-随平台漂移而改，被 `SKILL.md` 与 `scripts/doctor.py` 直接引用。
+`references/` 不属于这套体系：它是 skill 包内的**按需资料**——平台事实（飞书 / 企微 / 钉钉的
+CLI 行为与坑位）与独立形态手册（`references/standalone.md`），随平台或形态漂移而改，被
+`SKILL.md` 与 `scripts/doctor.py` 直接引用。
 
 ## 3. 三类生命周期，写法完全不同
 
