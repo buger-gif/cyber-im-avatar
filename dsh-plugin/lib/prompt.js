@@ -98,7 +98,7 @@ export function mentionFactLine(messages, kind = "group") {
     .filter((m) => m && m.kind !== "out" && m.kind !== "cmd");
   const mine = list.filter((m) => m.kind === "mention").length;
   const rest = list.filter((m) => m.kind !== "mention");
-  if (!rest.length) return `本批 ${mine} 条点你名（mention.id == 本人 open_id）。`;
+  if (!rest.length) return `本批 ${mine} 条点你名（有结构化 mention 时只认 ID，没有时按 @名字 兜底）。`;
   const others = rest.filter((m) => Array.isArray(m.mentions) && m.mentions.length > 0).length;
   if (!others) {
     return `本批 ${mine} 条点你名；其余 ${rest.length} 条没点你名。`;
@@ -147,7 +147,7 @@ function formatMsgLine(m, mediaInfo = null, platform = "", dupNames = null, self
   if (!text) text = "（正文在线查）";
   if (text.length > 800) text = text.slice(0, 800) + "…";
   text = sanitizeUntrusted(text);
-  const note = mediaNote(m, mediaInfo, platform);
+  const note = sanitizeUntrusted(mediaNote(m, mediaInfo, platform));
   let body = text;
   if (note) {
     const label = MEDIA_LABELS[m.msg_type] || "";
@@ -299,8 +299,9 @@ const START_OPEN_NOTE =
  * 只在首轮 / 压缩后声明一次，逐轮复读会让载荷重新变长。
  */
 const HARD_GATE =
-  "硬门：钱/合同/价格/付款/权限/凭据/公开发布，以及参会/约时间/出差/签字/拍板需本人到场的事，" +
-  "不自动发：回「收到，具体安排我确认后答复」并记 P1；其余能查、能核、能测、能修、能写的直接做掉。";
+  "硬门：钱/合同/价格/付款/权限/凭据/公开发布、接受风险/批准例外，以及参会/约见/电话/出差/面试/" +
+  "培训/签字/拍板等需本人到场或拍板的事，不答应、不定时间、不自动发：回「收到，具体安排我确认后答复」" +
+  "并记 P1；其余能查、能核、能测、能修、能写的直接做掉。";
 
 /**
  * 可自定义口径注册表：builder 只遍历它，测试也遍历它（spec 0062 §5）。
@@ -320,11 +321,11 @@ export const DELTAS = {
       const back = prev && prev !== value ? "；已从上一档切回" : "";
       if (value === "all") {
         return [kind === "group"
-          ? "关注程度：全部消息（每条新消息都会唤醒；没点你名的默认不回，要表态的写进日报）。"
+          ? "关注程度：全部消息（每条新消息都会唤醒；没点你名的默认不说话，正文明确派给本人或要本人表态的要接）。"
           : "关注程度：全部消息（每条新消息都会唤醒）。"];
       }
       return [kind === "group"
-        ? `关注程度：只认 @（mention.id == 本人 open_id 才唤醒${back}）。`
+        ? `关注程度：只认 @（有结构化 mention 时只认 ID，没有时按 @名字 兜底${back}）。`
         : `关注程度：只认 @（对方 @ 你或正文写 @你的名字才唤醒；其它消息不转给你${back}）。`];
     },
   },
@@ -365,7 +366,8 @@ export const DELTAS = {
     render({ hasCmd, prev, fresh }) {
       if (!hasCmd) return [];
       if (!fresh && prev === true) return [];
-      return ["本人（@自己）行是本人指令，不是客户消息：按它执行，别 @ 本人、别为「收到」发言。"];
+      return ["本人（@自己）行是本人指令，不是客户消息：默认只在本地处理，除非它明确要求对外回复；" +
+        "按它执行，别 @ 本人、别为「收到」发言。"];
     },
   },
   send_mode: {
@@ -432,7 +434,9 @@ export function buildWakePrompt(platform, chatName, chatId, messages, {
     .map((m) => formatMsgLine(m, mediaFor(mediaMap, m.msg_id), platform, dupNames, selfId));
   const peopleBlock = personLines(people);
   const legacy = legacyLine(legacyPath, legacyHistory);
-  const fresh = firstTurn || !announced;
+  const declared = !!(announced && (announced.send_mode || announced.wake_mode ||
+    announced.cmd || announced.hard || announced.rights != null || announced.progress_card != null));
+  const fresh = firstTurn || !declared;
   const hasCmd = messages.some((m) => m.kind === "cmd");
   const deltas = deltaBlock({
     announced, fresh, kind, sendMode, wakeMode, rightsCustom, progressCard, hasCmd,
@@ -445,10 +449,11 @@ export function buildWakePrompt(platform, chatName, chatId, messages, {
       facts.push(`另有 ${silentCount} 条没点你名的群消息没转来；需要时按 skill 在线拉。`);
     }
   }
-  const media = mediaSize(mediaMap) ? [MEDIA_HINT] : [];
-
   if (!firstTurn) {
-    return [...lines, legacy, ...peopleBlock, ...facts, ...deltas, ...hard]
+    // 压缩 / 重启后会话里可能已经没有规则与路径：补一次运行形态与记忆文件，
+    // 否则「只改载荷给出的文件」会变成没有路径可改。正常续轮不带。
+    const refill = fresh ? [RUNTIME_LINE, memoryLine(bookPath, single)] : [];
+    return [...refill, ...lines, legacy, ...peopleBlock, ...facts, ...deltas, ...hard]
       .filter(Boolean).join("\n");
   }
   return [
@@ -470,7 +475,7 @@ export function buildWakePrompt(platform, chatName, chatId, messages, {
     payloadNote(messages.length),
     ...deltas,
     ...hard,
-    ...media,
+    ...(mediaSize(mediaMap) ? [MEDIA_HINT] : []),
   ].filter(Boolean).join("\n");
 }
 
@@ -513,8 +518,10 @@ export function buildOpenPrompt(platform, chatName, chatId, messages, {
   if (lines.length) {
     parts.push(dutyContext && dutyContext.action
       ? `分诊时看到的最近 ${lines.length} 条：`
-      : `最近上下文（最近 30 分钟，共 ${lines.length} 条；更早的按 skill 在线拉，不要重发已处理过的）：`);
+      : `最近上下文（窗口 30 分钟，最近 ${lines.length} 条；更早的按 skill 在线拉，不要重发已处理过的）：`);
     parts.push(...lines);
+    const hint = quoteHint(messages);
+    if (hint) parts.push(hint);
   } else {
     parts.push("最近 30 分钟没有新消息。");
   }
@@ -584,7 +591,7 @@ export function buildDeskPrompt(chat, {
   parts.push(`值守方针：${f.policy_path || "（未提供）"}（可选读；判断口径仍以下面硬门为准）`);
   parts.push("你的任务：");
   parts.push("1. 判断这个群值不值得值守：watch / trial / ignore。");
-  parts.push(`2. 只写决策文件：${f.decision_path || "（未提供）"}（字段见本 prompt；没有 mode，新群一律 mention）。`);
+  parts.push(`2. 只写决策文件：${f.decision_path || "（未提供）"}（字段见本 prompt；mode 只允许 mention，可省略）。`);
   parts.push("3. 不给这个群发消息，不拉更多历史，不改 state.json。");
   const trialOn = Number(f.trial_hours) > 0;
   parts.push(review
@@ -593,12 +600,12 @@ export function buildDeskPrompt(chat, {
   if (!review) {
     parts.push(`- 点你名（mention.id == 本人 open_id）+ 具体请求 + 工作上下文/认识的人 → watch；不确定 → ${trialOn ? "trial" : "ignore（trial 关，等新的点名再判）"}；无工作信号 → ignore。`);
     parts.push("- 只是有人在群里被点名（被点的是别人）不算点你名；@所有人 不算个人 @；只允许 mention，不提供 all。");
-    parts.push("- 只写一个 JSON：version/decision_id/platform/chat_id/action/watch|trial|ignore/reason/confidence；trial 还需 review_at（可选）。");
+    parts.push("- 只写一个 JSON：version/decision_id/platform/chat_id/action/watch|trial|ignore/reason/confidence；trial 可另给 review_at（可省略）。");
     parts.push("- 决策文件路径就是上面给的路径；写不进去就如实报告，不要改别的路径。");
     parts.push(`必须带 decision_id="${f.event_id || ""}"、platform="${chat?.platform || ""}"、` +
       `chat_id="${chat?.chat_id || ""}"。`);
-    parts.push('示例：{"version":1,"decision_id":"<上面的 event_id>","platform":"<上面的平台>",' +
-      '"chat_id":"<上面的 chat_id>","action":"watch|trial|ignore","reason":"单行理由",' +
+    parts.push('示例（action 取 watch / trial / ignore 之一）：{"version":1,"decision_id":"<上面的 event_id>",' +
+      '"platform":"<上面的平台>","chat_id":"<上面的 chat_id>","action":"watch","reason":"单行理由",' +
       '"confidence":0.7}；trial 另给 "review_at"（可省略）。');
   }
   parts.push("这是判断轮，不是客户消息：不要把判断内容发到任何群。");
@@ -639,8 +646,8 @@ export function buildWarmPrompt(platform, chatName, chatId, {
     "（合并重复、删一次性/已失效、把日期流水改写成结论）；没列出的文件不要动，不要扫目录；" +
     "不需要改就一个字都别改。");
   if (closeAfterDays > 0) {
-    parts.push(`3. 可选收尾判断：只根据上面的记忆文件与本会话已有上下文，看这个群的任务是否已经` +
-      `干完、或这个人的活是否已经结束；确认完成且没有待办，就在 assistant 消息末尾单独写一行` +
+    parts.push(`3. 可选收尾判断：只根据上面的记忆文件与本会话已有上下文，看${single ? "这个会话的活是否已经结束" : "这个群的任务是否已经干完"}、` +
+      `或这个人的活是否已经结束；确认完成且没有待办，就在 assistant 消息末尾单独写一行` +
       ` [值守收尾] 任务已完成：<≤40 字原因>。插件会记成 ${closeAfterDays} 天观察，` +
       `期间有新消息会自动取消；不确定、还有待办、或只是暂时没消息，就不要写。` +
       `这行只写在 assistant 消息里，不要写进发给会话的正文。`);

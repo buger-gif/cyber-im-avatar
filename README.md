@@ -220,7 +220,8 @@ python3 scripts/reauth.py feishu        # bot 直接给你发一张「一键续�
 - 应用没开通的必需权限自动取交集跳过（否则 OAuth 会整体失败）；多了权限直接拒跑，
   要加必须 `--add` + `--allow-add`
 
-完整标准（必需清单、三种边界情况、企微/钉钉为什么没有 scope）写在 **SKILL.md → 权限标准**。自查：
+完整标准（必需清单、三种边界情况、企微/钉钉为什么没有 scope）写在
+**references/standalone.md → 权限标准**。自查：
 
 ```bash
 python3 scripts/reauth.py feishu --show-scope   # 本次申请几项 / 新增几项（应为 0）

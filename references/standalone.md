@@ -1,6 +1,6 @@
-本文件只在**独立 skill 形态**读：载荷里没有「运行形态：DSH 插件壳」标记时就是独立 skill 形态。
-**DSH 插件壳内不要读它**——插件已负责监听、水位与唤醒。
-载荷开头带 `/cyber-im-avatar` 且含「运行形态：DSH 插件壳」时属于壳内。
+本文件只在**独立 skill 形态**读：用户直接叫起本 skill、载荷不来自插件时才是独立形态。
+载荷带「运行形态：DSH 插件壳」，或以「值守命中 /（值守心跳 /（值守台」开头时属于 DSH 插件壳，
+**壳内不要读它**——插件已负责监听、水位与唤醒。
 
 **目录**
 
@@ -48,13 +48,13 @@ python3 scripts/feishu_listen_cli.py --chat-id oc_xxx --sender ou_yyy --until "$
 # 2. 拉上下文（命中往往不止一条）
 lark-cli im +chat-messages-list --chat-id oc_xxx --order desc --limit 10 --as user
 # 3. 起草前只读 persona.md + 记忆文件（单聊：对方的人物档案；群：工作本 + 要回/被 @ 的
-#    那位档案，路径见「记忆文件」），不加载其他会话的事实
-# 4. 发出（以本人身份；发送方式以载荷声明为准：默认草稿审批，全自动才直接发）
+#    那位档案，路径见 `SKILL.md` §记忆文件），不加载其他会话的事实
+# 4. 发出（以本人身份；默认草稿审批，用户明确说「全自动」才直接发）
 lark-cli im +messages-send --chat-id oc_xxx --msg-type text --as user --text "$(cat /tmp/reply.txt)"
-# 5. 回复发出后：学到长期有效的新事实 → 按「记忆文件」写回（单聊只改人物档案；
+# 5. 回复发出后：学到长期有效的新事实 → 按 `SKILL.md` §记忆文件 写回（单聊只改人物档案；
 #    群才分人物与工作本）；没有就不动
 # 6. 重挂监听（水位已自增，勿回拨）；临时值守继续传同一个 --until，不得重置截止时间
-#    退出原因是 [cache-refresh]：先按「记忆文件」整理载荷列出的文件，再重挂
+#    退出原因是 [cache-refresh]：先整理这次涉及的记忆文件，再重挂
 #    退出码 4（[idle-exit]）是值守结束：不要重挂、不要开新会话
 ```
 
@@ -66,7 +66,7 @@ agent 拉一次上下文就能看到整批，不会把用户连续唤醒 N 次�
   「3 小时没有新消息，值守已结束」即可。用户之后明确要求继续值守时，重挂才加
   `--new-watch` 重新计时；自动重挂永远不加。
 - **55 分钟保温**：退出 `3` 且 stderr 带 `[cache-refresh]` 时，重挂前先按
-  「记忆文件」整理载荷列出的文件（该归并就归并，不需要就跳过），不要发消息；
+  `SKILL.md` §记忆文件 整理这次值守涉及的记忆文件（该归并就归并，不需要就跳过），不要发消息；
   再按原参数重挂，这次模型调用会续上上下文缓存。
 
 ## 监听脚本公共参数
@@ -166,6 +166,9 @@ CLI 体检的 warn（如有新版本）只提醒、不阻塞；体检只查启�
 ```bash
 python3 scripts/bootstrap.py --note feishu "示例群" "……"             # 群工作本补一条
 python3 scripts/bootstrap.py --person-note feishu ou_xxx "对价格敏感"  # 人物档案补一条
+python3 scripts/bootstrap.py --compact feishu --chat oc_xxx        # 群工作本去重并归档 .history.md
+python3 scripts/bootstrap.py --compact-person feishu ou_xxx        # 人物档案去重并归档（--dry-run 预演）
+python3 scripts/bootstrap.py --persons [feishu]                    # 列人物档案（名字取首个 # 标题）
 python3 scripts/bootstrap.py --delete-data --yes   # 删除画像、语料、persona 和水位
 ```
 

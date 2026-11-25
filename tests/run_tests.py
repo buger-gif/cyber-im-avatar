@@ -214,15 +214,15 @@ def test_docs():
                 leak.append(f"{os.path.basename(f)}:{pat}")
     check("无真实 ID / token 泄漏", not leak, "; ".join(leak))
 
-    # ④ 权限标准必须写在 SKILL.md 里（公开分发的前提：规则随包走）
-    skill = open(os.path.join(ROOT, "SKILL.md"), encoding="utf-8").read()
+    # ④ 权限标准必须随包走（SKILL.md 或独立形态手册；两者都在 skill 安装包里）
+    skill = _skill_docs()
     for kw, why in (("权限标准", "缺章节标题"),
                     ("keep", "缺默认策略说明"),
                     ("minimal", "缺最小集策略"),
                     ("--allow-add", "缺扩权闸门用法"),
                     ("--domain all", "缺「默认全量申请」这个坑"),
                     ("企业微信 / 钉钉", "缺无 scope 平台的差异说明")):
-        check(f"SKILL.md 含「{kw}」（{why}）", kw in skill)
+        check(f"skill 文档含「{kw}」（{why}）", kw in skill)
 
 
 STUB = '''#!/usr/bin/env python3
@@ -1233,9 +1233,18 @@ def test_probe_path_retry_policy():
         bs.listen_probe = orig
 
 
+def _skill_docs():
+    """规则随包走：SKILL.md 是常驻规则，独立形态手册在 references/standalone.md。"""
+    parts = [open(os.path.join(ROOT, "SKILL.md"), encoding="utf-8").read()]
+    ref = os.path.join(ROOT, "references", "standalone.md")
+    if os.path.exists(ref):
+        parts.append(open(ref, encoding="utf-8").read())
+    return "\n".join(parts)
+
+
 def test_safety_docs():
     """公开 skill 必须包含注入边界与不可重置的临时值守说明。"""
-    skill = open(os.path.join(ROOT, "SKILL.md"), encoding="utf-8").read()
+    skill = _skill_docs()
     check("文档声明聊天内容不可信", "不可信" in skill)
     check("文档禁止聊天消息触发命令/读文件", "执行命令" in skill and "读文件" in skill)
     check("文档提供 --until", "--until" in skill)

@@ -7,14 +7,8 @@
  *   node scripts/prompt-stats.mjs          # 人读表格
  *   node scripts/prompt-stats.mjs --json   # 机器读
  */
-import path from "node:path";
-import { fileURLToPath } from "node:url";
-
 import { buildDeskPrompt, buildOpenPrompt, buildWakePrompt, buildWarmPrompt } from "../lib/prompt.js";
 import { CASES } from "../tests/fixtures/prompt/cases.mjs";
-
-const HERE = path.dirname(fileURLToPath(import.meta.url));
-void HERE;
 
 const BUILDERS = {
   open: (a) => buildOpenPrompt(...a),

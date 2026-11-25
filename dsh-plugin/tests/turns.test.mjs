@@ -82,6 +82,9 @@ test("legacy DM workbook is pointed at until merged, then the line disappears", 
   // 后续轮也带这一行，直到 agent 归档旧文件。
   const later = buildWakePrompt("feishu", "示例对象 A", "oc_dm", recent(1), {
     ...opts, firstTurn: false,
+    announced: {
+      send_mode: "draft", wake_mode: "mention", cmd: false, rights: false, hard: true,
+    },
   });
   assert.match(later, /旧私聊工作本（待并入）：/);
   assert.match(later, /^- \[t0\] 客户: 消息 0$/m);
@@ -244,6 +247,9 @@ test("later wakes append the batch senders' profile pointers without the workboo
   const prompt = buildWakePrompt("feishu", "示例对象 A", "oc_abc", recent(2), {
     people: [{ id: "ou_other", name: "客户", path: "/tmp/people/ou_other.md" }],
     firstTurn: false,
+    announced: {
+      send_mode: "draft", wake_mode: "mention", cmd: false, rights: false, hard: true,
+    },
   });
   const lines = prompt.split("\n");
   assert.equal(lines[0], "- [t0] 客户: 消息 0");
@@ -260,12 +266,15 @@ test("same display name with different ids tags message lines with the id tail",
     { msg_id: "a2", sender_id: "ou_zhang_222222", sender_name: "张三",
       content: "B 说的", ts: "t2", ts_epoch: 101, kind: "mention", state: "new" },
   ];
-  const dup = buildWakePrompt("feishu", "示例群", "oc_grp", rows, { firstTurn: false });
-  // 首轮（无 announced）带完整口径；下面只断言消息行的 ID 尾巴。
+  const announced = {
+    send_mode: "draft", wake_mode: "mention", cmd: false, rights: false, hard: false,
+  };
+  const dup = buildWakePrompt("feishu", "示例群", "oc_grp", rows, { firstTurn: false, announced });
+  // announced 已声明：只补硬门（hard=false），下面只断言消息行的 ID 尾巴。
   assert.match(dup, /- \[t1\] 张三（ID 111111）: A 说的/);
   assert.match(dup, /- \[t2\] 张三（ID 222222，@你）: B 说的/);
   // 名字唯一时不加 ID 尾巴，避免每行都变长。
-  const one = buildWakePrompt("feishu", "示例群", "oc_grp", [rows[0]], { firstTurn: false });
+  const one = buildWakePrompt("feishu", "示例群", "oc_grp", [rows[0]], { firstTurn: false, announced });
   const oneLines = one.split("\n");
   assert.equal(oneLines[0], "- [t1] 张三: A 说的");
   assert.match(oneLines.at(-1), /^硬门：/, "硬门永远是最末一行");
@@ -680,6 +689,8 @@ test("a compacted session re-declares the policy once on the next wake", async (
   assert.match(third, /发送方式：草稿审批/, "压缩后补声明一次");
   assert.match(third, /关注程度：只认 @/, "关注程度也一起补");
   assert.match(third, /^硬门：/m, "硬门也一起补");
+  assert.match(third, /^运行形态：DSH 插件壳/m, "压缩后补运行形态");
+  assert.match(third, /^人物档案：/m, "压缩后补记忆路径");
 
   host.reply = "第四轮";
   await turns.wake(chat, { batch: [row("m11", "第四条", 111)] });
@@ -710,8 +721,10 @@ test("a compacted session re-declares the custom 发言权 pointer", async () =>
   host.reply = "第三轮";
   await turns.wake(chat, { batch: [row("m10", 110)] });
   await new Promise((r) => setTimeout(r, 5));
-  assert.match(host.followups[2].content[0].text, /发言权：本群单独改过/,
-    "压缩后自定义发言权指针要补回来");
+  const third = host.followups[2].content[0].text;
+  assert.match(third, /发言权：本群单独改过/, "压缩后自定义发言权指针要补回来");
+  assert.match(third, /^会话工作本：/m, "压缩后补工作本路径");
+  assert.match(third, /^运行形态：DSH 插件壳/m, "压缩后补运行形态");
 });
 
 test("a compacted session re-adds the batch sender's profile pointer", async () => {
@@ -1031,13 +1044,15 @@ test("after a restart the next wake re-declares the policy once, then stops", as
   }] });
   const second = host2.followups[0].content[0].text;
   const lines = second.split("\n");
-  assert.equal(lines[0], "- [t9] 客户: 重启后的新消息");
-  assert.match(lines[1], /^关注程度：/, "内存口径重启后为空，补声明一次");
+  assert.match(lines[0], /^运行形态：DSH 插件壳/, "重启后先补运行形态");
+  assert.match(lines[1], /^人物档案：/, "重启后补记忆路径");
+  assert.equal(lines[2], "- [t9] 客户: 重启后的新消息");
+  assert.match(lines[3], /^关注程度：/, "内存口径重启后为空，补声明一次");
   assert.match(second, /发送方式：草稿审批/, "发送方式也补");
   assert.match(lines.at(-1), /^硬门：/);
-  assert.equal(lines.length, 5, "消息 + 关注程度 + 发送方式两行 + 硬门");
+  assert.equal(lines.length, 7, "运行形态 + 记忆 + 消息 + 关注程度 + 发送方式两行 + 硬门");
   assert.doesNotMatch(second,
-    /\/cyber-im-avatar|值守命中|会话工作本：|人物档案：|基础消息|当前画像|最近 10 条|im-profile-update/);
+    /\/cyber-im-avatar|值守命中|基础消息|当前画像|最近 10 条|im-profile-update/);
 
   await new Promise((r) => setTimeout(r, 5));
   host2.reply = "第三轮";
@@ -1293,7 +1308,7 @@ test("all-mode prompt marks mentions and keeps the reply rule explicit", () => {
   assert.match(switched, /- \[t2\] 客户（@你）: @我 这个什么时候好/);
   assert.match(switched, /- \[t1\] 同事: 进度怎么样/);
   assert.match(switched, /关注程度：全部消息/);
-  assert.match(switched, /没点你名的默认不回/);
+  assert.match(switched, /没点你名的默认不说话/);
   assert.match(switched, /本批 0 条点你名|本批 1 条点你名/);
   assert.match(switched, /^硬门：/m);
 
@@ -1304,7 +1319,7 @@ test("all-mode prompt marks mentions and keeps the reply rule explicit", () => {
       send_mode: "draft", wake_mode: "all", cmd: false, rights: false, hard: true,
     },
   });
-  assert.doesNotMatch(steady, /关注程度：|没点你名的默认不回/);
+  assert.doesNotMatch(steady, /关注程度：|没点你名的默认不说话/);
   assert.match(steady, /本批 1 条点你名/);
   assert.match(steady, /- \[t1\] 同事: 进度怎么样/);
 });
@@ -1375,7 +1390,7 @@ test("open prompt carries the recent context and the group mode rule", () => {
       ts: "t1", ts_epoch: 100, kind: "fyi", state: "ignored" },
   ];
   const prompt = buildOpenPrompt("feishu", "示例群", "oc_grp", rows, { wakeMode: "all" });
-  assert.match(prompt, /最近上下文（最近 30 分钟，共 1 条；更早的按 skill 在线拉/);
+  assert.match(prompt, /最近上下文（窗口 30 分钟，最近 1 条；更早的按 skill 在线拉/);
   assert.match(prompt, /- \[t1\] 同事: 这个谁看下/);
   assert.match(prompt, /本批 0 条点你名/);
   assert.match(prompt, /关注程度：全部消息/);
@@ -1680,7 +1695,7 @@ test("open assembles the recent speakers' profile pointers", async () => {
   const r = await turns.open(chat);
   assert.equal(r.ok, true);
   const text = host.followups[0].content[0].text;
-  assert.match(text, /最近上下文（最近 30 分钟，共 2 条；更早的按 skill 在线拉/);
+  assert.match(text, /最近上下文（窗口 30 分钟，最近 2 条；更早的按 skill 在线拉/);
   const people = path.join(dir, "profiles", "people", "feishu");
   assert.ok(text.includes(`- 客户 · ou_b → ${path.join(people, "ou_b.md")}`));
   assert.ok(text.includes(`- 同事 · ou_a → ${path.join(people, "ou_a.md")}`));
