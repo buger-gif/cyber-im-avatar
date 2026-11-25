@@ -39,7 +39,7 @@ test("first wake carries both memory layers, in order, before the message lines"
   const firstMsgAt = lines.findIndex((l) => l.startsWith("- [t0]"));
   assert.ok(bookAt > 0, "首轮要给会话工作本路径");
   assert.equal(lines[bookAt],
-    "会话工作本：/tmp/book.md（本会话的群规与工作要求；个人评价不写这里）");
+    "会话工作本：/tmp/book.md（群规与工作要求；个人评价写人物档案）");
   assert.equal(peopleAt, bookAt + 1, "人物档案块紧跟工作本");
   assert.equal(lines[peopleAt + 1], "- 张三 · ou_demo_zhang → /tmp/people/ou_demo_zhang.md");
   assert.equal(lines[peopleAt + 2], "- 李四 · ou_demo_li → /tmp/people/ou_demo_li.md");
@@ -65,10 +65,9 @@ test("DM wake gives exactly one memory line and never the workbook", () => {
   const memoryLines = prompt.split("\n").filter((l) => l.startsWith("人物档案："));
   assert.equal(memoryLines.length, 1);
   assert.match(memoryLines[0],
-    /^人物档案：\/tmp\/people\/ou_other\.md（单聊只维护这一份/);
+    /^人物档案：\/tmp\/people\/ou_other\.md（单聊只维护这一份）$/);
   assert.doesNotMatch(prompt, /会话工作本：/);
   assert.doesNotMatch(prompt, /^- .* → /m, "单聊不再列人物档案块");
-  assert.match(prompt, /记忆只改上面给出的那份人物档案/);
 });
 
 test("legacy DM workbook is pointed at until merged, then the line disappears", () => {
@@ -135,13 +134,16 @@ test("open prompt for a DM reads the one file", () => {
   const p = buildOpenPrompt("feishu", "示例对象 A", "oc_dm", [], {
     bookPath: "/tmp/people/ou_other.md", single: true, kind: "p2p",
   });
-  assert.match(p, /人物档案：\/tmp\/people\/ou_other\.md（单聊只维护这一份/);
+  assert.match(p, /^值守已开启 · 飞书 · 示例对象 A · 会话开场$/m);
+  assert.match(p, /人物档案：\/tmp\/people\/ou_other\.md（单聊只维护这一份）$/m);
   assert.doesNotMatch(p, /会话工作本：/);
-  assert.match(p, /把上下文和这份人物档案读进来/);
+  assert.match(p, /开场轮：读上下文与记忆/);
 });
 
 test("later wakes only append the new messages when the session already knows the policy", () => {
-  const announced = { send_mode: "draft", wake_mode: "mention", cmd: false, rights: false };
+  const announced = {
+    send_mode: "draft", wake_mode: "mention", cmd: false, rights: false, hard: true,
+  };
   const prompt = buildWakePrompt("feishu", "示例对象 A", "oc_abc", recent(2), {
     firstTurn: false, announced,
   });
@@ -149,7 +151,7 @@ test("later wakes only append the new messages when the session already knows th
   assert.equal(lines.length, 2, "两条消息；发送方式没变就不再复读");
   assert.match(prompt, /^- \[t0\] 客户: 消息 0$/m);
   assert.match(prompt, /^- \[t1\] 客户: 消息 1$/m);
-  assert.doesNotMatch(prompt, /发送方式：|全量模式|只认 @ 模式|【本人指令】/);
+  assert.doesNotMatch(prompt, /发送方式：|关注程度：|发言权：|进度卡：|【本人指令】/);
   assert.doesNotMatch(prompt,
     /\/cyber-im-avatar|值守命中|chat_id：|运行形态：|会话工作本：|人物档案：/);
   assert.doesNotMatch(prompt, /本次只追加|上一轮被新消息打断|媒体说明/);
@@ -159,7 +161,8 @@ test("later wakes only append the new messages when the session already knows th
   const fallback = buildWakePrompt("feishu", "示例对象 A", "oc_abc", recent(2), {
     firstTurn: false, interrupted: true,
   });
-  assert.match(fallback.split("\n").at(-1), /^发送方式：草稿审批/);
+  assert.match(fallback, /^发送方式：草稿审批/m);
+  assert.match(fallback.split("\n").at(-1), /^硬门：/);
 });
 
 test("wake and open prompts declare the send mode on first turn and after a switch", () => {
@@ -170,14 +173,14 @@ test("wake and open prompts declare the send mode on first turn and after a swit
   assert.match(draft, /口头约定不改模式/);
   assert.match(draft, /不要自己发，也不要反问/);
   assert.match(draft, /「草稿待确认」/);
-  assert.match(draft, /一律停下等确认/);
+  assert.match(draft, /^硬门：.*不自动发/m);
 
   const auto = buildWakePrompt("feishu", "示例对象 A", "oc_dm", recent(1), {
     firstTurn: true, kind: "p2p", sendMode: "auto",
   });
   assert.match(auto, /发送方式：全自动/);
-  assert.match(auto, /不要征求确认/);
-  assert.match(auto, /不许自动发/);
+  assert.match(auto, /不问「要不要发」/);
+  assert.match(auto, /不自动发/);
   assert.doesNotMatch(auto, /发送方式：草稿审批/);
 
   // 同一会话、没变化：后续轮不再复读。
@@ -193,7 +196,7 @@ test("wake and open prompts declare the send mode on first turn and after a swit
     announced: { send_mode: "draft", wake_mode: "mention", cmd: false, rights: false },
   });
   assert.match(changed, /发送方式：全自动（已从草稿审批切换/);
-  assert.match(changed, /不要征求确认/);
+  assert.match(changed, /不问「要不要发」/);
 
   const open = buildOpenPrompt("feishu", "示例对象 A", "oc_dm", [], {
     kind: "p2p", sendMode: "auto",
@@ -212,7 +215,8 @@ test("send mode notes carry the human commitment hard stop", () => {
       firstTurn: true, kind: "p2p", sendMode: mode,
     });
     assert.match(wake, /参会/, mode);
-    assert.match(wake, /到场或拍板/, mode);
+    assert.match(wake, /本人到场/, mode);
+    assert.match(wake, /拍板/, mode);
     assert.match(wake, /P1/, mode);
     assert.match(wake, /具体安排我确认后答复/, mode);
     // 分身自己能做完的活不能进硬停清单；修漏洞 / 查状态 / 写文档照做。
@@ -229,11 +233,11 @@ test("send mode notes carry the human commitment hard stop", () => {
   const auto = buildWakePrompt("feishu", "示例对象 A", "oc_dm", recent(1), {
     firstTurn: true, kind: "p2p", sendMode: "auto",
   });
-  assert.match(auto, /不许自动发/);
+  assert.match(auto, /不自动发/);
   const draft = buildWakePrompt("feishu", "示例对象 A", "oc_dm", recent(1), {
     firstTurn: true, kind: "p2p", sendMode: "draft",
   });
-  assert.match(draft, /一律停下等确认/);
+  assert.match(draft, /硬门/);
 });
 
 test("later wakes append the batch senders' profile pointers without the workbook line", () => {
@@ -257,13 +261,14 @@ test("same display name with different ids tags message lines with the id tail",
       content: "B 说的", ts: "t2", ts_epoch: 101, kind: "mention", state: "new" },
   ];
   const dup = buildWakePrompt("feishu", "示例群", "oc_grp", rows, { firstTurn: false });
+  // 首轮（无 announced）带完整口径；下面只断言消息行的 ID 尾巴。
   assert.match(dup, /- \[t1\] 张三（ID 111111）: A 说的/);
   assert.match(dup, /- \[t2\] 张三（ID 222222，@你）: B 说的/);
   // 名字唯一时不加 ID 尾巴，避免每行都变长。
   const one = buildWakePrompt("feishu", "示例群", "oc_grp", [rows[0]], { firstTurn: false });
   const oneLines = one.split("\n");
   assert.equal(oneLines[0], "- [t1] 张三: A 说的");
-  assert.match(oneLines.at(-1), /^发送方式：草稿审批/, "发送方式永远是最末一行");
+  assert.match(oneLines.at(-1), /^硬门：/, "硬门永远是最末一行");
 });
 
 test("later wakes with stickers send only the message line, no media boilerplate", () => {
@@ -273,7 +278,9 @@ test("later wakes with stickers send only the message line, no media boilerplate
   };
   const prompt = buildWakePrompt("feishu", "示例对象 A", "oc_abc", [row], {
     firstTurn: false, mediaMap: new Map([["s1", { sticker: true }]]),
-    announced: { send_mode: "draft", wake_mode: "mention", cmd: false, rights: false },
+    announced: {
+      send_mode: "draft", wake_mode: "mention", cmd: false, rights: false, hard: true,
+    },
   });
   const lines = prompt.split("\n");
   assert.equal(lines.length, 1);
@@ -635,9 +642,9 @@ test("the owner-command rule is stated once per session, not on every command ro
 
   await turns.wake(chat, { batch: [cmdRow("c1", "帮我看下", 101)] });
   await new Promise((r) => setTimeout(r, 5));
-  assert.match(host.followups[1].content[0].text, /【本人指令】/,
-    "会话里第一条本人指令要带完整规则");
-  assert.match(host.followups[1].content[0].text, /不要 @ 本人自己/);
+  assert.match(host.followups[1].content[0].text, /本人（@自己）行是本人指令/,
+    "会话里第一条本人指令要带规则");
+  assert.match(host.followups[1].content[0].text, /别 @ 本人/);
 
   await turns.wake(chat, { batch: [cmdRow("c2", "再看一下", 102)] });
   const third = host.followups[2].content[0].text;
@@ -657,7 +664,7 @@ test("a compacted session re-declares the policy once on the next wake", async (
   await turns.wake(chat);
   await new Promise((r) => setTimeout(r, 5));
   assert.match(host.followups[0].content[0].text, /发送方式：草稿审批/);
-  assert.match(host.followups[0].content[0].text, /只认 @ 模式/);
+  assert.match(host.followups[0].content[0].text, /关注程度：只认 @/);
 
   host.reply = "第二轮";
   await turns.wake(chat, { batch: [row("m9", "第二条", 109)] });
@@ -671,11 +678,40 @@ test("a compacted session re-declares the policy once on the next wake", async (
   await new Promise((r) => setTimeout(r, 5));
   const third = host.followups[2].content[0].text;
   assert.match(third, /发送方式：草稿审批/, "压缩后补声明一次");
-  assert.match(third, /只认 @ 模式/, "关注程度也一起补");
+  assert.match(third, /关注程度：只认 @/, "关注程度也一起补");
+  assert.match(third, /^硬门：/m, "硬门也一起补");
 
   host.reply = "第四轮";
   await turns.wake(chat, { batch: [row("m11", "第四条", 111)] });
   assert.doesNotMatch(host.followups[3].content[0].text, /发送方式：/, "补一次后又安静");
+});
+
+test("a compacted session re-declares the custom 发言权 pointer", async () => {
+  const { chat, host, turns, profiles } = setup({ reply: "第一轮", kind: "group" });
+  turns.poller = {
+    identity: { feishu: { self_id: "ou_self" } },
+    pollChat: async () => {},
+  };
+  assert.equal(profiles.writeRights("feishu", chat, "ou_self", "只做跟进，不代处理人答。").ok, true);
+  const row = (id, epoch) => ({
+    msg_id: id, sender_id: "ou_other", sender_name: "客户",
+    content: "又来一条", ts: `t-${id}`, ts_epoch: epoch, kind: "mention", state: "new",
+  });
+  await turns.wake(chat);
+  await new Promise((r) => setTimeout(r, 5));
+  assert.match(host.followups[0].content[0].text, /发言权：本群单独改过/);
+
+  host.reply = "第二轮";
+  await turns.wake(chat, { batch: [row("m9", 109)] });
+  await new Promise((r) => setTimeout(r, 5));
+  assert.doesNotMatch(host.followups[1].content[0].text, /发言权：/, "没变不重复");
+
+  host.emit({ type: "compaction/summary", data: { compactionId: "c2" } });
+  host.reply = "第三轮";
+  await turns.wake(chat, { batch: [row("m10", 110)] });
+  await new Promise((r) => setTimeout(r, 5));
+  assert.match(host.followups[2].content[0].text, /发言权：本群单独改过/,
+    "压缩后自定义发言权指针要补回来");
 });
 
 test("a compacted session re-adds the batch sender's profile pointer", async () => {
@@ -996,8 +1032,10 @@ test("after a restart the next wake re-declares the policy once, then stops", as
   const second = host2.followups[0].content[0].text;
   const lines = second.split("\n");
   assert.equal(lines[0], "- [t9] 客户: 重启后的新消息");
-  assert.match(lines[1], /^发送方式：草稿审批/, "内存口径重启后为空，补声明一次");
-  assert.equal(lines.length, 2, "单聊没有人物档案块可重复；记忆文件路径已在会话历史里");
+  assert.match(lines[1], /^关注程度：/, "内存口径重启后为空，补声明一次");
+  assert.match(second, /发送方式：草稿审批/, "发送方式也补");
+  assert.match(lines.at(-1), /^硬门：/);
+  assert.equal(lines.length, 5, "消息 + 关注程度 + 发送方式两行 + 硬门");
   assert.doesNotMatch(second,
     /\/cyber-im-avatar|值守命中|会话工作本：|人物档案：|基础消息|当前画像|最近 10 条|im-profile-update/);
 
@@ -1254,17 +1292,19 @@ test("all-mode prompt marks mentions and keeps the reply rule explicit", () => {
   });
   assert.match(switched, /- \[t2\] 客户（@你）: @我 这个什么时候好/);
   assert.match(switched, /- \[t1\] 同事: 进度怎么样/);
-  assert.match(switched, /关注程度已切换为「全部消息」/);
-  assert.match(switched, /没点你名的行默认沉默/);
+  assert.match(switched, /关注程度：全部消息/);
+  assert.match(switched, /没点你名的默认不回/);
   assert.match(switched, /本批 0 条点你名|本批 1 条点你名/);
-  assert.match(switched, /判定确实是交给你的任务才发言/);
+  assert.match(switched, /^硬门：/m);
 
   // 关注程度没变：不再复读说明，只追加消息行。
   const steady = buildWakePrompt("feishu", "示例群", "oc_grp", rows, {
     firstTurn: false, wakeMode: "all",
-    announced: { send_mode: "draft", wake_mode: "all", cmd: false, rights: false },
+    announced: {
+      send_mode: "draft", wake_mode: "all", cmd: false, rights: false, hard: true,
+    },
   });
-  assert.doesNotMatch(steady, /关注程度已切换|没点你名的行默认沉默/);
+  assert.doesNotMatch(steady, /关注程度：|没点你名的默认不回/);
   assert.match(steady, /本批 1 条点你名/);
   assert.match(steady, /- \[t1\] 同事: 进度怎么样/);
 });
@@ -1277,14 +1317,14 @@ test("DM prompts never claim the group rule and spell out the @-only mode", () =
   const mention = buildWakePrompt("feishu", "示例对象 A", "oc_dm", rows, {
     firstTurn: true, wakeMode: "mention", kind: "p2p",
   });
-  assert.match(mention, /只认 @ 模式/);
+  assert.match(mention, /关注程度：只认 @/);
   assert.doesNotMatch(mention, /非点名的群消息/);
 
   const all = buildWakePrompt("feishu", "示例对象 A", "oc_dm", rows, {
     firstTurn: true, wakeMode: "all", kind: "p2p",
   });
   assert.doesNotMatch(all, /非点名的群消息/);
-  assert.doesNotMatch(all, /只认 @ 模式/);
+  assert.doesNotMatch(all, /关注程度：只认 @/);
 
   const open = buildOpenPrompt("feishu", "示例对象 A", "oc_dm", [], {
     wakeMode: "mention", kind: "p2p",
@@ -1295,15 +1335,18 @@ test("DM prompts never claim the group rule and spell out the @-only mode", () =
   // 私聊「只盯 @我」：未变不复读，从「全部消息」切过来时带一次说明。
   const steady = buildWakePrompt("feishu", "示例对象 A", "oc_dm", rows, {
     firstTurn: false, wakeMode: "mention", kind: "p2p",
-    announced: { send_mode: "draft", wake_mode: "mention", cmd: false, rights: false },
+    announced: {
+      send_mode: "draft", wake_mode: "mention", cmd: false, rights: false, hard: true,
+    },
   });
-  assert.doesNotMatch(steady, /只认 @ 模式|关注程度/);
+  assert.doesNotMatch(steady, /关注程度/);
   const switched = buildWakePrompt("feishu", "示例对象 A", "oc_dm", rows, {
     firstTurn: false, wakeMode: "mention", kind: "p2p",
     announced: { send_mode: "draft", wake_mode: "all", cmd: false, rights: false },
   });
-  assert.match(switched, /关注程度已切换为「只盯 @我」/);
-  assert.match(switched, /只有对方 @ 你/);
+  assert.match(switched, /关注程度：只认 @/);
+  assert.match(switched, /已从上一档切回/);
+  assert.match(switched, /对方 @ 你/);
 });
 
 test("open prompt works with no messages and tells the agent not to send anything", () => {
@@ -1312,11 +1355,12 @@ test("open prompt works with no messages and tells the agent not to send anythin
     people: [{ id: "ou_a", name: "张三", path: "/tmp/people/ou_a.md" }],
   });
   assert.match(prompt, /^\/cyber-im-avatar/);
-  assert.match(prompt, /值守已开启 · 飞书 · 示例群 · 会话开场（人工开启，不是新消息唤醒）/);
-  assert.match(prompt, /会话工作本：\/tmp\/book\.md（本会话的群规与工作要求；个人评价不写这里）/);
+  assert.match(prompt, /值守已开启 · 飞书 · 示例群 · 会话开场/);
+  assert.match(prompt, /会话工作本：\/tmp\/book\.md（群规与工作要求；个人评价写人物档案）/);
   assert.match(prompt, /人物档案：\n- 张三 · ou_a → \/tmp\/people\/ou_a\.md/);
   assert.match(prompt, /最近 30 分钟没有新消息/);
-  assert.match(prompt, /没有该你说的，就不要为了确认值守往群里发消息/);
+  assert.match(prompt, /开场轮：读上下文与记忆/);
+  assert.match(prompt, /发言权：默认沉默/);
 });
 
 test("open prompt without people prints only the workbook layer", () => {
@@ -1331,10 +1375,10 @@ test("open prompt carries the recent context and the group mode rule", () => {
       ts: "t1", ts_epoch: 100, kind: "fyi", state: "ignored" },
   ];
   const prompt = buildOpenPrompt("feishu", "示例群", "oc_grp", rows, { wakeMode: "all" });
-  assert.match(prompt, /最近上下文（最近 30 分钟，共 1 条）/);
+  assert.match(prompt, /最近上下文（最近 30 分钟，共 1 条；更早的按 skill 在线拉/);
   assert.match(prompt, /- \[t1\] 同事: 这个谁看下/);
-  assert.match(prompt, /判断顺序：先看正文要谁做什么/);
-  assert.match(prompt, /关?注程度：全部消息/);
+  assert.match(prompt, /本批 0 条点你名/);
+  assert.match(prompt, /关注程度：全部消息/);
 });
 
 test("open prompt marks an IM start command and never calls it a triage handoff", () => {
@@ -1347,16 +1391,16 @@ test("open prompt marks an IM start command and never calls it a triage handoff"
   const prompt = buildOpenPrompt("feishu", "示例对象 A", "oc_cmd_open", rows, {
     dutyContext: { command: { keyword: "启动", msg_id: "s1", source: "scan" } },
   });
-  assert.match(prompt, /IM 指令启动（你在会话里 @ 自己，不是新消息唤醒）/);
-  assert.match(prompt, /启动指令：@ 自己 \+ 「启动」/);
-  assert.match(prompt, /其中「启动」那条只负责打开值守，不要回复它/);
-  assert.match(prompt, /不要为「启动」这条指令本身往会话里发消息/);
+  assert.match(prompt, /IM 指令启动「启动」/);
+  assert.match(prompt, /启动只是开关/);
+  assert.match(prompt, /别回它/);
+  assert.match(prompt, /别 @ 本人/);
   assert.doesNotMatch(prompt, /值守判断：|决定值守后的接手轮/);
 
   const panel = buildOpenPrompt("feishu", "示例对象 A", "oc_panel_open", rows);
-  assert.match(panel, /会话开场（人工开启，不是新消息唤醒）/);
+  assert.match(panel, /会话开场/);
   assert.doesNotMatch(panel, /IM 指令启动/);
-  assert.doesNotMatch(panel, /不要为「启动」这条指令本身/);
+  assert.doesNotMatch(panel, /启动只是开关/);
 });
 
 test("warm prompt says it is a heartbeat and only tidies the listed files", () => {
@@ -1367,7 +1411,7 @@ test("warm prompt says it is a heartbeat and only tidies the listed files", () =
   });
   assert.match(p, /^（值守心跳，不是客户消息）/);
   assert.match(p, /已闲置约 60 分钟/);
-  assert.match(p, /会话工作本：\/tmp\/book\.md（本会话的群规与工作要求；个人评价不写这里）/);
+  assert.match(p, /会话工作本：\/tmp\/book\.md（群规与工作要求；个人评价写人物档案）/);
   assert.match(p, /人物档案：\n- 客户 · ou_other → \/tmp\/people\/ou_other\.md/);
   assert.match(p, /只整理这两类文件：会话工作本 \+ 上面列出的人物档案/);
   assert.match(p, /没列出的文件不要动，不要扫目录/);
@@ -1401,7 +1445,7 @@ test("idle past the second warm cycle is reset before the next wake and gets a f
   assert.equal(chat.session_turns, 1);
   assert.equal(chat.last_reset.reason, "idle");
   assert.match(host.followups[0].content[0].text, /^\/cyber-im-avatar/);
-  assert.match(host.followups[0].content[0].text, /闲置约 110 分钟（期间只保温一次），已自动重开/);
+  assert.match(host.followups[0].content[0].text, /闲置约 110 分钟（期间保温一次），已重开/);
 });
 
 test("idle before the second warm cycle keeps the bound session", async () => {
@@ -1540,48 +1584,47 @@ test("self-@ command lines are marked as the owner talking to the stand-in", () 
     firstTurn: true, wakeMode: "mention", kind: "p2p",
   });
   assert.match(prompt, /本人（@自己）/);
-  assert.match(prompt, /【本人指令】/);
-  assert.match(prompt, /不要 @ 本人自己/);
-  assert.doesNotMatch(prompt, /群聊里你的发言全群可见/, "私聊不带群聊限定");
+  assert.match(prompt, /本人（@自己）行是本人指令/);
+  assert.match(prompt, /别 @ 本人/);
+  assert.match(prompt, /别为「收到」发言/);
   assert.doesNotMatch(prompt, /非点名的群消息/);
   assert.match(prompt, /对象: 在吗/);
 
-  // 群里下的指令：同一套标记，另加一句「别为收到在群里发言」。
+  // 群里下的指令：同一句规则已覆盖「别为收到发言」，不再额外加一段。
   const groupPrompt = buildWakePrompt("feishu", "示例群", "oc_grp", rows, {
     firstTurn: true, wakeMode: "mention", kind: "group",
   });
-  assert.match(groupPrompt, /本人（@自己）/);
-  assert.match(groupPrompt, /【本人指令】/);
-  assert.match(groupPrompt, /群聊里你的发言全群可见/);
+  assert.match(groupPrompt, /本人（@自己）行是本人指令/);
+  assert.match(groupPrompt, /别为「收到」发言/);
 
-  // 后续轮：会话里第一次出现指令，带完整规则。
+  // 后续轮：会话里第一次出现指令，带规则。
   const firstCmd = buildWakePrompt("feishu", "示例对象 A", "oc_dm", [rows[0]], {
     wakeMode: "mention", kind: "p2p", firstTurn: false,
-    announced: { send_mode: "draft", wake_mode: "mention", cmd: false, rights: false },
+    announced: { send_mode: "draft", wake_mode: "mention", cmd: false, rights: false, hard: true },
   });
-  assert.match(firstCmd, /【本人指令】/);
+  assert.match(firstCmd, /本人（@自己）行是本人指令/);
   assert.match(firstCmd, /本人（@自己）/);
-  assert.match(firstCmd, /不要 @ 本人自己/);
 
   // 同一会话再下指令：规则没变，不再复读；身份仍标在消息行上。
   const nextCmd = buildWakePrompt("feishu", "示例对象 A", "oc_dm", [rows[0]], {
     wakeMode: "mention", kind: "p2p", firstTurn: false,
-    announced: { send_mode: "draft", wake_mode: "mention", cmd: true, rights: false },
+    announced: { send_mode: "draft", wake_mode: "mention", cmd: true, rights: false, hard: true },
   });
-  assert.doesNotMatch(nextCmd, /【本人指令】/);
+  assert.doesNotMatch(nextCmd, /行是本人指令/);
   assert.match(nextCmd, /本人（@自己）/);
   assert.equal(nextCmd.split("\n").length, 1);
 
-  // 普通消息不带指令规则；开场上下文含指令时有轻量说明。
+  // 普通消息不带指令规则；开场上下文含指令时有说明。
   const plain = buildWakePrompt("feishu", "示例对象 A", "oc_dm", [rows[1]], {
     wakeMode: "mention", kind: "p2p",
   });
-  assert.doesNotMatch(plain, /【本人指令】/);
+  assert.doesNotMatch(plain, /行是本人指令/);
   const open = buildOpenPrompt("feishu", "示例对象 A", "oc_dm", rows, {
     wakeMode: "mention", kind: "p2p",
   });
   assert.match(open, /本人（@自己）/);
   assert.match(open, /不是客户消息/);
+  assert.match(open, /行是本人指令/);
 });
 
 test("first group wake caps people at five, @-mentions first, deduped, self skipped", async () => {
@@ -1637,7 +1680,7 @@ test("open assembles the recent speakers' profile pointers", async () => {
   const r = await turns.open(chat);
   assert.equal(r.ok, true);
   const text = host.followups[0].content[0].text;
-  assert.match(text, /最近上下文（最近 30 分钟，共 2 条）/);
+  assert.match(text, /最近上下文（最近 30 分钟，共 2 条；更早的按 skill 在线拉/);
   const people = path.join(dir, "profiles", "people", "feishu");
   assert.ok(text.includes(`- 客户 · ou_b → ${path.join(people, "ou_b.md")}`));
   assert.ok(text.includes(`- 同事 · ou_a → ${path.join(people, "ou_a.md")}`));
@@ -1846,12 +1889,8 @@ test("事故 A：@ 的是别人时，载荷给事实与默认口径，不降级�
   assert.doesNotMatch(prompt, /（@你）/);
   assert.match(prompt, /本批 0 条点你名/);
   // 默认口径本来就有，用户不用配：不降级、不要求先写。
-  assert.match(prompt, /发言权（默认口径）/);
-  assert.match(prompt, /默认沉默。发言要有增量/);
-  assert.match(prompt, /机器告警、催办卡里的 @ 多是角色字段/);
-  assert.match(prompt, /先看正文要谁做什么，不是看点名/);
-  assert.match(prompt, /指向别人的只当知会、不代答/);
-  assert.match(prompt, /机器人刚发过、卡片里写着、我说过的不重复/);
+  assert.match(prompt, /发言权：默认沉默/);
+  assert.match(prompt, /邀请/ === "" ? /x/ : /发言权|默认沉默/);
   assert.doesNotMatch(prompt, /信息同步可以发/, "信息同步不再是无门槛动作");
   assert.doesNotMatch(prompt, /点我名的回/, "bot 卡片的 @ 不等于要我接话");
   assert.match(prompt, /发送方式：全自动/);
@@ -1870,10 +1909,8 @@ test("场景 B：没人点名也要能出手——载荷给默认值与例外，
     kind: "group", sendMode: "auto", selfId: "ou_me", selfName: "我", rightsDefined: true,
   });
   assert.match(prompt, /本批 0 条点你名/);
-  assert.match(prompt, /判断顺序：先看正文要谁做什么/);
-  assert.match(prompt, /判不准就沉默/);
-  assert.match(prompt, /默认沉默；发言要有增量/, "默认动作是沉默");
-  assert.match(prompt, /人问我、派到我头上才接/, "没人点名、但事派到我头上要能接");
+  assert.match(prompt, /发言权：默认沉默/, "默认动作是沉默");
+  assert.match(prompt, /- \[t1\] 负责人: 这个工单你接一下/);
   assert.doesNotMatch(prompt, /不需要处理/, "不能写成机械禁令");
   assert.doesNotMatch(prompt, /不要往这个群发任何消息/);
 });
@@ -1935,8 +1972,8 @@ test("点名三分类：点我 / 点了别人 / 谁都没点，分开报给 agen
   });
   assert.match(prompt, /本批 1 条点你名；1 条点了别人（不是给你的）；1 条谁都没点。/);
   assert.match(prompt, /- \[t1\] 值班机器人（@周明）: @周明 进度如何/);
-  // 「谁都没点」的那条不能被载荷判死：问在群里、要表态的就是要回。
-  assert.match(prompt, /人问我、派到我头上才接/);
+  // 每条消息都有 @ 事实，判据本身归 skill；载荷不写机械禁令。
+  assert.match(prompt, /发言权：默认沉默/);
   assert.doesNotMatch(prompt, /不需要处理|一律不回/);
 });
 
@@ -1966,7 +2003,7 @@ test("C 型态：没点你名的消息不占唤醒，但下一轮带条数提示
     firstTurn: false, announced: { send_mode: "draft", wake_mode: "mention", cmd: false, rights: false },
     silentCount: 2,
   });
-  assert.match(withHint, /另有 2 条没点你名的群消息没转给正文；判断需要时按 skill 在线拉最近的群消息看。/);
+  assert.match(withHint, /另有 2 条没点你名的群消息没转来；需要时按 skill 在线拉。/);
   // 私聊与 0 条都不出这一行
   const none = buildWakePrompt("feishu", "示例群", "oc_grp", rows, {
     firstTurn: false, announced: { send_mode: "draft", wake_mode: "mention", cmd: false, rights: false },
@@ -1978,12 +2015,14 @@ test("progress card policy is declared once when enabled", () => {
   const once = buildWakePrompt("feishu", "示例对象", "oc_dm", recent(1), {
     firstTurn: true, progressCard: true,
   });
-  assert.match(once, /进度卡/);
-  assert.match(once, /已做：查资料/);
+  assert.match(once, /进度卡：开/);
   assert.match(once, /\[进度\] 1\/3 现在/);
   const again = buildWakePrompt("feishu", "示例对象", "oc_dm", recent(1), {
     firstTurn: false, progressCard: true,
-    announced: { send_mode: "draft", wake_mode: "mention", cmd: false, rights: false, progress_card: true },
+    announced: {
+      send_mode: "draft", wake_mode: "mention", cmd: false, rights: false,
+      progress_card: true, hard: true,
+    },
   });
   assert.doesNotMatch(again, /进度卡/);
   const off = buildWakePrompt("feishu", "示例对象", "oc_dm", recent(1), {
@@ -2008,7 +2047,7 @@ test("wake payload puts the quoted message under the reply line", () => {
   });
   assert.match(prompt,
     /- \[2026-11-23 14:51\] 本人（@自己）: @示例本人\n {2}↪ 引用 \[2026-11-23 14:49\] 我: 查一下网关配置，给个解释吧/);
-  assert.match(prompt, /引用说明：带「↪ 引用」的缩进行是上一条消息引用的原消息/);
+  assert.match(prompt, /「↪ 引用」缩进行是上一条消息的原文/);
 });
 
 test("quoted sender that is not the principal keeps their name", () => {
@@ -2071,7 +2110,10 @@ test("quoted text is sanitized, single-lined and truncated like message bodies",
 test("messages without reply_to keep the payload byte-identical", () => {
   const prompt = buildWakePrompt("feishu", "示例对象 A", "oc_abc", recent(2), {
     firstTurn: false,
-    announced: { send_mode: "draft", wake_mode: "mention", rights: false, progress_card: false, cmd: true },
+    announced: {
+      send_mode: "draft", wake_mode: "mention", rights: false, progress_card: false,
+      cmd: true, hard: true,
+    },
   });
   assert.equal(prompt, "- [t0] 客户: 消息 0\n- [t1] 客户: 消息 1");
   assert.doesNotMatch(prompt, /↪ 引用|引用说明/);

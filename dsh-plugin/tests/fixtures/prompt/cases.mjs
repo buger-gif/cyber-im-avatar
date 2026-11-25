@@ -38,7 +38,8 @@ const FYI_ROW = row({
 });
 
 const ANNOUNCED = {
-  send_mode: "auto", wake_mode: "mention", cmd: true, rights: false, progress_card: null,
+  send_mode: "auto", wake_mode: "mention", cmd: true, rights: false,
+  progress_card: null, hard: true,
 };
 
 /** 五类载荷 + 开场两种入口的输入。返回值直接喂给 builder。 */

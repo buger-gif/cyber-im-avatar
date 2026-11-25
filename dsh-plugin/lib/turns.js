@@ -17,16 +17,16 @@ import { chatPersonId, personRefs } from "./profiles.js";
 import { ProgressCards } from "./progress.js";
 import {
   buildDeskPrompt, buildOpenPrompt, buildWakePrompt, buildWarmPrompt,
-  cmdFactLine, mentionFactLine, mentionedTargets, oneLine, rightsLine,
-  sanitizeUntrusted, selfLine, silentNoMention,
+  mentionFactLine, mentionedTargets, oneLine, sanitizeUntrusted, selfLine,
+  silentNoMention,
 } from "./prompt.js";
 import * as duty from "./duty.js";
 import * as workspaces from "./workspaces.js";
 
 export {
   buildDeskPrompt, buildOpenPrompt, buildWakePrompt, buildWarmPrompt,
-  cmdFactLine, mentionFactLine, mentionedTargets, oneLine, rightsLine,
-  sanitizeUntrusted, selfLine, silentNoMention,
+  mentionFactLine, mentionedTargets, oneLine, sanitizeUntrusted, selfLine,
+  silentNoMention,
 };
 
 function nowSec() {
@@ -281,7 +281,9 @@ export class Turns {
     const key = `${platform}:${chatId}:${sid}`;
     let rec = this.announcedPolicy.get(key);
     if (!rec) {
-      rec = { send_mode: "", wake_mode: "", cmd: false, rights: null, progress_card: null };
+      rec = {
+        send_mode: "", wake_mode: "", cmd: false, rights: null, progress_card: null, hard: false,
+      };
       this.announcedPolicy.set(key, rec);
       if (this.announcedPolicy.size > 64) {
         const oldest = this.announcedPolicy.keys().next().value;
@@ -326,7 +328,9 @@ export class Turns {
       rec.send_mode = "";
       rec.wake_mode = "";
       rec.cmd = false;
+      rec.rights = null;
       rec.progress_card = null;
+      rec.hard = false;
     }
     for (const key of [...this.seenPeople.keys()]) {
       if (key.endsWith(suffix)) this.seenPeople.delete(key);
@@ -661,6 +665,7 @@ export class Turns {
         announced.send_mode = sendMode;
         announced.wake_mode = wakeMode;
         announced.progress_card = progressCard;
+        announced.hard = true;
         if (rights.applicable) announced.rights = rightsCustom;
         if (hasCmd) announced.cmd = true;
       };

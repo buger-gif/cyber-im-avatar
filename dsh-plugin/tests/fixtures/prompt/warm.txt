@@ -1,7 +1,7 @@
 （值守心跳，不是客户消息）
 保温轮 · 飞书 · 示例项目群 · 已闲置约 30 分钟
 chat_id：oc_demo
-会话工作本：/tmp/im-standin/profiles/feishu/oc_demo.md（本会话的群规与工作要求；个人评价不写这里）
+会话工作本：/tmp/im-standin/profiles/feishu/oc_demo.md（群规与工作要求；个人评价写人物档案）
 人物档案：
 - 张三 · ou_demo_zhang → /tmp/im-standin/people/feishu/ou_demo_zhang.md
 - 李四 · ou_demo_li → /tmp/im-standin/people/feishu/ou_demo_li.md
