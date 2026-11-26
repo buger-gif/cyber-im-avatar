@@ -83,7 +83,7 @@ CLI 行为与坑位）与独立形态手册（`references/standalone.md`），�
 | 发版 | `CHANGELOG.md` + `docs/implementation/PROGRESS.md` + 当日 log |
 | 架构级取舍变了 | `docs/architecture/` + `docs/decisions/` |
 | 修了一个会复发的坑 | `docs/implementation/runbooks/` 或 `references/troubleshooting.md` |
-| 干了半天以上的活 | 当日 `docs/implementation/log/YYYY-MM-DD.md`（事实、读数、失败尝试） |
+| 干了半天以上的活 | 当日 `docs/implementation/log/YYYY-MM-DD.md`（事实、读数、失败尝试；≤100 行，发版细节指向 `PROGRESS.md` / `CHANGELOG.md`） |
 | 新增活文档 | `scripts/doc_budgets.json` 登记预算 |
 
 收尾只跑一条命令：`bash scripts/gate.sh --quick`（秒级），发版前跑全量 `bash scripts/gate.sh`。

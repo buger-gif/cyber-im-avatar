@@ -10,9 +10,12 @@
   6. spec / decision 结构：必备小节与状态行，decision 的状态必须与所在目录一致。
   7. 契约文件格式：三份契约的表格列头必须保持可被 tests/test_docs.py 解析的形状。
   8. active 卫生：至多 2 项；只放「待实施 / 实施中」；目标版本不得已经发布；plan 不能孤立。
+  9. 当日 log 行数：LOG_BUDGET_FROM 起的 YYYY-MM-DD.md 不超过 LOG_MAX_LINES 行——防止把
+     发版流水抄成日记；更早的是冻结历史，不追溯。
 
 冻结区（docs/implementation/log/**、docs/specs/archive/**、docs/decisions/{implemented,rejected,proposed}/**、
-docs/audits/**、CHANGELOG.md）不做预算与反流水账检查——历史不改写；但指向它们的链接仍会校验。
+docs/audits/**、CHANGELOG.md）不做活文档预算与反流水账检查——历史不改写；但第 9 项对
+LOG_BUDGET_FROM 起的当天记录生效，指向它们的链接仍会校验。
 
 用法：
     python3 scripts/verify_docs.py                 # 全量检查，违规退出码非 0
@@ -22,11 +25,16 @@ import argparse
 import json
 import re
 import sys
+from datetime import date
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parent.parent
 BUDGETS = REPO / "scripts" / "doc_budgets.json"
 PKG_JSON = REPO / "dsh-plugin" / "package.json"
+LOG_DIR = REPO / "docs" / "implementation" / "log"
+LOG_MAX_LINES = 100
+# 从这一天起写的当天 log 受行数上限约束；更早的是冻结历史，不改写。
+LOG_BUDGET_FROM = date(2026, 11, 26)
 ACTIVE_LIMIT = 2
 ACTIVE_STATUS = ("待实施", "实施中")
 SPEC_VERSION_RE = re.compile(r"^>\s*版本[：:]\s*(\d+)\.(\d+)\.(\d+)", re.M)
@@ -253,6 +261,26 @@ def check_decisions(files, errs):
             errs.append(f"{rel}: 未在 docs/decisions/README.md 索引表登记")
 
 
+def check_log_budgets(errs):
+    """新写的当天 log 不超过 LOG_MAX_LINES 行；发版细节指向 PROGRESS / CHANGELOG。"""
+    for p in sorted(LOG_DIR.glob("*.md")):
+        m = re.match(r"^(\d{4})-(\d{2})-(\d{2})\.md$", p.name)
+        if not m:
+            continue
+        try:
+            day = date(int(m.group(1)), int(m.group(2)), int(m.group(3)))
+        except ValueError:
+            continue
+        if day < LOG_BUDGET_FROM:
+            continue
+        n = len(p.read_text(encoding="utf-8").splitlines())
+        if n > LOG_MAX_LINES:
+            errs.append(
+                f"{p.relative_to(REPO).as_posix()}: {n} 行，超过当日 log 预算 "
+                f"{LOG_MAX_LINES} 行；发版流水指向 PROGRESS / CHANGELOG"
+            )
+
+
 def check_contracts(errs):
     for rel, markers in CONTRACT_HEADERS.items():
         p = REPO / rel
@@ -284,6 +312,8 @@ def main():
         check_specs(files, errs)
         check_decisions(files, errs)
         check_contracts(errs)
+
+    check_log_budgets(errs)
 
     for w in warns:
         print(f"WARN  {w}")
