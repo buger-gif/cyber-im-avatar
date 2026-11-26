@@ -2,6 +2,18 @@
 
 ## 未发布
 
+### 中断收尾保护（spec 0063）
+
+- **问题**：DSH 0.2.2-rc.5 在思考阶段停止流式回答时，会落一条只有 reasoning 的
+  `assistant/message`；下一轮把它发成「只有 thinking、没有正文 / tool_use」的 assistant
+  消息，严格按 Anthropic Messages 协议的网关直接 400，之后每轮都失败，会话永久卡死。
+- **兜底**：插件在宿主进程内包一层 `session.append`，命中「interrupted + 没有正文 /
+  tool-call / image」时浅拷贝 data，在 content 末尾补一个仅模型可见的 text 块；不改事件
+  类型、seq、已有历史，也不改 Transcript。
+- **开关**：`IM_REASONING_GUARD=0` 关闭（默认开启）。这是本地兜底，上游修好后可撤；
+  存量已经卡死的会话不处理。
+- **上游**：[Discussion #14340](https://github.com/deepseek-ai/deepseek-harness/discussions/14340)
+
 ### 载荷瘦身与防腐（spec 0062）
 
 - **载荷只给事实与变化**：开场载荷的口径文字 1904 → 706 字（22 行 → 17 行），首轮唤醒

@@ -17,6 +17,8 @@ import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
+import { installReasoningGuard } from "./guard.js";
+
 const HERE = dirname(fileURLToPath(import.meta.url));
 const PREFIX = "/plugins/im-standin";
 const TOKEN = randomBytes(24).toString("hex");
@@ -374,6 +376,14 @@ export function apply(ctx) {
   alive = true;
   rootCtx = ctx;
   bootLog(BOOT_LOG, { at: new Date().toISOString(), event: "host-apply" });
+  // 中断收尾保护：DSH 在思考阶段取消时会落只有 reasoning 的 assistant 消息，严格网关
+  // 会 400 并让会话永久卡死；在本进程内包一层 session.append 补一个仅模型可见的正文块。
+  // 关闭开关：IM_REASONING_GUARD=0。见 docs/specs/archive/0063-中断收尾占位.md。
+  try {
+    installReasoningGuard(ctx);
+  } catch (e) {
+    console.warn(LOG, "reasoning guard unavailable:", e && e.message);
+  }
   // 插件驱动的会话靠 `/cyber-im-avatar` 自动注入 skill；首次启动时把 skill 装到
   // DSH 扫描的 ~/.agents/skills/。已有手装副本不覆盖（见 skill-install.js）。
   // 动态 import：这一步不该拖慢入口模块，fiber 与客户端那一行都要尽早出现。
