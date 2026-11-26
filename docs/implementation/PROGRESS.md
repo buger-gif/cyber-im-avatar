@@ -5,12 +5,13 @@
 
 ## 更新时间
 
-2026-11-26（0.27.0 待发布：0062 载荷瘦身 + 0063 中断收尾保护同批进版；CI 发布后回填）
+2026-11-26（0.27.0 已发布：0062 载荷瘦身 + 0063 中断收尾保护同批进版；市场索引已指向 0.27.0）
 
 ## 最近批次
 
 | 日期 | 主题 | 证据 |
 | --- | --- | --- |
+| 2026-11-26 | 0.27.0 发布：0062 载荷瘦身 + 0063 中断收尾保护进版；Trusted Publishing 成功（run 45765790784，2m50s，版本自检通过）；npm latest 0.27.0；tag `v0.27.0`；市场索引指向 0.27.0 | `CHANGELOG.md`、`dsh-plugin/package.json`、`dsh-plugin/market/index.json`、[run 45765790784](https://github.com/buger-gif/cyber-im-avatar/actions/runs/45765790784) |
 | 2026-11-26 | 中断收尾保护（0063，已归档，隔离真机已验）：思考阶段停止后只落 reasoning 的 assistant 消息，下一轮会被严格网关 400 卡死；在进程内包 `session.append`，命中时补一个 Markdown 注释形式的占位正文（模型可见、转录不显示），不改事件 / seq / 现有历史；`IM_REASONING_GUARD=0` 可关 | `dsh-plugin/lib/guard.js`、`dsh-plugin/lib/index.js`、`dsh-plugin/tests/guard.test.mjs`、`docs/specs/archive/0063-中断收尾占位.md` |
 | 2026-11-25 | 载荷瘦身与防腐（0062，已归档，真机项挂账）：载荷只留事实 / 变化 / 硬门，开场口径 1904 → 706 字；`DELTAS` 口径注册表 + 三个缺口修复；快照 / 预算 / 矩阵测试与 `prompt-stats`；skill 分载到 `references/standalone.md`（532 → 339 行），`AGENTS.md` 加铁律 9 | `dsh-plugin/lib/prompt.js`、`dsh-plugin/lib/turns.js`、`dsh-plugin/tests/{prompt-snapshot,prompt-rules}.test.mjs`、`dsh-plugin/scripts/prompt-stats.mjs`、`SKILL.md`、`references/standalone.md`、`docs/specs/archive/0062-启动载荷瘦身与防腐.md` |
 | 2026-11-24 | 0.26.0 发布：0056–0061 进版；Trusted Publishing 成功（run 45343717026，4m39s，版本自检通过）；npm latest 0.26.0（06:57:01Z）；tag `v0.26.0`；市场索引指向 0.26.0；npm / 自托管索引 / awesome 收录三处描述同步 | `CHANGELOG.md`、`dsh-plugin/package.json`、`dsh-plugin/market/index.json`、[run 45343717026](https://github.com/buger-gif/cyber-im-avatar/actions/runs/45343717026)、[awesome PR #18426](https://github.com/awesome-dsh-plugin/awesome-dsh-plugin/pull/18426) |
@@ -33,13 +34,12 @@
 
 ## 当前断点
 
-- **active 已清空**：0063 已实现并归档（随下个版本进版）；下一个 spec 从 0064 起；上限 2。
+- **active 已清空**：0063 已实现并归档并随 0.27.0 进版；下一个 spec 从 0064 起；上限 2。
+- **0.27.0 已发布**：npm latest 0.27.0（2026-11-26T06:08 前后可见），tag `v0.27.0`，
+  Trusted Publishing run [45765790784](https://github.com/buger-gif/cyber-im-avatar/actions/runs/45765790784)
+  成功；市场索引已指向 0.27.0。
 - **中断卡死兜底已落地**：0063 在隔离的 DSH 0.2.2-rc.5 宿主 + 模拟网关实测——关闭开关时复现
   400，开启后同一会话续聊成功，聊天转录看不到占位文案。桌面 app 未重启（避免中断当前会话）。
-- **0.27.0 待发布**：0062（载荷瘦身）+ 0063（中断收尾保护）同批；tag `v0.27.0` 触发
-  Trusted Publishing，发布后市场索引指向 0.27.0。
-- **0.26.0 已发布**：npm latest 0.26.0（发布 2026-11-24T06:57:01Z），tag `v0.26.0`；
-  0052 / 0053 / 0054 / 0056–0061 的真机验收由用户确认通过，挂账已清。
 - **各市场描述已同步**：npm 描述与 README、自托管索引（`--source npm`）、awesome-dsh-plugin
   条目描述（PR [#18426](https://github.com/awesome-dsh-plugin/awesome-dsh-plugin/pull/18426)）
   口径一致——默认沉默、承诺边界、值守生命周期、进度卡发信即撤回。
@@ -65,10 +65,10 @@
 
 ## 下一步
 
-1. 发版时把 0062 / 0063 一起进版；按 runbook 把 `prompt-stats` 读数抄进当日 log。
-2. 等 awesome-dsh-plugin 描述更新 PR #18426 合并；评审要求改就推同一分支，不重开 PR。
-3. 等真实客户消息 / 媒体命中；只观察，不主动给真实客户发消息。
-4. 用户确认后清理历史待回；钉钉补真人闭环；补 0.5.0 屏蔽 UI 端到端截图。
+1. 等 awesome-dsh-plugin 描述更新 PR #18426 合并；评审要求改就推同一分支，不重开 PR。
+2. 等真实客户消息 / 媒体命中；只观察，不主动给真实客户发消息。
+3. 用户确认后清理历史待回；钉钉补真人闭环；补 0.5.0 屏蔽 UI 端到端截图。
+4. 下次发版前按 runbook 把 `prompt-stats` 读数抄进当日 log。
 
 ## 规则性提醒
 
