@@ -310,7 +310,7 @@ window.__ModuleLoader__.load({
             location.reload();
           }
         } catch (e) { /* 无痕模式等拿不到 sessionStorage，就只提示 */ }
-        return { error: "会话凭据过期，刷新一下页面（⌘R）再试", auth: true };
+        return { error: "面板会话失效，刷新页面或重开窗口再试", auth: true };
       }
       try { sessionStorage.removeItem("ims_tok_reload"); } catch (e) { /* ignore */ }
       return r.json();
@@ -859,10 +859,10 @@ window.__ModuleLoader__.load({
     function setConnError(by, e, retry) {
       var msg = (e && typeof e === "object") ? (e.error || e.message || e.reason || "") : e;
       var auth = !!(e && typeof e === "object" &&
-        (e.auth || /会话凭据过期/.test(String(msg || ""))));
+        (e.auth || /面板会话失效/.test(String(msg || ""))));
       S.connError = {
         by: by,
-        text: auth ? "会话凭据过期，刷新页面（⌘R）" : ("本地服务连不上：" + shortReason(msg)),
+        text: auth ? "面板会话失效，刷新页面或重开窗口再试" : ("本地服务连不上：" + shortReason(msg)),
         auth: auth,
         retry: retry || null
       };

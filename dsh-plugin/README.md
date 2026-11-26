@@ -411,15 +411,17 @@ agent 在这一轮里自己用 `lark-cli` 拉上下文、去绑定工作区核�
 插件不存模型 key：值守会话走 DSH 自己的配置，key 在 `~/.dsh/.credentials.yaml`，
 由 DSH 解析。
 
-面板接口的 `x-im-token` 是**每个 DSH 进程随机生成**的，只注入到同一个页面里，
-重启即失效；它不落盘，也不给任何别的本地进程用。
+面板接口认两种同一性：DSH 自己的**签名浏览器会话**（桌面壳转发、浏览器同源页面都会
+自动带 cookie；插件热重载、宿主重启都不受影响），以及 `x-im-token`（每个 DSH 进程
+随机生成，只注入到当前页面，重启即失效；保留给没有 cookie 的旧页面与直连预览）。
+两者都不落盘。
 
 ## 主要 API
 
 面板的所有请求都走 DSH 同源前缀 `/plugins/im-standin`（例如
-`GET /plugins/im-standin/api/status`），下表省略前缀。转发前要过三道校验：
-连接来自回环、`Host` 是回环名、`Origin`（若有）与 `Host` 同源、请求头带本次
-进程生成的 `x-im-token`。
+`GET /plugins/im-standin/api/status`），下表省略前缀。转发前先过回环 / `Host` /
+`Origin` 三道检查，再要求带有效的 DSH 会话 cookie，或请求头带本次进程生成的
+`x-im-token`。
 
 | 路径 | 作用 |
 | --- | --- |

@@ -5,12 +5,13 @@
 
 ## 更新时间
 
-2026-11-26（0.27.0 已发布：0062 载荷瘦身 + 0063 中断收尾保护同批进版；市场索引已指向 0.27.0）
+2026-11-26（0.27.0 已发布；0064 面板认 DSH 会话已实施并真机验证；0.27.1 未发）
 
 ## 最近批次
 
 | 日期 | 主题 | 证据 |
 | --- | --- | --- |
+| 2026-11-26 | 面板认 DSH 会话（0064，已归档，真机已验）：桌面壳只在启动时取一次 index 注入快照，插件热重载换 token 后已开面板 401；鉴权加 DSH 签名会话（`connection.requestRejection`），token 保留兜底；401 文案去掉 ⌘R；重载后页面未刷新，15:59:38 面板 `/api/status` 走 DSH 会话通过 | `dsh-plugin/lib/panel-auth.js`、`dsh-plugin/lib/index.js`、`dsh-plugin/web/panel.js`、`dsh-plugin/tests/panel-auth.test.mjs`、`docs/specs/archive/0064-面板认DSH会话.md` |
 | 2026-11-26 | 0.27.0 发布：0062 载荷瘦身 + 0063 中断收尾保护进版；Trusted Publishing 成功（run 45765790784，2m50s，版本自检通过）；npm latest 0.27.0；tag `v0.27.0`；市场索引指向 0.27.0 | `CHANGELOG.md`、`dsh-plugin/package.json`、`dsh-plugin/market/index.json`、[run 45765790784](https://github.com/buger-gif/cyber-im-avatar/actions/runs/45765790784) |
 | 2026-11-26 | 中断收尾保护（0063，已归档，隔离真机已验）：思考阶段停止后只落 reasoning 的 assistant 消息，下一轮会被严格网关 400 卡死；在进程内包 `session.append`，命中时补一个 Markdown 注释形式的占位正文（模型可见、转录不显示），不改事件 / seq / 现有历史；`IM_REASONING_GUARD=0` 可关 | `dsh-plugin/lib/guard.js`、`dsh-plugin/lib/index.js`、`dsh-plugin/tests/guard.test.mjs`、`docs/specs/archive/0063-中断收尾占位.md` |
 | 2026-11-25 | 载荷瘦身与防腐（0062，已归档，真机项挂账）：载荷只留事实 / 变化 / 硬门，开场口径 1904 → 706 字；`DELTAS` 口径注册表 + 三个缺口修复；快照 / 预算 / 矩阵测试与 `prompt-stats`；skill 分载到 `references/standalone.md`（532 → 339 行），`AGENTS.md` 加铁律 9 | `dsh-plugin/lib/prompt.js`、`dsh-plugin/lib/turns.js`、`dsh-plugin/tests/{prompt-snapshot,prompt-rules}.test.mjs`、`dsh-plugin/scripts/prompt-stats.mjs`、`SKILL.md`、`references/standalone.md`、`docs/specs/archive/0062-启动载荷瘦身与防腐.md` |

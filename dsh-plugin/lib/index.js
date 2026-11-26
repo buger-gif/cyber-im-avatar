@@ -18,6 +18,7 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { installReasoningGuard } from "./guard.js";
+import { requestAuthorized } from "./panel-auth.js";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const PREFIX = "/plugins/im-standin";
@@ -72,6 +73,11 @@ let llm = null;
 let permissionPresets = null;
 let mediaTimer = null;
 let bootPromise = null;
+// DSH 自己的浏览器会话校验（可选）：桌面壳转发 / 同源页面都带签名 cookie，
+// 插件热重载不会让它失效。见 docs/specs/archive/0064-面板认DSH会话.md。
+let connection = null;
+// 诊断：面板第一次靠 DSH 会话（而不是 token）通过时记一行，每个宿主进程一条。
+let authLogged = false;
 
 function cleanupMedia() {
   if (!media || !state) return;
@@ -184,6 +190,7 @@ function shutdown() {
   attachments = null;
   llm = null;
   permissionPresets = null;
+  connection = null;
   rootCtx = null;
 }
 
@@ -252,8 +259,11 @@ async function handler(req, res) {
   if (!hostIsLocal(req.headers.host) || !originOk(req)) {
     return send(res, 403, { error: "cross-origin denied" });
   }
-  if (req.headers["x-im-token"] !== TOKEN) {
-    return send(res, 401, { error: "missing or stale token; refresh the page" });
+  const auth = requestAuthorized(req, TOKEN, connection);
+  if (!auth) return send(res, 401, { error: "not authenticated; refresh the page or reopen the window" });
+  if (auth === "dsh" && !authLogged) {
+    authLogged = true;
+    bootLog(BOOT_LOG, { at: new Date().toISOString(), event: "auth-dsh", path: req.url });
   }
 
   const url = new URL(req.url || "/", "http://127.0.0.1");
@@ -343,6 +353,16 @@ function mount(ctx) {
     });
   } catch (e) {
     console.warn(LOG, "permissionPresets unavailable:", e && e.message);
+  }
+
+  // 面板鉴权：DSH 自己的签名会话（桌面壳转发 / 浏览器同源页都带 cookie）。
+  // 插件热重载换 token 时，已打开的页面靠这条路继续用；见 spec 0064。
+  try {
+    ctx.inject(["connection"], (hostCtx) => {
+      connection = hostCtx.connection;
+    });
+  } catch (e) {
+    console.warn(LOG, "connection unavailable:", e && e.message);
   }
 
   ctx.inject(["webServer"], (webCtx) => {

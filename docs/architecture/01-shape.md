@@ -70,11 +70,13 @@ listen_cli --chat-id X --until T   （阻塞轮询本地 CLI，最多到 T）
 | socket 地址是回环 | 外部主机直连 |
 | `Host` 是回环名（`127.0.0.1` / `localhost` / `[::1]`） | DNS rebinding（域名解析到 127.0.0.1） |
 | 有 `Origin` 时必须与 `Host` 同源 | 跨站表单 / 第三方页面 fetch |
-| 请求头 `x-im-token` 等于本进程随机 token | 同机其它页面猜路径 |
+| 有效的 DSH 浏览器会话 cookie，或请求头 `x-im-token` 等于本进程随机 token | 没有 DSH 会话的直连请求、同机其它页面猜路径 |
 
+DSH 会话由桌面壳在转发时带上、浏览器同源页面自动带，插件热重载 / 宿主重启都不失效。
 token 用 `randomBytes(24)` 在进程启动时生成，经 `webserver/index-inject` 注入成
-`globalThis.IM_STANDIN_TOKEN`，**不落盘、不进日志**。所以刷新 DSH 之后旧页面会 401——
-这是预期行为，刷新即可。
+`globalThis.IM_STANDIN_TOKEN`，**不落盘、不进日志**；它只兜底旧页面与直连预览。
+桌面壳的 `dsh-app://app/` 只在宿主启动时取一次注入快照，所以面板不能只靠注入的 token
+（见 `docs/specs/archive/0064-面板认DSH会话.md`）。
 
 没有 `webServer` 能力的 profile 里，`mount()` 不挂路由，也不启动轮询。
 
