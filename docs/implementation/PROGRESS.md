@@ -5,12 +5,13 @@
 
 ## 更新时间
 
-2026-11-27（0065 已实施并归档；0066 触发时间窗与去重已实施并归档，自动测试全绿；真机复核挂账；未发版）
+2026-11-27（0065 / 0066 已实施并归档；0.28.0 已发布，npm latest；真机复核挂账）
 
 ## 最近批次
 
 | 日期 | 主题 | 证据 |
 | --- | --- | --- |
+| 2026-11-27 | 0.28.0 发布：0065 / 0066 进版；Trusted Publishing 成功（run 45968255845）；npm latest 0.28.0（tarball 200）；tag `v0.28.0`；市场索引指向 0.28.0。CHANGELOG 说明 0.27.1 不含账号流、无需下架 | `CHANGELOG.md`、`dsh-plugin/package.json`、`dsh-plugin/market/index.json`、[run 45968255845](https://github.com/buger-gif/cyber-im-avatar/actions/runs/45968255845) |
 | 2026-11-27 | 触发时间窗与去重（0066，已归档）：重载后 31 个会话补读旧账、13 个会话各起一轮并新建 10 个 DSH 会话；改为只处理最近 10 分钟、窗口外记 `skip=out-of-window` 不建会话；`seen` 持久记录 + 老 state 用 `recent` 播种；流 / 区间读最多回看 10 分钟，全局每分钟 5 个会话兜底；补 5 组测试 | `dsh-plugin/lib/{poller,state}.js`、`dsh-plugin/web/panel.js`、`dsh-plugin/lib/client.js`、`dsh-plugin/tests/{stream,state}.test.mjs`、契约 02、`docs/specs/archive/0066-触发时间窗与去重.md`、`CHANGELOG.md` |
 | 2026-11-27 | 刷屏不漏命中（0065，已归档）：快车道从 30 次逐会话尾部采样改成 1 条账号级消息流（`+messages-search` 按值守会话收窄 + 时间窗 + `has_more`），命中进 `delivered_at` 待投集合、载荷写进会话才落标记；慢车道改为每 10 分钟区间对账补漏（`runtime.stream.missed`）；流截断追加 `@我` 兜底，流失败当轮降级；请求 34→5 次/分钟，触发仍 60 秒；新增 13 条流测试 | `dsh-plugin/lib/{im,poller,state,prompt,turns}.js`、`dsh-plugin/web/panel.js`、`dsh-plugin/lib/client.js`、`dsh-plugin/tests/stream.test.mjs`、契约 02、`docs/architecture/02-data.md §拉取节奏`、`docs/specs/archive/0065-刷屏不漏命中.md`、`CHANGELOG.md` |
 | 2026-11-26 | 0.27.1 发布：0064 面板认 DSH 会话进版；Trusted Publishing 成功（run 45780260539，3m23s，版本自检通过）；npm latest 0.27.1；tag `v0.27.1`；市场索引指向 0.27.1 | `CHANGELOG.md`、`dsh-plugin/package.json`、`dsh-plugin/market/index.json`、[run 45780260539](https://github.com/buger-gif/cyber-im-avatar/actions/runs/45780260539) |
@@ -34,15 +35,14 @@
 | 2026-11-23 | 引用消息进载荷（0053，已归档，真机已验）：飞书 `reply_to` + `+messages-mget` 补原文，载荷加 `↪ 引用` 行；取不到明说；企微 / 钉钉不接 | `dsh-plugin/lib/{im,state,poller,turns}.js`、契约 01/02、`docs/specs/archive/0053-引用消息进载荷.md` |
 | 2026-11-23 | 私聊进度卡（0052，已归档，真机已验）：2 分钟建 Card 2.0，按动作计数原地 patch；全局默认关 + 会话三态；`progress.ids` 不计入「本人已回复」 | `dsh-plugin/lib/progress.js`、契约 01/02/03、`docs/specs/archive/0052-私聊进度卡.md` |
 | 2026-11-19 | 0.24.2 发布：交付本人文档不再当成「授权」，开权限不带重复通知；Trusted Publishing 绿，市场索引指向 0.24.2 | `CHANGELOG.md`、`dsh-plugin/package.json`、`dsh-plugin/market/index.json` |
-| 2026-11-19 | CI 去告警：`checkout` / `setup-node` / `setup-python` 统一升 v7（node24），四个 job 无弃用告警 | `.github/workflows/test.yml`、`docs/implementation/runbooks/dev-loop.md` |
 
 ## 当前断点
 
 - **active 为空**；0065「刷屏不漏命中」与 0066「触发时间窗与去重」已实施并归档（账号级消息流 +
   10 分钟硬触发窗 + `seen` 持久记录 + 慢车道对账，请求 34/分钟 → 5/分钟），自动测试全绿；
   真机复核挂账（见下）；下一个号 0067，上限 2。
-- **0.27.0 已发布**：npm latest 0.27.0、tag `v0.27.0`，Trusted Publishing run
-  [45765790784](https://github.com/buger-gif/cyber-im-avatar/actions/runs/45765790784) 成功；市场索引已指向 0.27.0。
+- **0.28.0 已发布**：npm latest 0.28.0、tag `v0.28.0`，Trusted Publishing run
+  [45968255845](https://github.com/buger-gif/cyber-im-avatar/actions/runs/45968255845) 成功；市场索引已指向 0.28.0。
 - **中断卡死兜底已落地**：0063 在隔离的 DSH 0.2.2-rc.5 宿主 + 模拟网关实测——关闭开关时复现
   400，开启后同一会话续聊成功，聊天转录看不到占位文案。桌面 app 未重启（避免中断当前会话）。
 - **各市场描述已同步**：npm 描述与 README、自托管索引（`--source npm`）、awesome-dsh-plugin
