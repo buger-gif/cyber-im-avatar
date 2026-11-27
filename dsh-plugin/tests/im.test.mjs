@@ -638,7 +638,11 @@ test("fetchSince reads a time window and returns the platform's completeness", a
   const s = seen.indexOf("--start");
   const e = seen.indexOf("--end");
   assert.ok(s > 0 && e > 0);
-  assert.match(seen[s + 1], /\+08:00$/);
+  // 时区无关：带偏移即可，且必须还原到请求的那一秒（CI 跑 UTC，本机可能 +08:00）。
+  assert.match(seen[s + 1], /[+-]\d{2}:\d{2}$/);
+  assert.equal(new Date(seen[s + 1]).getTime(), (1_700_000_000 - 2) * 1000); // 读取向前留 2 秒重叠
+  assert.match(seen[e + 1], /[+-]\d{2}:\d{2}$/);
+  assert.equal(new Date(seen[e + 1]).getTime(), 1_700_001_000_000);
   assert.ok(seen.includes("--page-all"));
 });
 
