@@ -445,7 +445,8 @@ export class Poller {
     const runtime = this.state.data.runtime || (this.state.data.runtime = {});
     const prev = runtime.stream && typeof runtime.stream === "object" ? runtime.stream : {};
     const now = nowSec();
-    const since = Number(prev.since) || 0;
+    const sinceRaw = Number(prev.since) || 0;
+    const since = sinceRaw > now ? now - TRIGGER_WINDOW_SEC : sinceRaw;
     const start = since > 0
       ? Math.max(since - 2, now - STREAM_MAX_LOOKBACK_SEC)
       : Math.max(0, now - STREAM_LOOKBACK_SEC);
@@ -519,7 +520,7 @@ export class Poller {
       if (!this.state.pendingUndelivered(chat, DELIVER_BATCH).length) continue;
       await this.maybeWake(chat);
     }
-    const maxTs = r.items.reduce((n, m) => Math.max(n, Number(m.ts_epoch) || 0), 0);
+    const maxTs = Math.min(now, r.items.reduce((n, m) => Math.max(n, Number(m.ts_epoch) || 0), 0));
     runtime.stream = {
       since: maxTs > 0 ? Math.max(maxTs, start) : Math.max(Number(prev.since) || 0, now - STREAM_LOOKBACK_SEC),
       at: now, ok: true, error: "", scanned: r.items.length, matched,
@@ -850,13 +851,17 @@ export class Poller {
     if (!chat.poll_since && (chat.last_epoch || chat.last_msg_id)) {
       chat.poll_since = Math.max(1, Number(chat.last_epoch) || (now - 60));
     }
+    // 未来游标会永远读不到消息：夹回一个窗口前，重读最近 10 分钟而不是跳到 now。
+    if (chat.poll_since > now) chat.poll_since = Math.max(1, now - TRIGGER_WINDOW_SEC);
     const baseline = !chat.last_epoch && !chat.last_msg_id;
     const interval = !baseline && !!chat.poll_since && !!adapter.supportsSince;
     const n = Math.max(1, Math.min(Number(limit) || this.cfg.poll?.per_chat_limit || 10, 50));
     let r;
+    let readFrom = 0;
     try {
       if (interval) {
         const floor = Math.max(chat.poll_since, now - INTERVAL_MAX_SEC);
+        readFrom = floor;
         if (floor > chat.poll_since) {
           // 停机太久：只回看 10 分钟，更早的记缺口，不回放。
           chat.gap = { at: now, from: chat.poll_since, to: floor, source: "backlog" };
@@ -893,7 +898,7 @@ export class Poller {
     }));
     if (interval) {
       const epochs = messages.map((m) => Number(m.ts_epoch) || 0).filter((x) => x > 0);
-      const newest = epochs.length ? Math.max(...epochs) : 0;
+      const newest = epochs.length ? Math.min(Math.max(...epochs), now) : 0;
       if (r.complete === false) {
         // 窗口里没读全：把读不到的一段记成缺口，游标推到 now，不做无边界回放。
         chat.gap = {
@@ -910,12 +915,26 @@ export class Poller {
     } else if (baseline) {
       chat.poll_since = now - 10;
     }
-    // 引用原文：只补水位之后的新消息，老消息不再重复 mget（spec 0053）。
-    try {
-      await adapter.resolveQuotes?.(messages, {
-        since: baseline ? Number.POSITIVE_INFINITY : Math.max(0, (Number(chat.last_epoch) || 0) - 1),
-      });
-    } catch { /* 引用取不到不阻断轮询 */ }
+    // 页预算读不全时，@ 仍要保证：对这一段追加一次 `@我` 过滤搜索（只兜 @）。
+    if (interval && r.complete === false && typeof adapter.searchAtMe === "function") {
+      try {
+        const at = await adapter.searchAtMe({
+          start: new Date((readFrom || Math.max(1, now - INTERVAL_MAX_SEC)) * 1000),
+          end: new Date(now * 1000),
+          chatIds: [chatId],
+        });
+        if (at?.ok) {
+          const have = new Set(messages.map((m) => String(m.msg_id)));
+          const names = this.selfNames(platform);
+          for (const m of at.items || []) {
+            if (!m?.msg_id || have.has(String(m.msg_id))) continue;
+            if (!isMention(m, ident.self_id, names)) continue;
+            have.add(String(m.msg_id));
+            messages.push({ ...m, platform, chat_id: chatId, is_self: false });
+          }
+        }
+      } catch { /* @ 兜底失败不阻断，缺口已记 */ }
+    }
     if (baseline && messages.length === 0) {
       chat.last_epoch = now;
       chat.last_ts = "";
@@ -982,6 +1001,9 @@ export class Poller {
     // 账号流不带 reply_to：要唤醒时补一次最近 10 条，只补引用与媒体键，不改分类（spec 0065）。
     if (advance && batch.length && (source === "stream" || source === "overflow")) {
       await this.enrichBatch(chat, batch);
+    } else if (advance && batch.length) {
+      // 区间 / 尾部读自带 reply_to：只给要投的批次解析引用，不给整窗旧消息发 mget。
+      try { await this.im.adapter(platform).resolveQuotes?.(batch, { since: 0 }); } catch { /* 不阻断 */ }
     }
     // 启动指令已经开了开场 turn：本批其它消息在 recent 里，别马上再起一轮把它打断。
     const woke = advance && !handled.started ? await this.maybeWake(chat, batch) : false;
@@ -1016,8 +1038,11 @@ export class Poller {
     // 1) 水位 `last_epoch` 之前的历史一律不回溯（旧 bug 漏掉的也不补，避免重载风暴）；
     // 2) 只处理最近 10 分钟的消息；更早的记 skip，不进批次。
     // 同秒消息用 `seen` 去重（`<` 而不是 `<=`，同一秒的新消息仍能进来）。
-    const floor = !baseline ? Math.max(0, Number(chat.last_epoch) || 0) : 0;
-    const windowFloor = nowSec() - TRIGGER_WINDOW_SEC;
+    const rawFloor = Math.max(0, Number(chat.last_epoch) || 0);
+    const now = nowSec();
+    // 水位跑到未来（时钟回拨 / 脏数据）：按 0 处理，否则当前消息会被永久挡住。
+    const floor = !baseline && rawFloor <= now + 60 ? rawFloor : 0;
+    const windowFloor = now - TRIGGER_WINDOW_SEC;
     const classified = [];
     const newIds = new Set();
     for (const m of messages) { // 最新在前
@@ -1105,7 +1130,10 @@ export class Poller {
     // 点开只读（wake=false）不推进游标 / seen：这次发现的新消息留给下一轮定时唤醒，
     // 否则批次会被“看过”吞掉，永远不会叫醒 agent。
     if (advance) {
-      if (best) {
+      // 水位只前进不后退；唯一例外是水位跑到了未来（时钟回拨 / 脏数据），允许用本轮最新值纠正。
+      const prevEpoch = Number(chat.last_epoch) || 0;
+      const implausible = prevEpoch > now + 60;
+      if (best && (implausible || best.epoch >= prevEpoch)) {
         chat.last_epoch = best.epoch;
         chat.last_ts = best.ts;
         chat.last_msg_id = best.id;

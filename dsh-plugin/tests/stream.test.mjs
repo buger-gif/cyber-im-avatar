@@ -477,3 +477,46 @@ test("a chat with only old pending rows does not wake at all", async () => {
   assert.equal(turns.wakes.length, 0);
   assert.equal(chat.recent.find((m) => m.msg_id === "old").state, "ignored");
 });
+
+test("the watermark never moves backwards on an old overlap", async () => {
+  const { state, poller, adapter } = setup();
+  const floor = nowSec() - 60;
+  const chat = watched(state, "feishu", "oc_dm", "p2p", { last_epoch: floor, seen: [] });
+  adapter.sinceResult = () => ({ ok: true, complete: true, messages: [msg("older", nowSec() - 120)] });
+  await poller.pollChat("feishu", "oc_dm", { force: true, source: "verify" });
+  assert.equal(chat.last_epoch, floor, "旧消息不能把水位拉回去");
+});
+
+test("a watermark in the future heals instead of blocking every message", async () => {
+  const { state, poller, adapter, turns } = setup();
+  const chat = watched(state, "feishu", "oc_dm", "p2p", { last_epoch: nowSec() + 3600, seen: [] });
+  adapter.sinceResult = () => ({ ok: true, complete: true, messages: [msg("fresh", nowSec() - 5)] });
+  await poller.pollChat("feishu", "oc_dm", { force: true });
+  assert.equal(turns.wakes.length, 1);
+  assert.ok(chat.last_epoch <= nowSec(), "未来水位被本轮最新消息纠正");
+});
+
+test("a stream cursor in the future is clamped for this tick", async () => {
+  const { state, poller, adapter, turns } = setup();
+  watched(state, "feishu", "oc_dm", "p2p");
+  state.data.runtime.stream = { since: nowSec() + 3600, at: 0, ok: true, error: "" };
+  adapter.streamResult = { ok: true, complete: true, items: [msg("s1", nowSec() - 5, { chat_id: "oc_dm" })] };
+  await poller.fastCycle();
+  assert.equal(turns.wakes.length, 1);
+  assert.ok(state.data.runtime.stream.since <= nowSec());
+});
+
+test("an incomplete interval read still guarantees @ through one at-me search", async () => {
+  const { state, poller, adapter, turns } = setup();
+  const chat = watched(state, "feishu", "oc_grp", "group", { timer: 1 });
+  adapter.sinceResult = () => ({ ok: true, complete: false, messages: [] });
+  adapter.atMe = [msg("a1", nowSec() - 3, {
+    chat_id: "oc_grp", content: "@我 在吗", mentions: [{ id: { open_id: "ou_me" } }],
+  })];
+  const r = await poller.pollChat("feishu", "oc_grp", { force: true, source: "verify" });
+  assert.equal(adapter.atMeCalls, 1);
+  assert.deepEqual(adapter.atMeArgs[0].chatIds, ["oc_grp"]);
+  assert.equal(r.woke, true);
+  assert.equal(turns.wakes[0].opts.batch[0].msg_id, "a1");
+  assert.equal(chat.gap.source, "backlog");
+});

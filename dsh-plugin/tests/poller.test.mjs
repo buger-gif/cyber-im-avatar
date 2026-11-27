@@ -1815,8 +1815,7 @@ test("pollChat resolves quotes only for new replies and carries them into the ba
   chat.watching = true;
   adapter.messages = [msg("m1", 1010)];
   await poller.pollChat("feishu", "oc_dm");
-  assert.equal(adapter.quoteCalls.at(-1).opts.since, Number.POSITIVE_INFINITY,
-    "首次基线不取引用");
+  assert.equal(adapter.quoteCalls.length, 0, "没有要投的批次就不取引用");
 
   adapter.resolveQuotes = async (messages, opts) => {
     adapter.quoteCalls.push({ messages, opts });
@@ -1833,7 +1832,7 @@ test("pollChat resolves quotes only for new replies and carries them into the ba
   const r = await poller.pollChat("feishu", "oc_dm", { force: true });
   assert.equal(r.woke, true);
   const last = adapter.quoteCalls.at(-1);
-  assert.ok(last.opts.since >= 1009, "只补水位之后的新消息");
+  assert.equal(last.opts.since, 0, "只解析真正要投的批次");
   const batch = turns.wakes[0].opts.batch;
   assert.equal(batch[0].msg_id, "m2");
   assert.equal(batch[0].quote.content, "原文");
