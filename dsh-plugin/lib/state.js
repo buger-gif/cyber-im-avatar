@@ -283,7 +283,7 @@ function normalizeProgress(input) {
  * 一条消息没进唤醒批次的原因。只留可枚举的三种，面板按它聚合成一句话；
  * 进批次的行 skip 为空串。老数据没有这个键，读出来就是空串，不需要迁移。
  */
-export const SKIP_REASONS = ["baseline", "no-mention", "you-replied"];
+export const SKIP_REASONS = ["baseline", "no-mention", "you-replied", "out-of-window"];
 
 /**
  * 被引用消息的归一化（spec 0053）：只留载荷要用的六个字段与 800 字正文，
@@ -558,6 +558,10 @@ export class State {
       chat.recent.push(normalizeMessage(m));
     }
     chat.recent = trimRecent(chat.recent);
+    // 旧 state 没有 seen 环：用 recent 里的消息 ID 播种，保证「触发过的消息」有记录。
+    if (!chat.seen.length) {
+      chat.seen = chat.recent.map((m) => String(m.msg_id)).filter(Boolean).slice(0, SEEN_LIMIT);
+    }
     return chat;
   }
 
@@ -707,9 +711,32 @@ export class State {
     if (chat && chat.kind === "group" && chat.wake_mode === "all") kinds.add("fyi");
     const rows = (chat?.recent || []).filter((m) => m && !m.delivered_at &&
       (m.state === "new" || m.state === "opened") && kinds.has(m.kind));
-    rows.sort((a, b) => (a.ts_epoch - b.ts_epoch) ||
-      String(a.msg_id).localeCompare(String(b.msg_id)));
-    return rows.slice(0, Math.max(1, Number(limit) || 30));
+    // 新消息优先：别让窗口外的旧积压把刚到的命中挤出批次。limit=0 表示全部。
+    rows.sort((a, b) => (b.ts_epoch - a.ts_epoch) ||
+      String(b.msg_id).localeCompare(String(a.msg_id)));
+    const n = Number(limit);
+    return n > 0 ? rows.slice(0, n) : rows;
+  }
+
+  /**
+   * 触发时间窗外还没投递的命中：不叫醒、不建会话，改成「超时间窗」留档（spec 0065）。
+   * 只处理还没投递的行；已投递的按原状态等 agent 收口。
+   */
+  expireOutOfWindow(chat, at, windowSec) {
+    const floor = Number(at) - Number(windowSec);
+    let n = 0;
+    for (const m of chat?.recent || []) {
+      if (!m || m.delivered_at) continue;
+      if (!(m.state === "new" || m.state === "opened")) continue;
+      if ((Number(m.ts_epoch) || 0) >= floor) continue;
+      m.state = "ignored";
+      m.skip = "out-of-window";
+      m.content = "";
+      m.reply_to = "";
+      m.quote = null;
+      n += 1;
+    }
+    return n;
   }
 
   /** 投递成功才落标记：失败不写，下一轮自然重试。 */

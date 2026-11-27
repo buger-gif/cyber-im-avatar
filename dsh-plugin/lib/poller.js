@@ -33,14 +33,24 @@ const COMMAND_SCAN_LOOKBACK_SEC = 180;
  * 窗口留 120 秒，吸收平台 create_time 的分钟精度与索引延迟。
  */
 const STREAM_LOOKBACK_SEC = 120;
+/** 停摆后流最多回看多久；更早的记截断，不在启动时一次性回放一堆历史。 */
+const STREAM_MAX_LOOKBACK_SEC = 10 * 60;
 const STREAM_MAX_PAGES = 4;
 const STREAM_MAX_IDS = 100;
 /** 慢车道对账：每轮最多核对多少个会话（按最久没核对排序；30 个会话 10 分钟全覆盖）。 */
 const VERIFY_MAX_PER_CYCLE = 30;
-/** 区间读最多回看 2 小时；更早的记缺口，不回放。 */
-const INTERVAL_MAX_SEC = 2 * 3600;
+/** 区间读最多回看 10 分钟（与对账节奏一致）；更早的记缺口，不回放。 */
+const INTERVAL_MAX_SEC = 10 * 60;
 /** 单轮投递上限；多的留在待投集合里下一轮 drain。 */
 const DELIVER_BATCH = 30;
+/**
+ * 触发时间窗（spec 0065 事故复盘）：只处理最近 10 分钟的消息。
+ * 更早的消息不进批次、不建会话，记 `skip="out-of-window"` 留档；同时不再回溯
+ * `last_epoch` 之前的历史。慢车道的区间读也只回看这么久。
+ */
+const TRIGGER_WINDOW_SEC = 10 * 60;
+/** 兜底节流：全局每分钟最多起 5 个会话，超出排队到下一跳（本人指令不受限）。 */
+const WAKE_MAX_PER_MIN = 5;
 
 
 function nowSec() {
@@ -79,6 +89,7 @@ export class Poller {
     this.lastFast = {};
     // 本人 @ 自己的唤醒时间：只用于防回环熔断，不落 state。
     this.cmdWakes = new Map();
+    this.wakeTimes = [];
     this.dutyLock = false;
     this.dutyLastCleanup = 0;
     this.lastSweep = { at: 0, ok: null, scanned: 0, queued: 0, error: "" };
@@ -436,10 +447,10 @@ export class Poller {
     const now = nowSec();
     const since = Number(prev.since) || 0;
     const start = since > 0
-      ? Math.max(since - 2, now - 24 * 3600)
+      ? Math.max(since - 2, now - STREAM_MAX_LOOKBACK_SEC)
       : Math.max(0, now - STREAM_LOOKBACK_SEC);
-    // 停机超过 24 小时：只回看一天，更早的记一笔截断，不假装读过。
-    const capped = since > 0 && since < now - 24 * 3600;
+    // 停摆超过 10 分钟：只回看 10 分钟，更早的记一笔截断，不假装读过。
+    const capped = since > 0 && since < now - STREAM_MAX_LOOKBACK_SEC;
     const ids = targets.map((c) => c.chat_id);
     // 单次过滤列表别太长：超过 100 个会话就分批发，别静默丢后半截。
     const chunks = [];
@@ -847,7 +858,7 @@ export class Poller {
       if (interval) {
         const floor = Math.max(chat.poll_since, now - INTERVAL_MAX_SEC);
         if (floor > chat.poll_since) {
-          // 停机太久：只回看 2 小时，更早的记缺口，不回放。
+          // 停机太久：只回看 10 分钟，更早的记缺口，不回放。
           chat.gap = { at: now, from: chat.poll_since, to: floor, source: "backlog" };
         }
         r = await adapter.fetchSince(chatId, { since: floor, until: now, maxPages: 3 });
@@ -1001,6 +1012,12 @@ export class Poller {
       }
     }
     const seen = new Set((chat.seen || []).map(String));
+    // 两条硬边界（spec 0065 事故复盘）：
+    // 1) 水位 `last_epoch` 之前的历史一律不回溯（旧 bug 漏掉的也不补，避免重载风暴）；
+    // 2) 只处理最近 10 分钟的消息；更早的记 skip，不进批次。
+    // 同秒消息用 `seen` 去重（`<` 而不是 `<=`，同一秒的新消息仍能进来）。
+    const floor = !baseline ? Math.max(0, Number(chat.last_epoch) || 0) : 0;
+    const windowFloor = nowSec() - TRIGGER_WINDOW_SEC;
     const classified = [];
     const newIds = new Set();
     for (const m of messages) { // 最新在前
@@ -1009,7 +1026,9 @@ export class Poller {
       if (progressIds.has(id)) continue;
       // 读过的不再分类：账号流与对账都会重读重叠区间（spec 0065）。
       if (advance && seen.has(id)) continue;
-      if (!baseline) newIds.add(id);
+      const epoch = Number(m.ts_epoch) || 0;
+      if (floor && epoch < floor) continue;
+      const stale = !baseline && epoch < windowFloor;
       const isSelf = !!selfId && m.sender_id === selfId;
       const allMode = chat.kind === "group" && chat.wake_mode === "all";
       // 私聊「只认 @」：非 @ 记知会，正文不落盘、不算待回、不进唤醒批次。
@@ -1029,6 +1048,10 @@ export class Poller {
         state = "new";
       } else if (isSelf) {
         state = "replied";
+      } else if (stale) {
+        // 超出时间窗：留一条「没唤醒」的记录，不建会话、不算待回。
+        state = "ignored";
+        skip = "out-of-window";
       } else if (kind === "fyi") {
         // 全量模式：群里的非 @ 消息也要叫醒 agent（只看不回），所以记 new。
         state = allMode ? "new" : "ignored";
@@ -1036,6 +1059,7 @@ export class Poller {
       } else {
         state = "new";
       }
+      if (state === "new") newIds.add(id);
       const keepBody = (state === "new" || state === "opened") && kind !== "out";
       classified.push({
         msg_id: id,
@@ -1043,7 +1067,7 @@ export class Poller {
         sender_name: String(m.sender_name || ""),
         content: keepBody ? String(m.content || "") : "",
         ts: String(m.ts || ""),
-        ts_epoch: Number(m.ts_epoch) || 0,
+        ts_epoch: epoch,
         kind,
         state,
         skip,
@@ -1121,7 +1145,13 @@ export class Poller {
 
   async maybeWake(chat, batch = null) {
     if (!chat.watching || chat.blocked) return false;
-    const rows = Array.isArray(batch) ? batch : this.state.pendingUndelivered(chat, DELIVER_BATCH);
+    const now = nowSec();
+    // 先收口窗口外的旧积压：它们不叫醒、不建会话，只留记录（spec 0065）。
+    if (this.state.expireOutOfWindow(chat, now, TRIGGER_WINDOW_SEC)) this.state.save();
+    const floor = now - TRIGGER_WINDOW_SEC;
+    let rows = Array.isArray(batch) ? batch : this.state.pendingUndelivered(chat, 0);
+    rows = rows.filter((m) => (Number(m.ts_epoch) || 0) >= floor);
+    if (rows.length > DELIVER_BATCH) rows = rows.slice(0, DELIVER_BATCH);
     if (rows.some((m) => m.kind === "cmd") && !this.allowCmdWake(chat)) return false;
     // 已被取消、正在收尾的旧轮不算在飞：它不该让新消息的载荷被标成「上一轮被打断」。
     const active = typeof this.turns?.busy === "function"
@@ -1138,11 +1168,17 @@ export class Poller {
     }
     if (rows.length) {
       if (!this.turns) return false;
+      // 全局闸：一轮风暴里最多每分钟起 5 个会话，其余下一跳排队；本人指令不排队。
+      const nowW = nowSec();
+      const recentWakes = (this.wakeTimes || []).filter((t) => nowW - t < 60);
+      if (!hasCmd && recentWakes.length >= WAKE_MAX_PER_MIN) return false;
+      this.wakeTimes = recentWakes;
       // 纯 drain（这批消息都早于上次唤醒）不打断在飞轮次；有新命中才打断。
       const fresh = !chat.last_wake_at ||
         rows.some((m) => (Number(m.ts_epoch) || 0) > (Number(chat.last_wake_at) || 0));
       const r = await this.turns.wake(chat, { interrupted: active && fresh, batch: rows });
       if (r.ok) {
+        this.wakeTimes.push(nowSec());
         chat.last_wake_at = nowSec();
         this.state.markDelivered(chat, rows.map((m) => m.msg_id));
         this.state.save();
@@ -1150,9 +1186,18 @@ export class Poller {
       return !!r.ok;
     }
     if (chat.wake?.failed && !active && this.state.pendingCount(chat) > 0 && this.turns) {
-      const r = await this.turns.wake(chat, { interrupted: active });
+      // 重试同样受全局闸约束，别用重试绕过去；只重试窗口内、还没投递的行。
+      const retry = this.state.pendingUndelivered(chat, DELIVER_BATCH)
+        .filter((m) => (Number(m.ts_epoch) || 0) >= floor);
+      if (!retry.length) return false;
+      const nowW = nowSec();
+      const recentWakes = (this.wakeTimes || []).filter((t) => nowW - t < 60);
+      if (recentWakes.length >= WAKE_MAX_PER_MIN) return false;
+      this.wakeTimes = recentWakes;
+      const r = await this.turns.wake(chat, { interrupted: active, batch: retry });
       if (r.ok) {
-        this.state.markDelivered(chat, this.state.pendingMessages(chat).map((m) => m.msg_id));
+        this.wakeTimes.push(nowSec());
+        this.state.markDelivered(chat, retry.map((m) => m.msg_id));
         this.state.save();
       }
       return !!r.ok;
@@ -1574,6 +1619,8 @@ export class Poller {
       blocked_group: rows.filter((r) => r.blocked && r.kind === "group").length,
       last_result: this.lastResult,
       command_scan: { ...this.lastCommandScan },
+      // 触发时间窗：面板显示「只处理最近 N 分钟」，与 process 的硬边界同源。
+      trigger_window_sec: TRIGGER_WINDOW_SEC,
       // 账号级消息流（spec 0065）：面板用它显示「一条流覆盖多少会话」与截断/失败。
       stream: {
         ...(this.state.data.runtime?.stream || {}),

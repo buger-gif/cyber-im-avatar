@@ -303,7 +303,7 @@ test("pendingUndelivered / markDelivered / seen ring", () => {
   state.mergeRecent(chat, [
     msg("m1", 101), msg("m2", 102, { kind: "mention" }), msg("m3", 103, { state: "ignored" }),
   ]);
-  assert.deepEqual(state.pendingUndelivered(chat).map((m) => m.msg_id), ["m1", "m2"]);
+  assert.deepEqual(state.pendingUndelivered(chat).map((m) => m.msg_id), ["m2", "m1"], "新消息优先");
   assert.equal(state.markDelivered(chat, ["m1"]), 1);
   assert.equal(state.markDelivered(chat, ["m1"]), 0, "重复标记是幂等的");
   assert.deepEqual(state.pendingUndelivered(chat).map((m) => m.msg_id), ["m2"]);
@@ -659,4 +659,40 @@ test("mergeRecent backfills a quote onto an existing pointer without touching st
   assert.equal(row.state, "new");
   assert.equal(row.reply_to, "om_0");
   assert.equal(row.quote.content, "原文");
+});
+
+test("old state seeds the seen ring from recent so triggered ids have a record", () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "im-seen-"));
+  fs.writeFileSync(path.join(dir, "state.json"), JSON.stringify({
+    version: 2,
+    chats: {
+      "feishu:oc_seed": {
+        platform: "feishu", chat_id: "oc_seed", watching: true, last_epoch: 100,
+        recent: [
+          { msg_id: "s1", sender_id: "ou_a", content: "一", ts: "t1", ts_epoch: 100, kind: "dm", state: "replied" },
+          { msg_id: "s2", sender_id: "ou_a", content: "二", ts: "t2", ts_epoch: 99, kind: "dm", state: "new" },
+        ],
+      },
+    },
+  }));
+  const st = new State(dir);
+  st.load();
+  const chat = st.getChat("feishu", "oc_seed");
+  assert.deepEqual(chat.seen, ["s1", "s2"]);
+});
+
+test("expireOutOfWindow records stale pending rows without delivering them", () => {
+  const { state } = tempState();
+  const chat = state.ensureChat("feishu", "oc_x", { name: "X", kind: "p2p" });
+  const now = Math.floor(Date.now() / 1000);
+  state.mergeRecent(chat, [
+    msg("fresh", now - 60, { content: "新" }),
+    msg("old", now - 1200, { content: "旧" }),
+  ]);
+  assert.equal(state.expireOutOfWindow(chat, now, 600), 1);
+  const old = chat.recent.find((m) => m.msg_id === "old");
+  assert.equal(old.state, "ignored");
+  assert.equal(old.skip, "out-of-window");
+  assert.equal(old.content, "");
+  assert.deepEqual(state.pendingUndelivered(chat).map((m) => m.msg_id), ["fresh"]);
 });

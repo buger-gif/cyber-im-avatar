@@ -8,10 +8,12 @@ import { DEFAULT_CONFIG, State } from "../lib/state.js";
 import { Poller } from "../lib/poller.js";
 import * as duty from "../lib/duty.js";
 
+// 夹具用「相对时刻」写 epoch；映射到接近 now 的真实秒，避免被「迟到 3 分钟不起会话」拦掉。
+const T0 = Math.floor(Date.now() / 1000) - 60;
 function msg(id, epoch, extra = {}) {
   return {
     msg_id: id, sender_id: "ou_other", sender_name: "对方",
-    content: `正文-${id}`, ts: `t-${epoch}`, ts_epoch: epoch,
+    content: `正文-${id}`, ts: `t-${epoch}`, ts_epoch: T0 + (epoch - 1000),
     msg_type: "text", mentions: [], ...extra,
   };
 }
@@ -125,7 +127,7 @@ test("first poll is baseline: caches latest, wakes nobody", async () => {
   assert.equal(r.new, 0);
   assert.equal(r.woke, false);
   assert.equal(turns.wakes.length, 0);
-  assert.equal(chat.last_epoch, 1030);
+  assert.equal(chat.last_epoch, T0 + 30);
   assert.deepEqual(chat.recent.map((m) => [m.msg_id, m.state, m.content]), [
     ["m3", "ignored", ""], ["m2", "ignored", ""], ["m1", "ignored", ""],
   ]);
@@ -1607,7 +1609,7 @@ test("sweep probe is read-only: no recent/watermark changes, only sweep_epoch", 
   assert.equal(chat.last_epoch, 100);
   assert.equal(chat.last_msg_id, "m0");
   assert.deepEqual(chat.recent.map((m) => m.msg_id), ["m0"]);
-  assert.equal(chat.duty.sweep_epoch, 200);
+  assert.equal(chat.duty.sweep_epoch, T0 - 800);
 });
 
 test("trial review runs once and applies ignore; attempts are reset on success", async () => {

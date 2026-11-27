@@ -245,15 +245,15 @@ test("slow lane reconciles one interval read and delivers what the stream missed
   assert.equal(turns.wakes[0].opts.batch[0].msg_id, "r1");
 });
 
-test("a 2h floor caps the interval read and leaves a gap for the rest", async () => {
+test("a 10-minute floor caps the interval read and leaves a gap for the rest", async () => {
   const { state, poller, adapter } = setup();
   const chat = watched(state, "feishu", "oc_dm", "p2p");
-  chat.poll_since = nowSec() - 10 * 3600;
+  chat.poll_since = nowSec() - 3600;
   adapter.sinceResult = () => ({ ok: true, complete: true, messages: [] });
   await poller.pollChat("feishu", "oc_dm", { force: true });
   assert.equal(chat.gap.source, "backlog");
-  assert.ok(chat.gap.to >= nowSec() - 2 * 3600 - 5);
-  assert.ok(adapter.sinceCalls[0].since >= nowSec() - 2 * 3600 - 5);
+  assert.ok(chat.gap.to >= nowSec() - 600 - 5);
+  assert.ok(adapter.sinceCalls[0].since >= nowSec() - 600 - 5);
 });
 
 test("chats without a stream keep the per-chat path", async () => {
@@ -364,7 +364,7 @@ test("a healthy stream tick keeps the reconciliation counter", async () => {
 test("an interval read processes every message in the window, not just the first 10", async () => {
   const { state, poller, adapter, turns } = setup();
   const chat = watched(state, "feishu", "oc_grp", "group", { timer: 1 });
-  const base = nowSec() - 300;
+  const base = nowSec() - 60;
   const rows = [];
   for (let i = 0; i < 12; i += 1) {
     const at = base + i;
@@ -376,4 +376,104 @@ test("an interval read processes every message in the window, not just the first
   assert.equal(turns.wakes.length, 1);
   assert.deepEqual(turns.wakes[0].opts.batch.map((m) => m.msg_id), ["i1"]);
   assert.equal(chat.recent.find((m) => m.msg_id === "i1").kind, "mention");
+});
+
+test("messages outside the 10-minute window are recorded but never wake", async () => {
+  const { state, poller, adapter, turns } = setup();
+  const chat = watched(state, "feishu", "oc_dm", "p2p", { last_epoch: nowSec() - 1200 });
+  adapter.sinceResult = () => ({ ok: true, complete: true, messages: [msg("old", nowSec() - 660)] });
+  await poller.pollChat("feishu", "oc_dm", { force: true, source: "verify" });
+  assert.equal(turns.wakes.length, 0, "11 分钟前的消息超出时间窗");
+  const row = chat.recent.find((m) => m.msg_id === "old");
+  assert.equal(row.state, "ignored");
+  assert.equal(row.skip, "out-of-window");
+  assert.equal(row.content, "", "窗口外的消息不留在待投集合");
+  assert.equal(state.pendingMessages(chat).length, 0);
+
+  adapter.sinceResult = () => ({ ok: true, complete: true, messages: [msg("new", nowSec() - 5)] });
+  await poller.pollChat("feishu", "oc_dm", { force: true });
+  assert.equal(turns.wakes.length, 1);
+  assert.deepEqual(turns.wakes[0].opts.batch.map((m) => m.msg_id), ["new"], "旧消息不随新消息一起发");
+});
+
+test("a hit inside the 10-minute window still wakes", async () => {
+  const { state, poller, adapter, turns } = setup();
+  watched(state, "feishu", "oc_dm", "p2p", { last_epoch: nowSec() - 1200 });
+  adapter.sinceResult = () => ({
+    ok: true, complete: true,
+    messages: [msg("warm", nowSec() - 540, {
+      content: "@我 看下", mentions: [{ id: { open_id: "ou_me" } }],
+    })],
+  });
+  await poller.pollChat("feishu", "oc_dm", { force: true });
+  assert.equal(turns.wakes.length, 1);
+  assert.equal(turns.wakes[0].opts.batch[0].msg_id, "warm");
+});
+
+test("empty seen ring does not replay messages before the watermark", async () => {
+  const { state, poller, adapter, turns } = setup();
+  const chat = watched(state, "feishu", "oc_dm", "p2p", { last_epoch: nowSec() - 400, seen: [] });
+  adapter.sinceResult = () => ({
+    ok: true, complete: true,
+    messages: [msg("fresh", nowSec() - 5), msg("old", nowSec() - 500)],
+  });
+  await poller.pollChat("feishu", "oc_dm", { force: true, source: "verify" });
+  assert.equal(turns.wakes.length, 1);
+  assert.deepEqual(turns.wakes[0].opts.batch.map((m) => m.msg_id), ["fresh"]);
+  assert.equal(chat.recent.some((m) => m.msg_id === "old"), false, "水位之前的老消息不再进 recent");
+  assert.ok(chat.seen.includes("old"));
+});
+
+test("a global cap of 5 sessions per minute queues the rest", async () => {
+  const { state, poller, adapter, turns } = setup();
+  const chats = [];
+  for (let i = 0; i < 6; i += 1) chats.push(watched(state, "feishu", `oc_b${i}`, "p2p"));
+  const now = nowSec();
+  poller.wakeTimes = [now - 10, now - 20, now - 30, now - 40, now - 50];
+  adapter.streamResult = {
+    ok: true, complete: true,
+    items: chats.map((c, i) => msg(`f${i}`, now - 5, { chat_id: c.chat_id })),
+  };
+  await poller.fastCycle();
+  assert.equal(turns.wakes.length, 0, "已到上限，先排队");
+  const pending = state.getChat("feishu", "oc_b0").recent.find((m) => m.msg_id === "f0");
+  assert.equal(pending.delivered_at, 0);
+
+  poller.wakeTimes = [];
+  adapter.streamResult = { ok: true, complete: true, items: [] };
+  await poller.fastCycle();
+  assert.equal(turns.wakes.length, 5, "下一跳先补 5 个");
+  poller.wakeTimes = [];
+  await poller.fastCycle();
+  assert.equal(turns.wakes.length, 6, "再下一跳补完最后一个");
+});
+
+test("old pending rows never ride along with a fresh hit", async () => {
+  const { state, poller, adapter, turns } = setup();
+  const chat = watched(state, "feishu", "oc_dm", "p2p");
+  const now = nowSec();
+  state.mergeRecent(chat, [{
+    msg_id: "old", sender_id: "ou_other", sender_name: "对方", content: "旧",
+    ts: "t-old", ts_epoch: now - 1200, kind: "dm", state: "new", delivered_at: 0,
+  }]);
+  adapter.streamResult = { ok: true, complete: true, items: [msg("new", now - 5, { chat_id: "oc_dm" })] };
+  await poller.fastCycle();
+  assert.equal(turns.wakes.length, 1);
+  assert.deepEqual(turns.wakes[0].opts.batch.map((m) => m.msg_id), ["new"]);
+  assert.equal(chat.recent.find((m) => m.msg_id === "old").skip, "out-of-window");
+  assert.equal(chat.recent.find((m) => m.msg_id === "old").delivered_at, 0);
+});
+
+test("a chat with only old pending rows does not wake at all", async () => {
+  const { state, poller, adapter, turns } = setup();
+  const chat = watched(state, "feishu", "oc_dm", "p2p");
+  const now = nowSec();
+  state.mergeRecent(chat, [{
+    msg_id: "old", sender_id: "ou_other", sender_name: "对方", content: "旧",
+    ts: "t-old", ts_epoch: now - 1200, kind: "dm", state: "new", delivered_at: 0,
+  }]);
+  adapter.streamResult = { ok: true, complete: true, items: [] };
+  await poller.fastCycle();
+  assert.equal(turns.wakes.length, 0);
+  assert.equal(chat.recent.find((m) => m.msg_id === "old").state, "ignored");
 });

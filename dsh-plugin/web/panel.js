@@ -1427,7 +1427,8 @@
     }
 
     /* 一条消息没叫醒的原因：与 lib/state.js 的 SKIP_REASONS 一一对应（spec 0049）。 */
-    var SKIP_LABEL = { baseline: "首次基线", "no-mention": "没 @ 你", "you-replied": "你先回过了" };
+    var SKIP_LABEL = { baseline: "首次基线", "no-mention": "没 @ 你", "you-replied": "你先回过了",
+      "out-of-window": "超时间窗" };
     function skipText(skip) { return SKIP_LABEL[skip] || "未唤醒"; }
 
     /* 历史消息的正文不在本地：已处理/知会/已发的行只留指针。 */
@@ -3715,10 +3716,11 @@
           return h("div", { class: "ims-hint", text: "账号消息流：该平台不支持，保持逐会话读。" });
         }
         if (!st.at) return h("div", { class: "ims-hint", text: "账号消息流：还没跑过（宿主启动后第一轮开始）。" });
+        var win = Math.round(((S.status.poll && S.status.poll.trigger_window_sec) || 600) / 60);
         var line = st.ok === false
           ? "账号消息流失败，已降级为逐会话读：" + (st.error || "")
-          : "账号消息流：读 " + (st.scanned || 0) + " 条 · 命中 " + (st.matched || 0) + " 条" +
-            (st.truncated_at ? " · 曾截断（@ 已单独兜底）" : "");
+          : "账号消息流：读 " + (st.scanned || 0) + " 条 · 命中 " + (st.matched || 0) + " 条 · 只处理最近 " +
+            win + " 分钟" + (st.truncated_at ? " · 曾截断（@ 已单独兜底）" : "");
         return h("div", { class: "ims-hint" + (st.ok === false ? " ims-err" : ""),
           text: line + " · " + fmtTime(st.at) });
       }

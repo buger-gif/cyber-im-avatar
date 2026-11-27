@@ -19,6 +19,9 @@
 - **兼容**：`state.json` 新增 `poll_since` / `verified_at` / `seen` / `gap` / `delivered_at`
   与 `runtime.stream`，旧字段 `last_wake_epoch` 读进来直接丢弃；不需要迁移脚本。
 - **平台**：飞书走消息流；企微没有跨会话搜索、钉钉没有时间窗，各自保持逐会话区间读 / 采样。
+- **重启不炸**：触发有硬时间窗——只处理最近 10 分钟，且不回溯 `last_epoch` 之前的历史；
+  窗口外的消息只留 `skip="out-of-window"` 记录，不建会话。`seen` 是「触发过」的持久记录
+  （老 state 用 `recent` 播种），重读 / 重载不重复触发；全局每分钟最多起 5 个会话兜底。
 
 ## 0.27.1 — 2026-11-26
 

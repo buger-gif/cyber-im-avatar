@@ -55,9 +55,9 @@
 | last_warm_ok | bool/null | 最近一次保温轮结果；null = 没跑过或刚换过会话，失败不覆盖 `last_error` |
 | last_reset | object | `at` / `reason`；reason = `idle`（保温一次后第二个周期仍无新消息）/ `manual` / `workspace` / `missing`；`at=0` 表示没重开过 |
 | command | object | 最近一次「本人 @ 自己 + 启动关键词」的处理结果；见「command 对象」 |
-| poll_since | number | 时间窗读游标（epoch 秒，0=还没基线）：区间读从它开始；成功才推进，失败不动；不完整时推到 now 并记 `gap`（spec 0065） |
+| poll_since | number | 时间窗读游标（epoch 秒，0=还没基线）：区间读从它开始，最多回看 10 分钟；成功才推进，失败不动；不完整时推到 now 并记 `gap`（spec 0065） |
 | verified_at | number | 最近一次慢车道对账（区间完整读）成功的时刻；0=还没对过账 |
-| seen | array | 最近 50 个见过的 `msg_id`（最新在前）。账号流与对账都会重读重叠区间，靠它去重，避免重复投递 |
+| seen | array | 最近 50 个见过的 `msg_id`（最新在前），即「触发过的消息」记录：流与对账重读、重载后播种都靠它去重；老 state 用 `recent` 的 ID 播种 |
 | gap | object/null | 最近一次没读全的区间：`at`（发现时刻）/ `from` / `to`（epoch 秒）/ `source`（当前只有 `backlog`：停机太久只回看 2 小时）；平台不返回条数，所以不记数量 |
 
 ## command 对象

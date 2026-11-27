@@ -5,12 +5,13 @@
 
 ## 更新时间
 
-2026-11-27（0065 刷屏不漏命中已实施并归档，自动测试全绿；真机两项挂账；未发版）
+2026-11-27（0065 已实施并归档；0066 触发时间窗与去重已实施并归档，自动测试全绿；真机复核挂账；未发版）
 
 ## 最近批次
 
 | 日期 | 主题 | 证据 |
 | --- | --- | --- |
+| 2026-11-27 | 触发时间窗与去重（0066，已归档）：重载后 31 个会话补读旧账、13 个会话各起一轮并新建 10 个 DSH 会话；改为只处理最近 10 分钟、窗口外记 `skip=out-of-window` 不建会话；`seen` 持久记录 + 老 state 用 `recent` 播种；流 / 区间读最多回看 10 分钟，全局每分钟 5 个会话兜底；补 5 组测试 | `dsh-plugin/lib/{poller,state}.js`、`dsh-plugin/web/panel.js`、`dsh-plugin/lib/client.js`、`dsh-plugin/tests/{stream,state}.test.mjs`、契约 02、`docs/specs/archive/0066-触发时间窗与去重.md`、`CHANGELOG.md` |
 | 2026-11-27 | 刷屏不漏命中（0065，已归档）：快车道从 30 次逐会话尾部采样改成 1 条账号级消息流（`+messages-search` 按值守会话收窄 + 时间窗 + `has_more`），命中进 `delivered_at` 待投集合、载荷写进会话才落标记；慢车道改为每 10 分钟区间对账补漏（`runtime.stream.missed`）；流截断追加 `@我` 兜底，流失败当轮降级；请求 34→5 次/分钟，触发仍 60 秒；新增 13 条流测试 | `dsh-plugin/lib/{im,poller,state,prompt,turns}.js`、`dsh-plugin/web/panel.js`、`dsh-plugin/lib/client.js`、`dsh-plugin/tests/stream.test.mjs`、契约 02、`docs/architecture/02-data.md §拉取节奏`、`docs/specs/archive/0065-刷屏不漏命中.md`、`CHANGELOG.md` |
 | 2026-11-26 | 0.27.1 发布：0064 面板认 DSH 会话进版；Trusted Publishing 成功（run 45780260539，3m23s，版本自检通过）；npm latest 0.27.1；tag `v0.27.1`；市场索引指向 0.27.1 | `CHANGELOG.md`、`dsh-plugin/package.json`、`dsh-plugin/market/index.json`、[run 45780260539](https://github.com/buger-gif/cyber-im-avatar/actions/runs/45780260539) |
 | 2026-11-26 | 面板认 DSH 会话（0064，已归档，真机已验）：桌面壳只在启动时取一次 index 注入快照，插件热重载换 token 后已开面板 401；鉴权加 DSH 签名会话（`connection.requestRejection`），token 保留兜底；401 文案去掉 ⌘R；重载后页面未刷新，15:59:38 面板 `/api/status` 走 DSH 会话通过 | `dsh-plugin/lib/panel-auth.js`、`dsh-plugin/lib/index.js`、`dsh-plugin/web/panel.js`、`dsh-plugin/tests/panel-auth.test.mjs`、`docs/specs/archive/0064-面板认DSH会话.md` |
@@ -37,11 +38,11 @@
 
 ## 当前断点
 
-- **active 为空**；0065「刷屏不漏命中」已实施并归档（账号级消息流 + `delivered_at` 待投集合 +
-  慢车道对账，请求 34/分钟 → 5/分钟），自动测试全绿；真机两项挂账（见下）；下一个号 0066，上限 2。
-- **0.27.0 已发布**：npm latest 0.27.0（2026-11-26T06:08 前后可见），tag `v0.27.0`，
-  Trusted Publishing run [45765790784](https://github.com/buger-gif/cyber-im-avatar/actions/runs/45765790784)
-  成功；市场索引已指向 0.27.0。
+- **active 为空**；0065「刷屏不漏命中」与 0066「触发时间窗与去重」已实施并归档（账号级消息流 +
+  10 分钟硬触发窗 + `seen` 持久记录 + 慢车道对账，请求 34/分钟 → 5/分钟），自动测试全绿；
+  真机复核挂账（见下）；下一个号 0067，上限 2。
+- **0.27.0 已发布**：npm latest 0.27.0、tag `v0.27.0`，Trusted Publishing run
+  [45765790784](https://github.com/buger-gif/cyber-im-avatar/actions/runs/45765790784) 成功；市场索引已指向 0.27.0。
 - **中断卡死兜底已落地**：0063 在隔离的 DSH 0.2.2-rc.5 宿主 + 模拟网关实测——关闭开关时复现
   400，开启后同一会话续聊成功，聊天转录看不到占位文案。桌面 app 未重启（避免中断当前会话）。
 - **各市场描述已同步**：npm 描述与 README、自托管索引（`--source npm`）、awesome-dsh-plugin
@@ -53,10 +54,11 @@
 
 ## 挂账（按优先级）
 
-1. **0065 真机两项（中优先）**：①水群里 @ 自己后刷 300 条，120 秒内起 turn、载荷含该 @ 且只一次，
-   `/api/status` 的请求计数从 30/分钟降到个位数；②停进程 10 分钟再启，恢复期间的 @ 与私聊被一次
-   流读完，超过 200 条时记 `truncated_at`。另：话题群线程回复里的 @ 是否被流返回，返回不了就记进
-   `references/feishu.md` 并另开 spec。
+1. **0065 真机复核（中优先）**：①水群里 @ 自己后刷 300 条，120 秒内起 turn、载荷含该 @ 且只一次，
+   `/api/status` 的请求计数从 30/分钟降到个位数；②停进程 10 分钟再启，确认只补最近 10 分钟、
+   不会一次拉起一堆会话（首轮 31 个会话的旧账曾触发 13 个 turn；现已定死 10 分钟触发窗、
+   窗口外只留 `out-of-window` 记录、`seen` 持久去重、每分钟 5 个会话兜底）；③话题群线程回复里的
+   @ 是否被流返回，返回不了就记进 `references/feishu.md` 并另开 spec。
 2. **0063 桌面 app 复核（低优先）**：隔离 0.2.2-rc.5 宿主已验；下次重启桌面 app 时在任意会话
    按验收再走一次「思考阶段停止 → 再发一条」，确认侧边栏值守收发不受影响。
 3. **0062 真机两项**：面板「加入值守」看一次开场载荷（应 ≤30 行、口径 18 行）、一次真实命中
