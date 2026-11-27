@@ -424,7 +424,7 @@ export function buildWakePrompt(platform, chatName, chatId, messages, {
   wakeMode = "mention", resetMin = 0, kind = "group", single = false,
   sendMode = "draft", legacyPath = "", legacyHistory = "", announced = null,
   selfId = "", selfName = "", rightsCustom = false, silentCount = 0,
-  progressCard = false,
+  progressCard = false, gap = false,
 } = {}) {
   const label = PLAT_LABEL[platform] || platform;
   const safeName = sanitizeUntrusted(chatName || chatId);
@@ -446,7 +446,10 @@ export function buildWakePrompt(platform, chatName, chatId, messages, {
   const facts = [];
   if (kind === "group") {
     if (wakeMode === "all") facts.push(mentionFactLine(messages, kind));
-    if (silentCount > 0) {
+    // 缺口与「没转来」是同一件事的两种说法，二选一，净 +0 行（spec 0065）。
+    if (gap) {
+      facts.push("本群刚刷屏，窗口外还有消息没读到；@ 已单独扫，其余按 skill 在线拉。");
+    } else if (silentCount > 0) {
       facts.push(`另有 ${silentCount} 条没点你名的群消息没转来；需要时按 skill 在线拉。`);
     }
   }

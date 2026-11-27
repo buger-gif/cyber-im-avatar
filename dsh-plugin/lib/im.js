@@ -89,6 +89,18 @@ export const ADAPTERS = {
     cmd_search: ["contact", "+search-user", "--query", "{q}", "--as", "user"],
     cmd_chat_search: ["im", "+chat-search", "--as", "user", "--query", "{q}",
       "--page-size", "{limit}"],
+    // 账号级消息流（spec 0065）：不传 query，只给时间窗 + 会话列表，返回这些会话的全部新消息。
+    cmd_search_messages: ["im", "+messages-search", "--as", "user",
+      "--start", "{start}", "--end", "{end}",
+      "--page-size", "50", "--page-limit", "{page_limit}",
+      "--page-all", "--no-reactions", "--format", "json"],
+    // 时间窗读（慢车道对账 / 流失败降级）：完整与否由 meta.pagination.complete 回答。
+    cmd_list_since: ["im", "+chat-messages-list", "--chat-id", "{chat_id}",
+      "--order", "desc", "--page-size", "50", "--page-all", "--page-limit", "{page_limit}",
+      "--start", "{start}", "--end", "{end}", "--no-reactions", "--as", "user"],
+    cmd_list_since_user: ["im", "+chat-messages-list", "--user-id", "{chat_id}",
+      "--order", "desc", "--page-size", "50", "--page-all", "--page-limit", "{page_limit}",
+      "--start", "{start}", "--end", "{end}", "--no-reactions", "--as", "user"],
     cmd_at_me: ["im", "+messages-search", "--is-at-me", "--chat-type", "group",
       "--start", "{start}", "--end", "{end}", "--page-all", "--page-limit", "20",
       "--no-reactions", "--format", "json"],
@@ -108,6 +120,9 @@ export const ADAPTERS = {
     f_at_members: [["data", "users"], ["data", "items"], ["users"], ["items"]],
     f_at_truncations: [["data", "truncations"], ["truncations"]],
     f_items: [["data", "messages"], ["data", "items"], ["messages"], ["items"]],
+    f_complete: [["meta", "pagination", "complete"]],
+    f_search_has_more: [["data", "has_more"], ["has_more"]],
+    f_total: [["data", "total"], ["total"]],
     f_chats: [["data", "chats"], ["chats"]],
     f_msg_id: [["message_id"]],
     f_sender: [["sender", "id"]],
@@ -310,15 +325,16 @@ function isoWithOffset(d) {
     `${sign}${p(Math.floor(abs / 60))}:${p(abs % 60)}`;
 }
 
+function fmtLocal(d) {
+  const p = (n) => String(n).padStart(2, "0");
+  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())} ` +
+    `${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}`;
+}
+
 function timeWindow(lookbackMin) {
   const end = new Date();
   const begin = new Date(end.getTime() - Math.max(5, Number(lookbackMin) || 120) * 60 * 1000);
-  const fmt = (d) => {
-    const p = (n) => String(n).padStart(2, "0");
-    return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())} ` +
-      `${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}`;
-  };
-  return { begin_time: fmt(begin), end_time: fmt(end) };
+  return { begin_time: fmtLocal(begin), end_time: fmtLocal(end) };
 }
 
 export function childEnv() {
@@ -761,6 +777,16 @@ export class Adapter {
     return { ok: false, self_id: selfId || null, name, detail: redact(raw || "未登录", 300) };
   }
 
+  /** 该平台是否支持账号级消息流（一条搜索覆盖多个会话）：目前只有飞书。 */
+  get supportsMessageStream() {
+    return !!this.ad.cmd_search_messages;
+  }
+
+  /** 该平台是否支持按时间窗读（可回答「读全了没」）：飞书 / 企微。 */
+  get supportsSince() {
+    return !!this.ad.cmd_list_since || this.platform === "wecom";
+  }
+
   /** 该平台是否支持直接拉「@我」消息：目前只有飞书 `+messages-search --is-at-me`。 */
   get supportsAtMe() {
     return !!this.ad.cmd_at_me;
@@ -780,7 +806,7 @@ export class Adapter {
    * 直接拉 @我 的消息（跨群）。飞书的 `--is-at-me` 也会带 @all，
    * 调用方必须再用 isMention 过滤。没有该能力的平台返回 unsupported。
    */
-  async searchAtMe({ start, end } = {}) {
+  async searchAtMe({ start, end, chatIds = [] } = {}) {
     if (!this.ad.cmd_at_me) {
       return { ok: false, unsupported: true, items: [], error: "at_me_unavailable" };
     }
@@ -788,7 +814,10 @@ export class Adapter {
     const from = start ? new Date(start) : new Date(now.getTime() - 24 * 3600 * 1000);
     const to = end ? new Date(end) : now;
     const kw = { start: isoWithOffset(from), end: isoWithOffset(to) };
-    const { rc, json, raw } = await this.run(this.argv(this.ad.cmd_at_me, kw), 60);
+    let args = this.argv(this.ad.cmd_at_me, kw);
+    const ids = (Array.isArray(chatIds) ? chatIds : []).map(String).filter(Boolean);
+    if (ids.length) args = args.concat(["--chat-id", ids.join(",")]);
+    const { rc, json, raw } = await this.run(args, 60);
     if (rc !== 0 || !json) {
       return { ok: false, items: [], error: redact(raw || `rc=${rc}`, 300) };
     }
@@ -869,6 +898,42 @@ export class Adapter {
     return { ok: true, known, count: users.length, error: known ? "" : "truncated" };
   }
 
+  /**
+   * 列表输出归一（fetchMessages / fetchSince 共用）。`complete` 回答「这个窗口读全了没」：
+   * 飞书看 `meta.pagination.complete`，企微 / 钉钉看 `has_more`；都没有就是 null（未知）。
+   */
+  parseListResult(json, raw) {
+    if (!json || json.ok === false) {
+      const err = describeCliError(raw);
+      return {
+        ok: false, messages: [], complete: null, error: err.summary,
+        error_detail: redact(raw),
+      };
+    }
+    const items = dig(json, this.ad.f_items);
+    if (items === undefined || items === null) {
+      const cnt = dig(json, this.ad.f_count);
+      const more = dig(json, this.ad.f_has_more);
+      if (cnt === 0 || more === false) {
+        return { ok: true, messages: [], complete: more === false, error: "" };
+      }
+      return {
+        ok: false, messages: [], complete: null,
+        error: "SCHEMA_MISMATCH " + redact(JSON.stringify(outline(json)), 300),
+      };
+    }
+    let msgs = (Array.isArray(items) ? items : []).map((it) => this.norm(it)).filter(Boolean);
+    if ((this.ad.order || "desc").toLowerCase() === "asc") msgs = msgs.reverse();
+    const complete = dig(json, this.ad.f_complete);
+    const more = dig(json, this.ad.f_has_more);
+    return {
+      ok: true, messages: msgs, error: "",
+      complete: complete === true ? true
+        : (complete === false ? false
+          : (more === true ? false : (more === false ? true : null))),
+    };
+  }
+
   async fetchMessages(chatId, { limit = 10, lookbackMin } = {}) {
     const kw = { chat_id: chatId, limit: String(limit) };
     if (this.platform === "wecom") Object.assign(kw, timeWindow(lookbackMin || this.ad.lookback_min || 120));
@@ -883,27 +948,107 @@ export class Adapter {
     if (rc !== 0 || !json) {
       const err = describeCliError(raw || `rc=${rc}`);
       return {
-        ok: false, messages: [], error: err.summary,
+        ok: false, messages: [], complete: null, error: err.summary,
         error_detail: redact(raw || `rc=${rc}`),
       };
     }
+    return this.parseListResult(json, raw);
+  }
+
+  /**
+   * 时间窗读（spec 0065）：读 `[since, until]` 内的消息，并回答读全了没。
+   * 飞书用 `--start/--end` + `meta.pagination.complete`；企微只有时间窗，看 `has_more`；
+   * 钉钉没有时间过滤，返回 unsupported 让调用方退回采样。
+   */
+  async fetchSince(chatId, { since = 0, until = 0, maxPages = 3 } = {}) {
+    const id = String(chatId || "");
+    const endSec = Number(until) || Date.now() / 1000;
+    const startSec = Math.max(0, (Number(since) || 0) - 2);
+    if (this.platform === "feishu" && this.ad.cmd_list_since) {
+      const tmpl = id.startsWith("ou_") && this.ad.cmd_list_since_user
+        ? this.ad.cmd_list_since_user : this.ad.cmd_list_since;
+      const args = this.argv(tmpl, {
+        chat_id: id,
+        start: isoWithOffset(new Date(startSec * 1000)),
+        end: isoWithOffset(new Date(endSec * 1000)),
+        page_limit: String(Math.max(1, Math.min(Number(maxPages) || 3, 20))),
+      });
+      const { rc, json, raw } = await this.runRead(args);
+      if (rc !== 0 || !json) {
+        const err = describeCliError(raw || `rc=${rc}`);
+        return {
+          ok: false, messages: [], complete: null, error: err.summary,
+          error_detail: redact(raw || `rc=${rc}`),
+        };
+      }
+      return this.parseListResult(json, raw);
+    }
+    if (this.platform === "wecom") {
+      const kw = {
+        chat_id: id, begin_time: fmtLocal(new Date(startSec * 1000)),
+        end_time: fmtLocal(new Date(endSec * 1000)),
+      };
+      const { rc, json, raw } = await this.runRead(this.argv(this.ad.cmd_list, kw));
+      if (rc !== 0 || !json) {
+        const err = describeCliError(raw || `rc=${rc}`);
+        return {
+          ok: false, messages: [], complete: null, error: err.summary,
+          error_detail: redact(raw || `rc=${rc}`),
+        };
+      }
+      return this.parseListResult(json, raw);
+    }
+    return {
+      ok: false, unsupported: true, messages: [], complete: null,
+      error: "该平台没有时间窗读，只能采样",
+    };
+  }
+
+  /**
+   * 账号级消息流（spec 0065）：传时间窗 + 会话列表，一次拿回这些会话的全部新消息。
+   * 不传 query = 不做关键词过滤；`complete` 由 `has_more` 回答。
+   */
+  async searchMessages({ chatIds = [], start, end, pageLimit = 4 } = {}) {
+    if (!this.ad.cmd_search_messages) {
+      return { ok: false, unsupported: true, items: [], complete: null, total: 0, error: "stream_unavailable" };
+    }
+    const now = new Date();
+    const from = start ? new Date(start) : new Date(now.getTime() - 120000);
+    const to = end ? new Date(end) : now;
+    let args = this.argv(this.ad.cmd_search_messages, {
+      start: isoWithOffset(from), end: isoWithOffset(to),
+      page_limit: String(Math.max(1, Math.min(Number(pageLimit) || 4, 40))),
+    });
+    const ids = (Array.isArray(chatIds) ? chatIds : []).map(String).filter(Boolean);
+    if (ids.length) args = args.concat(["--chat-id", ids.join(",")]);
+    const { rc, json, raw } = await this.runRead(args, 60);
+    if (rc !== 0 || !json) {
+      return { ok: false, items: [], complete: null, total: 0, error: redact(raw || `rc=${rc}`, 300) };
+    }
     if (json.ok === false) {
-      const err = describeCliError(raw);
+      return { ok: false, items: [], complete: null, total: 0, error: describeCliError(raw).summary };
+    }
+    const rows = dig(json, this.ad.f_items);
+    if (!Array.isArray(rows)) {
       return {
-        ok: false, messages: [], error: err.summary,
-        error_detail: redact(raw),
+        ok: false, items: [], complete: null, total: 0,
+        error: "SCHEMA_MISMATCH " + redact(JSON.stringify(outline(json)), 300),
       };
     }
-    const items = dig(json, this.ad.f_items);
-    if (items === undefined || items === null) {
-      const cnt = dig(json, this.ad.f_count);
-      const more = dig(json, this.ad.f_has_more);
-      if (cnt === 0 || more === false) return { ok: true, messages: [], error: "" };
-      return { ok: false, messages: [], error: "SCHEMA_MISMATCH " + redact(JSON.stringify(outline(json)), 300) };
+    const items = [];
+    for (const it of rows) {
+      const m = this.norm(it);
+      if (!m) continue;
+      m.chat_id = String(it.chat_id || "");
+      m.chat_type = String(it.chat_type || "");
+      m.chat_name = String(it.chat_name || "");
+      if (m.chat_id) items.push(m);
     }
-    let msgs = (Array.isArray(items) ? items : []).map((it) => this.norm(it)).filter(Boolean);
-    if ((this.ad.order || "desc").toLowerCase() === "asc") msgs = msgs.reverse();
-    return { ok: true, messages: msgs, error: "" };
+    return {
+      ok: true, items, error: "",
+      complete: dig(json, this.ad.f_search_has_more) === false,
+      total: Number(dig(json, this.ad.f_total)) || 0,
+    };
   }
 
   norm(it) {

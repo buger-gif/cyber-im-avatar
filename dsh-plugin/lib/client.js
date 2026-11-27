@@ -3716,7 +3716,21 @@ window.__ModuleLoader__.load({
           "已有值班、会话被屏蔽或启动失败都不发；发送失败只记在面板，不影响值班。" }),
         h("div", { class: "ims-hint", text: "同一会话同一时间只允许一个值班：已有值班时只记冲突，" +
           "不会再开第二个；命中关键词的这条消息由开关消费，不再作为本人指令交给 agent。" }),
-        scanHint());
+        scanHint(),
+        streamHint());
+      function streamHint() {
+        var st = (S.status && S.status.poll && S.status.poll.stream) || null;
+        if (!st || !st.supported) {
+          return h("div", { class: "ims-hint", text: "账号消息流：该平台不支持，保持逐会话读。" });
+        }
+        if (!st.at) return h("div", { class: "ims-hint", text: "账号消息流：还没跑过（宿主启动后第一轮开始）。" });
+        var line = st.ok === false
+          ? "账号消息流失败，已降级为逐会话读：" + (st.error || "")
+          : "账号消息流：读 " + (st.scanned || 0) + " 条 · 命中 " + (st.matched || 0) + " 条" +
+            (st.truncated_at ? " · 曾截断（@ 已单独兜底）" : "");
+        return h("div", { class: "ims-hint" + (st.ok === false ? " ims-err" : ""),
+          text: line + " · " + fmtTime(st.at) });
+      }
       function scanHint() {
         var scan = (S.status && S.status.poll && S.status.poll.command_scan) || null;
         if (!scan || !scan.at) {

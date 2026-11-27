@@ -550,6 +550,15 @@ export class Turns {
       .slice(-limit);
   }
 
+  /** 缺口只在「上次唤醒之后新发生」时提一次，不每轮复读（spec 0065）。 */
+  showGap(chat) {
+    const g = chat?.gap;
+    if (!g || !(Number(g.at) > 0)) return false;
+    const desk = this.state.data.desk || {};
+    const floor = Math.max(Number(desk.last_turn?.at) || 0, Number(desk.session_bound_at) || 0);
+    return Number(g.at) > floor;
+  }
+
   async _wake(chat, { interrupted = false, batch = null, open = false, hadActive = false,
     dutyContext = null } = {}) {
     const key = chatKey(chat.platform, chat.chat_id);
@@ -685,9 +694,12 @@ export class Turns {
             selfId, selfName, rightsCustom,
             progressCard,
             silentCount: current.kind === "group" ? silentNoMention(current) : 0,
+            gap: this.showGap(current),
           });
       const message = await makeUserMessage(prompt, media.parts);
       handle.promptId = message.id;
+      // 载荷已经写进会话：这时候才算「投递过」，失败不落标记（spec 0065）。
+      this.state.markDelivered(current, messages.map((m) => m.msg_id));
       const effective = session.cwd || "";
       this.active.set(key, handle);
       handle.done = this.runTurn(handle, {

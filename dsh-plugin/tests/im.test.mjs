@@ -575,3 +575,111 @@ test("resolveQuotes skips replies at or below the watermark and platforms withou
   await w.resolveQuotes([{ msg_id: "m1", content: "回复", ts_epoch: 1, reply_to: "m0" }]);
   assert.equal(calls, 0, "没有 cmd_mget_quote 的平台直接跳过");
 });
+
+test("account message stream scopes by chat ids and reports completeness", async () => {
+  const a = new Adapter("feishu", { dir: "/nonexistent-im-test" });
+  let seen = null;
+  a.run = async (args) => {
+    seen = args;
+    return { rc: 0, raw: "", json: { data: {
+      messages: [{
+        chat_id: "oc_g", chat_type: "group", chat_name: "项目群",
+        message_id: "om_1", msg_type: "text", content: "刷屏",
+        create_time: "2026-11-27 15:00", sender: { id: "ou_x", name: "同事" },
+      }],
+      has_more: false, total: 1,
+    } } };
+  };
+  const r = await a.searchMessages({
+    chatIds: ["oc_g", "oc_dm"], start: new Date(1000 * 1000), end: new Date(2000 * 1000),
+  });
+  assert.equal(r.ok, true);
+  assert.equal(r.complete, true);
+  assert.equal(r.items[0].chat_id, "oc_g");
+  assert.equal(r.items[0].chat_type, "group");
+  const i = seen.indexOf("--chat-id");
+  assert.ok(i > 0);
+  assert.equal(seen[i + 1], "oc_g,oc_dm");
+  assert.ok(seen.includes("--start"));
+  assert.ok(seen.includes("--end"));
+  assert.ok(!seen.includes("--query"));
+});
+
+test("account message stream treats has_more as incomplete and surfaces errors", async () => {
+  const a = new Adapter("feishu", { dir: "/nonexistent-im-test" });
+  a.run = async () => ({ rc: 0, raw: "", json: { data: { messages: [], has_more: true } } });
+  const r = await a.searchMessages({ chatIds: ["oc_g"] });
+  assert.equal(r.ok, true);
+  assert.equal(r.complete, false);
+
+  a.run = async () => ({ rc: 1, raw: "permission denied", json: null });
+  const bad = await a.searchMessages({ chatIds: ["oc_g"] });
+  assert.equal(bad.ok, false);
+  assert.match(bad.error, /permission denied/);
+});
+
+test("fetchSince reads a time window and returns the platform's completeness", async () => {
+  const a = new Adapter("feishu", { dir: "/nonexistent-im-test" });
+  let seen = null;
+  a.run = async (args) => {
+    seen = args;
+    return { rc: 0, raw: "", json: {
+      data: { messages: [{
+        message_id: "om_1", msg_type: "text", content: "补一段",
+        create_time: "2026-11-27 15:00", sender: { id: "ou_x" },
+      }] },
+      meta: { pagination: { complete: false, pages: 3, items: 150 } },
+    } };
+  };
+  const r = await a.fetchSince("oc_g", { since: 1_700_000_000, until: 1_700_001_000 });
+  assert.equal(r.ok, true);
+  assert.equal(r.complete, false);
+  assert.equal(r.messages.length, 1);
+  const s = seen.indexOf("--start");
+  const e = seen.indexOf("--end");
+  assert.ok(s > 0 && e > 0);
+  assert.match(seen[s + 1], /\+08:00$/);
+  assert.ok(seen.includes("--page-all"));
+});
+
+test("fetchSince on wecom maps has_more to completeness", async () => {
+  const a = new Adapter("wecom", { dir: "/nonexistent-im-test" });
+  a.run = async () => ({
+    rc: 0, raw: "",
+    json: { messages: [{ send_time: "2026-11-27 15:00", userid: "u1", text: { content: "hi" } }],
+      has_more: true, messages_count: 1 },
+  });
+  const r = await a.fetchSince("chat1", { since: 1_700_000_000, until: 1_700_001_000 });
+  assert.equal(r.ok, true);
+  assert.equal(r.complete, false);
+  assert.equal(r.messages.length, 1);
+
+  a.run = async () => ({
+    rc: 0, raw: "",
+    json: { messages: [{ send_time: "2026-11-27 15:00", userid: "u1", text: { content: "hi" } }],
+      has_more: false, messages_count: 1 },
+  });
+  const ok = await a.fetchSince("chat1", { since: 1_700_000_000, until: 1_700_001_000 });
+  assert.equal(ok.complete, true);
+});
+
+test("fetchSince on dingtalk reports unsupported instead of pretending", async () => {
+  const a = new Adapter("dingtalk", { dir: "/nonexistent-im-test" });
+  const r = await a.fetchSince("cid", { since: 1, until: 2 });
+  assert.equal(r.ok, false);
+  assert.equal(r.unsupported, true);
+  assert.equal(r.complete, null);
+});
+
+test("at-me search narrows to chat ids when given", async () => {
+  const a = new Adapter("feishu", { dir: "/nonexistent-im-test" });
+  let seen = null;
+  a.run = async (args) => {
+    seen = args;
+    return { rc: 0, raw: "", json: { data: { messages: [] } } };
+  };
+  await a.searchAtMe({ chatIds: ["oc_g", "oc_dm"] });
+  const i = seen.indexOf("--chat-id");
+  assert.ok(i > 0);
+  assert.equal(seen[i + 1], "oc_g,oc_dm");
+});

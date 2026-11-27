@@ -113,6 +113,15 @@
   2026-11-12**：p2p 结果也带 `chat_type` / `mentions` / `content`；p2p 的 `chat_name` 为空，
   只有 `chat_partner.open_id`，不能用显示名兜底。搜索服务端收窄后引擎仍需本地复核
   `isMention()` 与关键词；`--at-chatter-ids` 也会命中 @all，不能省过滤。
+- **账号级消息流（spec 0065）**：`+messages-search` 不传 `--query`、只给 `--start/--end` 与
+  `--chat-id a,b,c`，返回这些会话在窗口内的**全部**消息（p2p / group / topic / 卡片 / 本人消息），
+  带 `data.has_more` / `data.total`。**已实测 2026-11-27**：12–20 分钟窗 49–102 条、13 个会话；
+  32 个会话过滤只回这些会话的 1 条；单次 1.8–2.5 秒；流里最新消息比上一轮逐会话拉取还新
+  60 秒。列表接口看不到线程 / 话题消息（固定 `only_thread_root_messages=true`），这条流能看到
+  （结果里有 `chat_type=topic`）。`--chat-id` 只接受 `oc_` 开头，逗号分隔。
+- **时间窗读的完整性**：`+chat-messages-list --start/--end --page-all --page-limit N` 返回
+  `meta.pagination.complete`（繁忙群 page-limit 3 → 150 条 false；page-limit 10 → 348 条 true），
+  引擎用它回答「窗口读全了没」。钉钉没有时间过滤，只能采样。
 - 系统消息没有 `sender.id`，不给人物档案路径；私聊里要留就写进这个私聊的人物档案，
   群资料写群工作本，不要按显示名猜人。
 

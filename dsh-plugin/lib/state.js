@@ -18,6 +18,12 @@ import { COMMAND_RESULTS, normalizeKeyword, normalizeReplyText } from "./command
 export const MIN_INTERVAL_MIN = 10;
 export const MAX_INTERVAL_MIN = 240;
 export const RECENT_LIMIT = 10;
+/** recent 的硬上限：未投递的命中要保住，突发时允许超过上下文窗口（spec 0065）。 */
+export const RECENT_MAX = 50;
+/** 每会话的「见过」环长度：流与对账都会重读重叠区间，靠它避免重复投递。 */
+export const SEEN_LIMIT = 50;
+/** 缺口来源码；当前只有「停机太久、只回看 2 小时」这一种。 */
+const GAP_SOURCES = ["backlog"];
 /** 插件壳支持的平台；config.platforms 是启用开关，缺省只开飞书 / 企微。 */
 export const SUPPORTED_PLATFORMS = ["feishu", "wecom", "dingtalk"];
 const DM_SCOPES = ["recent", "all", "watched"];
@@ -81,7 +87,11 @@ export function defaultState() {
     version: STATE_VERSION,
     config: clone(DEFAULT_CONFIG),
     paused: false,
-    runtime: { cycles: 0, last_cycle_at: 0, last_cycle_ms: 0, last_result: {} },
+    runtime: {
+      cycles: 0, last_cycle_at: 0, last_cycle_ms: 0, last_result: {},
+      // 账号级消息流（spec 0065）：丢了最多重读 2 分钟，慢车道会对账。
+      stream: { since: 0, at: 0, ok: null, error: "", scanned: 0, matched: 0, truncated_at: 0 },
+    },
     desk: {
       workspace: "", dsh_session: "", session_bound_at: 0, session_turns: 0,
       prompt_session: "", last_turn: { ok: null, reason: "", at: 0 },
@@ -295,6 +305,39 @@ function normalizeQuote(q) {
   };
 }
 
+function normalizeGap(g) {
+  if (!g || typeof g !== "object") return null;
+  const at = Number(g.at) || 0;
+  if (!at) return null;
+  return {
+    at,
+    from: Number(g.from) || 0,
+    to: Number(g.to) || 0,
+    source: GAP_SOURCES.includes(g.source) ? g.source : "",
+  };
+}
+
+/**
+ * recent 的保留规则：上下文只留最新 10 条，但**未投递的命中**一直保住（硬上限 50）。
+ * 旧的「一律 10 条」会在突发时把还没交给 agent 的 @ 挤掉（spec 0065）。
+ */
+function trimRecent(rows) {
+  const sorted = rows.slice().sort((a, b) => (b.ts_epoch - a.ts_epoch) ||
+    String(b.msg_id).localeCompare(String(a.msg_id)));
+  const pending = [];
+  const rest = [];
+  for (const m of sorted) {
+    if (!m.delivered_at && (m.state === "new" || m.state === "opened") && m.kind !== "out") {
+      pending.push(m);
+    } else if (rest.length < RECENT_LIMIT) {
+      rest.push(m);
+    }
+  }
+  return [...pending, ...rest]
+    .sort((a, b) => (b.ts_epoch - a.ts_epoch) || String(b.msg_id).localeCompare(String(a.msg_id)))
+    .slice(0, RECENT_MAX);
+}
+
 /**
  * 一条消息指针的归一化。字段顺序就是契约 02 的顺序：新字段只能往后追加。
  * media_paths 只存插件下载后的本地绝对路径，不存二进制。
@@ -323,6 +366,8 @@ function normalizeMessage(m) {
     // 引用与被引用正文跟正文同生命周期：正文清了，引用也清（spec 0053）。
     reply_to: keepBody ? String(m.reply_to || "") : "",
     quote: keepBody ? normalizeQuote(m.quote) : null,
+    // 0 = 还没交给 agent；成功写进 DSH 会话后落时间（spec 0065）。
+    delivered_at: Number(m.delivered_at) || 0,
   };
 }
 
@@ -443,7 +488,6 @@ export class State {
         : input.progress_card === false ? false : null,
       progress: normalizeProgress(input.progress),
       last_wake_at: Number(input.last_wake_at) || 0,
-      last_wake_epoch: Number(input.last_wake_epoch) || 0,
       workspace: typeof input.workspace === "string" ? input.workspace : "",
       dsh_session: typeof input.dsh_session === "string" ? input.dsh_session : "",
       session_turns: Math.max(0, Number(input.session_turns) || 0),
@@ -498,15 +542,22 @@ export class State {
             reply: normalizeCommandReply(input.command.reply),
           }
         : { at: 0, keyword: "", msg_id: "", result: "", reason: "", reply: emptyCommandReply() },
+      // ---- spec 0065 追加（老代码忽略未知字段）----
+      // 读取游标：0 = 还没基线；只有成功读到才推进，失败不动。
+      poll_since: Number(input.poll_since) || 0,
+      verified_at: Number(input.verified_at) || 0,
+      // 「见过」环：流与对账会重读重叠区间，按 msg_id 去重。
+      seen: Array.isArray(input.seen)
+        ? input.seen.map(String).filter(Boolean).slice(0, SEEN_LIMIT) : [],
+      gap: normalizeGap(input.gap),
     };
-    const seen = new Set();
+    const seenIds = new Set();
     for (const m of (Array.isArray(input.recent) ? input.recent : [])) {
-      if (!m || !m.msg_id || seen.has(m.msg_id)) continue;
-      seen.add(m.msg_id);
+      if (!m || !m.msg_id || seenIds.has(m.msg_id)) continue;
+      seenIds.add(m.msg_id);
       chat.recent.push(normalizeMessage(m));
     }
-    chat.recent.sort((a, b) => (b.ts_epoch - a.ts_epoch) || String(b.msg_id).localeCompare(String(a.msg_id)));
-    chat.recent = chat.recent.slice(0, RECENT_LIMIT);
+    chat.recent = trimRecent(chat.recent);
     return chat;
   }
 
@@ -632,6 +683,8 @@ export class State {
   markEarlierReplied(chat, epoch) {
     let n = 0;
     for (const m of chat.recent) {
+      // 只收口已经给过 agent 的行：没投递过的命中必须先给一次（spec 0065）。
+      if (!(Number(m.delivered_at) > 0)) continue;
       if (m.ts_epoch >= epoch) continue;
       if (!(m.kind === "dm" || m.kind === "mention" || m.kind === "service")) continue;
       if (!(m.state === "new" || m.state === "opened")) continue;
@@ -643,6 +696,55 @@ export class State {
       n += 1;
     }
     return n;
+  }
+
+  /**
+   * 待投集合：命中类、还没给过 agent 的行。投递与「本轮扫到什么」彻底解耦，
+   * 晚发现的命中 / 失败重试 / 对账补回都走这一个集合（spec 0065）。
+   */
+  pendingUndelivered(chat, limit = 30) {
+    const kinds = new Set(["dm", "mention", "service", "cmd"]);
+    if (chat && chat.kind === "group" && chat.wake_mode === "all") kinds.add("fyi");
+    const rows = (chat?.recent || []).filter((m) => m && !m.delivered_at &&
+      (m.state === "new" || m.state === "opened") && kinds.has(m.kind));
+    rows.sort((a, b) => (a.ts_epoch - b.ts_epoch) ||
+      String(a.msg_id).localeCompare(String(b.msg_id)));
+    return rows.slice(0, Math.max(1, Number(limit) || 30));
+  }
+
+  /** 投递成功才落标记：失败不写，下一轮自然重试。 */
+  markDelivered(chat, ids, at = Date.now() / 1000) {
+    const want = new Set((Array.isArray(ids) ? ids : []).map(String).filter(Boolean));
+    if (!chat || !want.size) return 0;
+    let n = 0;
+    for (const m of chat.recent || []) {
+      if (!want.has(String(m.msg_id)) || m.delivered_at) continue;
+      m.delivered_at = Number(at) || Date.now() / 1000;
+      n += 1;
+    }
+    return n;
+  }
+
+  /** 「见过」环：流 / 对账重读重叠区间时按 msg_id 去重，不重复投递。 */
+  markSeen(chat, ids) {
+    if (!chat) return 0;
+    const next = (chat.seen || []).slice();
+    const have = new Set(next);
+    let n = 0;
+    for (const id of (Array.isArray(ids) ? ids : [])) {
+      const v = String(id || "");
+      if (!v || have.has(v)) continue;
+      have.add(v);
+      next.unshift(v);
+      n += 1;
+    }
+    chat.seen = next.slice(0, SEEN_LIMIT);
+    return n;
+  }
+
+  hasSeen(chat, id) {
+    const v = String(id || "");
+    return !!v && (chat?.seen || []).includes(v);
   }
 
   mergeRecent(chat, messages) {
@@ -666,9 +768,7 @@ export class State {
         cur.media_paths = next.media_paths;
       }
     }
-    chat.recent = [...byId.values()]
-      .sort((a, b) => (b.ts_epoch - a.ts_epoch) || String(b.msg_id).localeCompare(String(a.msg_id)))
-      .slice(0, RECENT_LIMIT);
+    chat.recent = trimRecent([...byId.values()]);
     return chat.recent;
   }
 

@@ -105,6 +105,19 @@ test("发送方式：首轮一次、切换一次、未变不出", () => {
   assert.doesNotMatch(steady, /发送方式/);
 });
 
+test("缺口与「没转来」二选一，不重复占行", () => {
+  const gap = buildWakePrompt("feishu", "示例群", "oc_g", groupRows(), {
+    ...base, firstTurn: true, silentCount: 3, gap: true,
+  });
+  assert.match(gap, /窗口外还有消息没读到/);
+  assert.doesNotMatch(gap, /另有 3 条/, "有缺口就不再重复说没转来");
+  const silent = buildWakePrompt("feishu", "示例群", "oc_g", groupRows(), {
+    ...base, firstTurn: true, silentCount: 3,
+  });
+  assert.match(silent, /另有 3 条/);
+  assert.doesNotMatch(silent, /窗口外/);
+});
+
 test("关注程度：群从全部消息切回只认 @ 也要说一句", () => {
   const all = buildWakePrompt("feishu", "示例群", "oc_g", groupRows(), {
     ...base, firstTurn: true, wakeMode: "all",

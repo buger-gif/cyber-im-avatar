@@ -2217,3 +2217,12 @@ test("progressCardFor uses separate private/group globals and per-chat override"
   state.data.config.dsh.progress_card_group = true;
   assert.equal(turns.progressCardFor(chat), true);
 });
+
+test("a delivered wake stamps delivered_at so the poller will not re-deliver", async () => {
+  const { chat, turns } = setup();
+  const rows = chat.recent.filter((m) => m.msg_id === "base");
+  assert.equal(rows[0].delivered_at, 0);
+  const r = await turns.wake(chat, { batch: rows });
+  assert.equal(r.ok, true);
+  assert.ok(chat.recent.find((m) => m.msg_id === "base").delivered_at > 0);
+});

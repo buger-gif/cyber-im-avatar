@@ -290,7 +290,7 @@ test("failed wake is retried on a later cycle while pending remains", async () =
   turns.wake = async (c, opts) => { turns.wakes.push({ chat: c, opts }); return { ok: true }; };
   r = await poller.pollChat("feishu", "oc_dm", { force: true });
   assert.equal(r.woke, true);
-  assert.equal(turns.wakes.at(-1).opts.batch, undefined);
+  assert.deepEqual(turns.wakes.at(-1).opts.batch.map((m) => m.msg_id), ["m2"]);
 });
 
 test("blocked chat is not fetched at all", async () => {
@@ -436,7 +436,8 @@ test("all-mode group wakes on non-mention and keeps the body", async () => {
   assert.equal(row.state, "new");
   assert.equal(row.content, "正文-a2");
   assert.equal(turns.wakes[0].opts.batch.at(-1).msg_id, "a2");
-  assert.equal(chat.last_wake_epoch, 3020);
+  assert.ok(chat.last_wake_at > 0);
+  assert.ok(chat.recent.find((m) => m.msg_id === "a2").delivered_at > 0);
 
   // 同一批消息不会再投递一次
   const again = await poller.pollChat("feishu", "oc_all", { force: true });
@@ -672,7 +673,7 @@ test("self-@ in an all-mode group wakes immediately, bypassing the merge window"
   assert.equal(turns.wakes.length, afterChatter + 1);
   assert.deepEqual(turns.wakes.at(-1).opts.batch.map((m) => m.msg_id).sort(), ["w3", "w4"]);
   assert.equal(chat.recent.find((m) => m.msg_id === "w4").kind, "cmd");
-  assert.equal(Number(chat.last_wake_epoch), 11040);
+  assert.ok(chat.last_wake_at > 0);
 });
 
 test("a group command does not swallow a pending counterpart mention", async () => {

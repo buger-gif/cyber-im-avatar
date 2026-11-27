@@ -14,7 +14,7 @@
 | version | number | 状态格式版本，当前 2；1→2 时把存量私聊的 `wake_mode` 从 `mention` 迁到 `all`（当时的真实行为），只迁一次 |
 | config | object | 见契约 03 |
 | paused | bool | 暂停定时轮询（不影响在飞 turn） |
-| runtime | object | `cycles` / `last_cycle_at` / `last_cycle_ms` / `last_result`；给体检页显示，丢了不影响值守 |
+| runtime | object | `cycles` / `last_cycle_at` / `last_cycle_ms` / `last_result` / `stream`；给体检页显示。`stream` = `since`（账号流游标）/ `at` / `ok` / `error` / `scanned` / `matched` / `truncated_at`；丢了最多重读 2 分钟，慢车道会对账 |
 | desk | object | 值守台的全局状态；见「desk 对象」 |
 | chats | object | `"<platform>:<chat_id>"` → 会话对象 |
 
@@ -36,7 +36,6 @@
 | progress_card | bool/null | 进度卡单点覆盖：`null`=跟随对应全局键（p2p 用 `config.dsh.progress_card`，group 用 `config.dsh.progress_card_group`）；`true`=这个会话开；`false`=这个会话关。飞书 p2p / group 都适用；非飞书忽略（spec 0061） |
 | progress | object | 最近一张进度卡：`msg_id` / `turn_id` / `state`（`""`/`running`/`replied`/`done`/`failed`/`cancelled`）/ `created_at` / `updated_at` / `last_error` / `counts`（查资料/改文件/执行操作/并行处理累计）/ `ids`（最近 5 个卡片消息 ID，轮询器据此排除本人消息）。`replied` 表示本等待期已看到本人发信并撤回卡片（撤回失败时留一张「已回复」卡）；老 state 缺省为空对象 |
 | last_wake_at | number | 上一次成功唤醒的墙钟时刻（epoch 秒）；群的 `all` 模式用它做合并窗口，失败不写 |
-| last_wake_epoch | number | 上一次唤醒批次里最大的 `ts_epoch`；群的 `all` 模式按它去重，同一批不会投递两次 |
 | workspace | string | 显式绑定的工作区路径；空=未绑定，turn 跟随 DSH 默认工作区 |
 | dsh_session | string | 这通会话在 DSH 里的 session id；空=还没跑过 |
 | session_turns | number | 当前 dsh_session 上累计跑完的 turn 数；换会话时归 0 |
@@ -50,12 +49,16 @@
 | wake | object | `at` / `failed` / `turn_id` / `active`；失败的下一轮重试，成功但未回复不重喊 |
 | added_at | number | 入库时刻 |
 | duty | object | 值守分诊记录；见「duty 对象」 |
-| recent | array | 最近消息指针，最多 10 条，最新在前；字段见下 |
+| recent | array | 最近消息指针，最新在前。上下文只留最新 10 条，但**未投递的命中**一直保住（硬上限 50），避免突发时把还没给 agent 的 @ 挤掉；字段见下 |
 | prompt_session | string | 已消费过唤醒载荷的 DSH session id；用于判断首轮是否带完整上下文（`/cyber-im-avatar`、chat_id、运行形态、画像路径），之后只追加消息行 |
 | last_warm_at | number | 最近一次保温轮的墙钟时刻（epoch 秒）；每段连续闲置最多写一次，失败也写，`0` = 没跑过或刚换过会话。不推进闲置时钟 |
 | last_warm_ok | bool/null | 最近一次保温轮结果；null = 没跑过或刚换过会话，失败不覆盖 `last_error` |
 | last_reset | object | `at` / `reason`；reason = `idle`（保温一次后第二个周期仍无新消息）/ `manual` / `workspace` / `missing`；`at=0` 表示没重开过 |
 | command | object | 最近一次「本人 @ 自己 + 启动关键词」的处理结果；见「command 对象」 |
+| poll_since | number | 时间窗读游标（epoch 秒，0=还没基线）：区间读从它开始；成功才推进，失败不动；不完整时推到 now 并记 `gap`（spec 0065） |
+| verified_at | number | 最近一次慢车道对账（区间完整读）成功的时刻；0=还没对过账 |
+| seen | array | 最近 50 个见过的 `msg_id`（最新在前）。账号流与对账都会重读重叠区间，靠它去重，避免重复投递 |
+| gap | object/null | 最近一次没读全的区间：`at`（发现时刻）/ `from` / `to`（epoch 秒）/ `source`（当前只有 `backlog`：停机太久只回看 2 小时）；平台不返回条数，所以不记数量 |
 
 ## command 对象
 
@@ -136,26 +139,25 @@
 | media_paths | array | 插件下载后的本地绝对路径；只在命中唤醒时写入，清理失效文件时回写 |
 | reply_to | string | 这条消息引用的原消息 ID（飞书 `reply_to`）；空串=没有引用或平台不提供（spec 0053）；与 `content` 同生命周期，正文清空时一起清空 |
 | quote | object/null | 被引用的原消息：`msg_id` / `sender_id` / `sender_name` / `content` / `ts` / `msg_type`（正文截 800 字）；取不到为 null。与 `content` 同生命周期，正文清空时它一起清空 |
+| delivered_at | number | 投递时刻（epoch 秒，0=还没交给 agent）。载荷写进 DSH 会话后才落标记，失败不写、下一轮重试；`recent` 淘汰只保护 `delivered_at=0` 的命中 |
 
-老 state 缺字段时按默认补：`last_msg_id` 为空串、`msg_type` / `app_link` / `media_id` / `reply_to`
-为空串、`media_paths` 为空数组、`quote` 为 null、`last_warm_at` / `last_warm_ok` 为 0 / null、
-`last_reset` 为 `{at:0, reason:""}`；不改变存量会话行为。
+老 state 缺字段按默认补：`last_msg_id` 为空串，`msg_type` / `app_link` / `media_id` / `reply_to`
+为空串，`media_paths` 为空数组，`quote` / `gap` 为 null，`last_reset` 为 `{at:0, reason:""}`，
+`last_warm_at` / `verified_at` / `poll_since` / `delivered_at` 为 0，`seen` 为空数组；不改变存量
+会话行为。老字段 `last_wake_epoch` 读进来直接丢弃，不需要迁移脚本。
 
 待回口径：`dm` / `mention` / `service`，以及 `wake_mode="all"` 群里的 `fyi`；`isPendingMessage()` 一处定义，`pendingCount` / `pendingMessages` / `counts()` 共用。
 
-正文清理：`setMessageState(..., replied|ignored)`、`markEarlierReplied()`、
-`chatBlock()`、`ignoreUnwatched()` 都会把 `content` 置空。指针行不按时间删除——
-消息再次进入拉取窗口时还要靠 `msg_id` 去重，否则会被当成新消息重新进收件箱。
-超过 10 条时只留最新 10 条，更早的正文去平台在线查。
+正文清理：`setMessageState(..., replied|ignored)`、`markEarlierReplied()`、`chatBlock()`、
+`ignoreUnwatched()` 都会把 `content` 置空。指针行不按时间删除——消息再次进入拉取窗口时还要靠
+`msg_id` 去重；超过 10 条只留最新 10 条（未投递的命中除外），更早的正文去平台在线查。
 
 ## 画像文件
 
 不在 `state.json` 里；目录 700、文件 600，临时文件 + rename；每份上限 12KB（超限拒绝不截断）。
-人物档案 `profiles/people/<platform>/<person_id>.md`：人物级评价（身份与角色 / 沟通偏好 / 在意与忌讳 / 历史结论），跨会话复用；**单聊的记忆只有这一份**，只在这条私聊成立的备注用「私聊：」开头写进对应小节。
-会话工作本 `profiles/<platform>/<chat_id>.md`：**仅群使用**——这个会话是什么 / 群内工作要求 / 成员与角色（只留人物档案指针）/ 本会话结论与待办。
+人物档案 `profiles/people/<platform>/<person_id>.md`：人物级评价（身份与角色 / 沟通偏好 / 在意与忌讳 / 历史结论），跨会话复用；**单聊的记忆只有这一份**，只在这条私聊成立的备注用「私聊：」开头写进对应小节。会话工作本 `profiles/<platform>/<chat_id>.md`：**仅群使用**——这个会话是什么 / 群内工作要求 / 成员与角色（只留人物档案指针）/ 本会话结论与待办。
 `person_id` 取平台消息发送者 ID（飞书 `open_id`、企微 `userid`、钉钉 `senderId`），空 ID 不建档、不用显示名；文件名 sanitize 为非法连续段替 `_`、去首尾 `._-`、前 80 字符，`dsh-plugin/lib/profiles.js` 与 `scripts/bootstrap.py` 双实现靠 golden 向量对齐。
-单聊人物 ID 优先取最近一条非本人消息的 `sender_id`，无消息时按平台形态用 `chat_id` 兜底（飞书 `ou_` / 企微单聊＝`userid`）；钉钉推不出就退回会话工作本。
-旧私聊工作本在新版第一次被面板/值守碰到时**整文件搬进**人物档案路径（排他复制成功后删旧文件，不改写、不拆段、不覆盖已有档案）；人物档案已存在则旧文件保留，载荷给「旧私聊工作本（待并入）」与 `.history.md` 目标，由 agent 合并归档。
+单聊人物 ID 优先取最近一条非本人消息的 `sender_id`，无消息时按平台形态用 `chat_id` 兜底（飞书 `ou_` / 企微单聊＝`userid`）；钉钉推不出就退回会话工作本。旧私聊工作本首次被面板/值守碰到时**整文件搬进**人物档案路径（排他复制成功后删旧文件，不改写、不拆段、不覆盖已有档案）；人物档案已存在则旧文件保留，载荷给「旧私聊工作本（待并入）」与 `.history.md` 目标，由 agent 合并归档。
 `forget` 只删旧工作本与会话状态，人物档案跨会话保留（只能显式 `DELETE /api/persons`）；旧四段群画像由 agent 首次处理该会话时懒迁移，旧全文先归档到 `<工作本>.history.md`；`env.json` 只读，不存画像正文与人物索引。
 
 ## turn 事件日志
@@ -163,19 +165,17 @@
 `logs/turns.jsonl`（目录 700、文件 600）：JSON Lines，一个事件一行；字段只有 `ts` / `event` /
 `platform` / `chat_id` / `turn_id` / `owner` / `reason` / `count` / `interrupted` / `first_turn` /
 `wait_ms` / `ms` / `ok` / `adopted`，**不写正文、发送者与聊天名**。超过 512 KiB 轮转为
-`turns.1.jsonl`（只留一份旧的）；写失败只降级，不影响值守。面板 `/api/logs` 的 `events` 读它。
-
-## 一次性迁移
-
-`node scripts/migrate-state.mjs` 把旧 `panel.db` 的 chats + 每会话最新 10 条消息 +
-`panel.json` 配置 + `env.json` 目标索引搬进 `state.json`；旧库改名为
-`panel.db.migrated` 保留，运行期不再读 SQLite。`--fresh` 空状态启动，`--force` 才覆盖已有 state。
+`turns.1.jsonl`（只留一份旧的）；写失败只降级。面板 `/api/logs` 的 `events` 读它。
 
 ## 迁移规矩
+
+`node scripts/migrate-state.mjs` 把旧 `panel.db` 的 chats + 每会话最新 10 条消息 + `panel.json`
+配置 + `env.json` 目标索引搬进 `state.json`；旧库改名 `panel.db.migrated` 保留，运行期不再读
+SQLite。`--fresh` 空状态启动，`--force` 才覆盖已有 state。
 
 - 新字段必须有默认值，且不改变存量会话行为（例：存量群 `timer=-1`，升级后不会突然开始轮询）。
 - version 1 → 2：私聊开始读 `wake_mode`；加载 version 1 时把 `kind=p2p` 的 `mention` 一次性
   改成 `all`，否则存量私聊会静默变成只认 @。迁移在内存里做完，下一次落盘写回 `version: 2`。
-- 旧状态里缺失的字段由 `State.load()` 补默认值；损坏时先读 `.bak`，不静默清空。
-- `recent` 超过 10 条时裁掉最旧的；正文是否保留只看 `state` 与 `kind`，不按时间兜底。
+- 旧状态缺字段由 `State.load()` 补默认，损坏先读 `.bak`；`recent` 只裁已投递的行（未投递的命中
+  保留），正文是否保留只看 `state` 与 `kind`。
 - 与 `docs/architecture/02-data.md §数据形状` 保持一致；那篇讲为什么，这篇讲是什么。

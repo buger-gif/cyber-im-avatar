@@ -14,7 +14,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { isMention, PLATFORM_META } from "./im.js";
-import { chatKey, emptyCommandReply, RECENT_LIMIT, SUPPORTED_PLATFORMS } from "./state.js";
+import { chatKey, emptyCommandReply, SUPPORTED_PLATFORMS } from "./state.js";
 import * as duty from "./duty.js";
 import * as workspaces from "./workspaces.js";
 import {
@@ -27,6 +27,20 @@ import {
  */
 const COMMAND_SCAN_SEC = 60;
 const COMMAND_SCAN_LOOKBACK_SEC = 180;
+
+/**
+ * 账号级消息流（spec 0065）：一条搜索覆盖所有值守会话，快车道不再逐会话拉。
+ * 窗口留 120 秒，吸收平台 create_time 的分钟精度与索引延迟。
+ */
+const STREAM_LOOKBACK_SEC = 120;
+const STREAM_MAX_PAGES = 4;
+const STREAM_MAX_IDS = 100;
+/** 慢车道对账：每轮最多核对多少个会话（按最久没核对排序；30 个会话 10 分钟全覆盖）。 */
+const VERIFY_MAX_PER_CYCLE = 30;
+/** 区间读最多回看 2 小时；更早的记缺口，不回放。 */
+const INTERVAL_MAX_SEC = 2 * 3600;
+/** 单轮投递上限；多的留在待投集合里下一轮 drain。 */
+const DELIVER_BATCH = 30;
 
 
 function nowSec() {
@@ -332,6 +346,16 @@ export class Poller {
    * 快车道：只拉既有候选，不做发现。错误由慢车道每轮记一次，
    * 这里不写 runtime、不刷会话列表——每分钟一次的事不能碰这两样。
    */
+  /** 平台是否支持账号级消息流（目前只有飞书）。 */
+  streamable(chat) {
+    if (!chat || chat.platform !== "feishu") return false;
+    try { return !!this.im.adapter("feishu").supportsMessageStream; } catch { return false; }
+  }
+
+  /**
+   * 快车道：一条账号级消息流覆盖所有值守会话（spec 0065）。
+   * 没有流能力的平台保持逐会话区间读；还没基线的会话先补一次基线，不叫醒。
+   */
   async fastCycle() {
     if (this.cycleLock) return { ok: false, busy: true, reason: "上一轮还没跑完" };
     this.cycleLock = true;
@@ -341,6 +365,7 @@ export class Poller {
     let got = 0;
     let added = 0;
     let skipped = 0;
+    let stream = null;
     let targets = [];
     try {
       for (const p of platforms) {
@@ -348,7 +373,23 @@ export class Poller {
         if (ident?.ok && ident.self_id) usable.push(p);
       }
       targets = this.candidates(usable);
-      for (const chat of targets) {
+      // 没有读取游标的先补一次基线 / 追赶（老数据从 last_epoch 读起），下一跳再进流。
+      for (const c of targets) {
+        if (!c.poll_since && (c.last_epoch || c.last_msg_id)) {
+          c.poll_since = Math.max(1, Number(c.last_epoch) || (nowSec() - 60));
+        }
+      }
+      const fresh = targets.filter((c) => !c.poll_since);
+      const streamTargets = targets.filter((c) => this.streamable(c) && c.poll_since);
+      const legacyTargets = targets.filter((c) => !streamTargets.includes(c) && !fresh.includes(c));
+      for (const chat of fresh) {
+        if (this.stopped) break;
+        const r = await this.pollChat(chat.platform, chat.chat_id, {
+          name: chat.name, kind: chat.kind, force: true,
+        });
+        if (r.fetched) got += 1;
+      }
+      for (const chat of legacyTargets) {
         if (this.stopped) break;
         const pending = this.state.pendingCount(chat) > 0;
         const r = await this.pollChat(chat.platform, chat.chat_id, {
@@ -362,16 +403,166 @@ export class Poller {
           skipped += 1;
         }
       }
+      if (!this.stopped && streamTargets.length) {
+        stream = await this.streamTick(streamTargets);
+        if (stream?.ok) {
+          got += Number(stream.chats) || 0;
+          added += Number(stream.new) || 0;
+        } else if (stream?.skipped) {
+          skipped += 1;
+        }
+      }
       this.fastAt = nowSec();
       this.lastFast = {
         at: this.fastAt, chats: got, new: added, skipped,
-        targets: targets.length, ms: Date.now() - t0,
+        targets: targets.length, stream, ms: Date.now() - t0,
         paused_platforms: platforms.filter((p) => !usable.includes(p)),
       };
       return { ok: true, ...this.lastFast };
     } finally {
       this.cycleLock = false;
     }
+  }
+
+  /**
+   * 一次搜索覆盖所有值守会话。命中按会话分组写进待投集合，再各自唤醒。
+   * 截断（has_more=true）时追加一次 `--is-at-me` 兜住 @；搜索失败降级为逐会话区间读。
+   */
+  async streamTick(targets) {
+    const t0 = Date.now();
+    const adapter = this.im.adapter("feishu");
+    const runtime = this.state.data.runtime || (this.state.data.runtime = {});
+    const prev = runtime.stream && typeof runtime.stream === "object" ? runtime.stream : {};
+    const now = nowSec();
+    const since = Number(prev.since) || 0;
+    const start = since > 0
+      ? Math.max(since - 2, now - 24 * 3600)
+      : Math.max(0, now - STREAM_LOOKBACK_SEC);
+    // 停机超过 24 小时：只回看一天，更早的记一笔截断，不假装读过。
+    const capped = since > 0 && since < now - 24 * 3600;
+    const ids = targets.map((c) => c.chat_id);
+    // 单次过滤列表别太长：超过 100 个会话就分批发，别静默丢后半截。
+    const chunks = [];
+    for (let i = 0; i < ids.length; i += STREAM_MAX_IDS) chunks.push(ids.slice(i, i + STREAM_MAX_IDS));
+    const collected = [];
+    let complete = true;
+    let r = { ok: true, items: [], complete: true };
+    for (const chunk of chunks) {
+      let one;
+      try {
+        one = await adapter.searchMessages({
+          chatIds: chunk, start: new Date(start * 1000), end: new Date(now * 1000),
+          pageLimit: STREAM_MAX_PAGES,
+        });
+      } catch (e) {
+        one = { ok: false, error: `${e?.name || "Error"}: ${e?.message || e}` };
+      }
+      if (!one.ok) { r = one; break; }
+      collected.push(...one.items);
+      if (one.complete === false) complete = false;
+    }
+    if (r.ok) r = { ok: true, items: collected, complete };
+    if (!r.ok) {
+      const error = String(r.error || "stream failed").slice(0, 200);
+      runtime.stream = { ...prev, at: now, ok: false, error, scanned: 0, matched: 0 };
+      this.logError("feishu", null, "stream: " + error);
+      // 降级：这一轮逐会话区间读补一次，宁可一次尖峰也不静默。
+      let fallback = 0;
+      for (const chat of targets) {
+        if (this.stopped) break;
+        const res = await this.pollChat(chat.platform, chat.chat_id, {
+          name: chat.name, kind: chat.kind, force: true, source: "stream_fallback",
+        });
+        if (res.fetched) fallback += 1;
+      }
+      return { ok: false, skipped: true, error, fallback, ms: Date.now() - t0 };
+    }
+    const byId = new Map(targets.map((c) => [String(c.chat_id), c]));
+    const groups = new Map();
+    let matched = 0;
+    for (const m of r.items) {
+      const chat = byId.get(String(m.chat_id));
+      if (!chat || chat.blocked) continue;
+      if (!groups.has(chat.chat_id)) groups.set(chat.chat_id, []);
+      groups.get(chat.chat_id).push(m);
+      matched += 1;
+    }
+    let chats = 0;
+    let added = 0;
+    const touched = new Set();
+    for (const [chatId, items] of groups) {
+      if (this.stopped) break;
+      touched.add(String(chatId));
+      const res = await this.finishChat(byId.get(chatId), items, { source: "stream" });
+      if (res.fetched) {
+        chats += 1;
+        added += Number(res.new) || 0;
+      }
+    }
+    // 本轮没碰到的会话，若有上轮没投出去的行（唤醒失败 / 合并窗口），补一次 drain。
+    // 本轮已经 wake 过的跳过：失败不在同一跳立刻重试，留给下一跳。
+    for (const chat of targets) {
+      if (this.stopped) break;
+      if (touched.has(String(chat.chat_id))) continue;
+      if (!chat.watching || chat.blocked) continue;
+      if (!this.state.pendingUndelivered(chat, DELIVER_BATCH).length) continue;
+      await this.maybeWake(chat);
+    }
+    const maxTs = r.items.reduce((n, m) => Math.max(n, Number(m.ts_epoch) || 0), 0);
+    runtime.stream = {
+      since: maxTs > 0 ? Math.max(maxTs, start) : Math.max(Number(prev.since) || 0, now - STREAM_LOOKBACK_SEC),
+      at: now, ok: true, error: "", scanned: r.items.length, matched,
+      truncated_at: (r.complete === false || capped) ? now : (Number(prev.truncated_at) || 0),
+      // 对账计数由 finishChat 写在本轮里，这里不能覆盖掉。
+      missed: Number(runtime.stream?.missed) || Number(prev.missed) || 0,
+    };
+    this.state.save();
+    if (r.complete === false) await this.streamOverflow(targets, start, now);
+    return {
+      ok: true, scanned: r.items.length, matched, chats, new: added,
+      complete: r.complete, ms: Date.now() - t0,
+    };
+  }
+
+  /** 流被截断时只保证 @：一次跨会话 @我 搜索，其余靠慢车道对账。 */
+  async streamOverflow(targets, start, end) {
+    const adapter = this.im.adapter("feishu");
+    const ids = targets.map((c) => c.chat_id);
+    const chunks = [];
+    for (let i = 0; i < ids.length; i += STREAM_MAX_IDS) chunks.push(ids.slice(i, i + STREAM_MAX_IDS));
+    const items = [];
+    for (const chunk of chunks) {
+      let r;
+      try {
+        r = await adapter.searchAtMe({
+          start: new Date(start * 1000), end: new Date(end * 1000), chatIds: chunk,
+        });
+      } catch (e) {
+        r = { ok: false, error: `${e?.name || "Error"}: ${e?.message || e}` };
+      }
+      if (!r?.ok) {
+        this.logError("feishu", null, "stream overflow at-me: " + String(r?.error || "failed").slice(0, 160));
+        break; // 已拿到的分片照常补投，剩下的靠慢车道对账
+      }
+      items.push(...r.items);
+    }
+    const selfId = this.identity.feishu?.self_id || "";
+    const names = this.selfNames("feishu");
+    const byChat = new Map();
+    for (const m of items) {
+      if (!isMention(m, selfId, names)) continue;
+      const chat = this.state.getChat("feishu", m.chat_id);
+      if (!chat || chat.blocked || !chat.watching) continue;
+      if (!byChat.has(m.chat_id)) byChat.set(m.chat_id, []);
+      byChat.get(m.chat_id).push(m);
+    }
+    let n = 0;
+    for (const [chatId, items] of byChat) {
+      const chat = this.state.getChat("feishu", chatId);
+      const res = await this.finishChat(chat, items, { source: "overflow" });
+      if (res.fetched) n += 1;
+    }
+    return n;
   }
 
   async whoami(platform, refresh = false) {
@@ -414,6 +605,10 @@ export class Poller {
     }
   }
 
+  /**
+   * 慢车道：发现新会话 + 对账。飞书会话不再逐会话轮询（快车道有流），
+   * 这里按 `verified_at` 轮转做区间完整读，兜住流可能漏掉的消息（spec 0065）。
+   */
   async cycle({ force = false, note = "" } = {}) {
     if (this.cycleLock) return { ok: false, busy: true, reason: "上一轮还没跑完" };
     this.cycleLock = true;
@@ -423,6 +618,7 @@ export class Poller {
     let added = 0;
     let skipped = 0;
     let targets = [];
+    let verified = 0;
     try {
       const usable = [];
       for (const p of platforms) {
@@ -437,9 +633,11 @@ export class Poller {
       }
       if (this.cfg.poll?.refresh_chatlist !== false) await this.refreshChatlist(usable);
       targets = this.candidates(usable);
-      for (const chat of targets) {
+      const streamTargets = targets.filter((c) => this.streamable(c) && c.poll_since);
+      const others = targets.filter((c) => !streamTargets.includes(c));
+      for (const chat of others) {
         if (this.stopped) break;
-        // 仍有待回时不受 cooldown 限制：点开只读不推进水位，别让积压等到下一轮。
+        // 仍有待回时不受 cooldown 限制：点开只读不推进游标，别让积压等到下一轮。
         const pending = this.state.pendingCount(chat) > 0;
         const r = await this.pollChat(chat.platform, chat.chat_id, {
           name: chat.name, kind: chat.kind, force: force || pending,
@@ -453,16 +651,34 @@ export class Poller {
           skipped += 1;
         }
       }
+      const due = streamTargets.slice()
+        .sort((a, b) => (Number(a.verified_at) || 0) - (Number(b.verified_at) || 0))
+        .slice(0, VERIFY_MAX_PER_CYCLE);
+      for (const chat of due) {
+        if (this.stopped) break;
+        const r = await this.pollChat(chat.platform, chat.chat_id, {
+          name: chat.name, kind: chat.kind, force: true, source: "verify",
+        });
+        if (r.fetched) {
+          got += 1;
+          added += Number(r.new) || 0;
+          verified += 1;
+        } else if (r.skipped) {
+          skipped += 1;
+        }
+      }
       const now = nowSec();
       this.cycles += 1;
       this.lastCycleAt = now;
       this.lastCycleMs = Date.now() - t0;
       this.lastResult = {
-        at: now, chats: got, new: added, skipped, targets: targets.length,
+        at: now, chats: got, new: added, skipped, targets: targets.length, verified,
         paused_platforms: platforms.filter((p) => !usable.includes(p)),
         force: !!force, note,
       };
+      // 保留 runtime.stream 等字段：整块替换会把流游标一起清掉。
       this.state.data.runtime = {
+        ...(this.state.data.runtime || {}),
         cycles: this.cycles,
         last_cycle_at: this.lastCycleAt,
         last_cycle_ms: this.lastCycleMs,
@@ -592,7 +808,7 @@ export class Poller {
 
   async pollChat(platform, chatId, {
     name = "", kind = "", force = false, dueAfter = 0, limit = 0, wake = true,
-    handleCommands = true,
+    handleCommands = true, source = "poll",
   } = {}) {
     const chat = this.state.ensureChat(platform, chatId, { name, kind });
     if (chat.blocked) return { fetched: false, blocked: true, skipped: "已屏蔽，不同步" };
@@ -602,7 +818,6 @@ export class Poller {
       const left = Math.ceil(cd - (now - (chat.last_sync || 0)));
       return { fetched: false, skipped: `${left}s 内刚拉过` };
     }
-    const baseline = !chat.last_epoch && !chat.last_msg_id;
     await this.whoami(platform);
     const ident = this.identity[platform];
     if (!ident?.ok || !ident.self_id) {
@@ -612,10 +827,33 @@ export class Poller {
       this.logError(platform, chat.name, msg);
       return { fetched: false, error: msg };
     }
+    let adapter;
+    try { adapter = this.im.adapter(platform); } catch (e) {
+      const msg = `${e?.name || "Error"}: ${e?.message || e}`.slice(0, 300);
+      chat.last_error = msg;
+      this.state.save();
+      this.logError(platform, chat.name, msg);
+      return { fetched: false, error: msg };
+    }
+    // 存量会话没有 poll_since：从已有水位读起，别当成基线把升级期间的新消息吞掉。
+    if (!chat.poll_since && (chat.last_epoch || chat.last_msg_id)) {
+      chat.poll_since = Math.max(1, Number(chat.last_epoch) || (now - 60));
+    }
+    const baseline = !chat.last_epoch && !chat.last_msg_id;
+    const interval = !baseline && !!chat.poll_since && !!adapter.supportsSince;
     const n = Math.max(1, Math.min(Number(limit) || this.cfg.poll?.per_chat_limit || 10, 50));
     let r;
     try {
-      r = await this.im.adapter(platform).fetchMessages(chatId, { limit: n });
+      if (interval) {
+        const floor = Math.max(chat.poll_since, now - INTERVAL_MAX_SEC);
+        if (floor > chat.poll_since) {
+          // 停机太久：只回看 2 小时，更早的记缺口，不回放。
+          chat.gap = { at: now, from: chat.poll_since, to: floor, source: "backlog" };
+        }
+        r = await adapter.fetchSince(chatId, { since: floor, until: now, maxPages: 3 });
+      } else {
+        r = await adapter.fetchMessages(chatId, { limit: n });
+      }
     } catch (e) {
       const msg = `${e?.name || "Error"}: ${e?.message || e}`.slice(0, 300);
       chat.last_error = msg;
@@ -638,13 +876,32 @@ export class Poller {
     }
     chat.last_error = "";
     chat.last_sync = now;
-    const messages = r.messages.slice(0, n).map((m) => ({
+    let messages = (r.messages || []).map((m) => ({
       ...m, platform, chat_id: chatId,
       is_self: !!ident.self_id && m.sender_id === ident.self_id,
     }));
+    if (interval) {
+      const epochs = messages.map((m) => Number(m.ts_epoch) || 0).filter((x) => x > 0);
+      const newest = epochs.length ? Math.max(...epochs) : 0;
+      if (r.complete === false) {
+        // 窗口里没读全：把读不到的一段记成缺口，游标推到 now，不做无边界回放。
+        chat.gap = {
+          at: now, from: chat.poll_since,
+          to: epochs.length ? Math.min(...epochs) : now, source: "backlog",
+        };
+        chat.poll_since = now;
+      } else {
+        chat.poll_since = Math.max(newest, now - 10);
+      }
+      chat.verified_at = now;
+      // 区间读的条数由页预算决定（最多 150），不能再按 per_chat_limit 截断：
+      // 截断会让游标跳到最新，把窗口里没处理的命中静默丢掉。
+    } else if (baseline) {
+      chat.poll_since = now - 10;
+    }
     // 引用原文：只补水位之后的新消息，老消息不再重复 mget（spec 0053）。
     try {
-      await this.im.adapter(platform).resolveQuotes?.(messages, {
+      await adapter.resolveQuotes?.(messages, {
         since: baseline ? Number.POSITIVE_INFINITY : Math.max(0, (Number(chat.last_epoch) || 0) - 1),
       });
     } catch { /* 引用取不到不阻断轮询 */ }
@@ -654,32 +911,78 @@ export class Poller {
       this.state.save();
       return { fetched: true, new: 0, msgs: 0, baseline: true, woke: false, items: [] };
     }
-    const result = this.process(chat, messages, {
-      baseline, platform, advance: wake || baseline,
+    return this.finishChat(chat, messages, {
+      baseline, advance: wake || baseline, handleCommands, source,
     });
+  }
+
+  /**
+   * 唤醒前补一次该会话的最近 10 条（只读）：账号流的结果没有 `reply_to`，
+   * 这里把引用原文与媒体键贴回本批消息；取不到不阻断唤醒。
+   */
+  async enrichBatch(chat, rows) {
+    let adapter;
+    try { adapter = this.im.adapter(chat.platform); } catch { return rows; }
+    if (!adapter?.fetchMessages || !rows?.length) return rows;
+    try {
+      const r = await adapter.fetchMessages(chat.chat_id, { limit: 10 });
+      if (!r?.ok || !r.messages?.length) return rows;
+      await adapter.resolveQuotes?.(r.messages, { since: 0 });
+      const byId = new Map(r.messages.map((m) => [String(m.msg_id), m]));
+      for (const row of rows) {
+        const src = byId.get(String(row.msg_id));
+        if (!src) continue;
+        if (!row.reply_to && src.reply_to) row.reply_to = src.reply_to;
+        if (!row.quote && src.quote) row.quote = src.quote;
+        if (!row.media_id && src.media_id) row.media_id = src.media_id;
+        if (!row.media_paths?.length && src.media_paths?.length) row.media_paths = src.media_paths;
+      }
+    } catch { /* 上下文取不到不阻断唤醒 */ }
+    return rows;
+  }
+
+  /** 分类 → 待投集合 → （可选）指令 → 唤醒。轮询与账号流共用这一段。 */
+  async finishChat(chat, messages, {
+    baseline = false, advance = true, handleCommands = true, source = "poll",
+  } = {}) {
+    const platform = chat.platform;
+    const ident = this.identity[platform];
+    const now = nowSec();
+    const items = (messages || []).map((m) => ({
+      ...m, platform, chat_id: chat.chat_id,
+      is_self: !!ident?.self_id && m.sender_id === ident.self_id,
+    }));
+    chat.last_sync = now;
+    chat.last_error = "";
+    const result = this.process(chat, items, { baseline, platform, advance });
+    // 对账补回来的消息：流没见过的，记一笔健康度（spec 0065）。
+    if (source === "verify" && result.newIds.size) {
+      const rt = this.state.data.runtime || (this.state.data.runtime = {});
+      rt.stream = rt.stream || {};
+      rt.stream.missed = (Number(rt.stream.missed) || 0) + result.newIds.size;
+    }
     this.state.save();
-    const handled = handleCommands && wake
-      ? await this.consumeStartCommands(chat, result.batch, { source: "poll" })
+    const handled = handleCommands && advance
+      ? await this.consumeStartCommands(chat, result.batch, { source })
       : { consumed: new Set(), results: [], started: false };
     const batch = handled.consumed.size
       ? result.batch.filter((m) => !handled.consumed.has(m.msg_id))
       : result.batch;
+    // 账号流不带 reply_to：要唤醒时补一次最近 10 条，只补引用与媒体键，不改分类（spec 0065）。
+    if (advance && batch.length && (source === "stream" || source === "overflow")) {
+      await this.enrichBatch(chat, batch);
+    }
     // 启动指令已经开了开场 turn：本批其它消息在 recent 里，别马上再起一轮把它打断。
-    const woke = wake && !handled.started ? await this.maybeWake(chat, batch) : false;
+    const woke = advance && !handled.started ? await this.maybeWake(chat, batch) : false;
     return {
-      fetched: true, new: batch.length, msgs: messages.length,
-      baseline, woke, command: handled.results[0] || null, items: messages,
+      fetched: true, new: result.batch.length, msgs: items.length,
+      baseline, woke, command: handled.results[0] || null, items, batch,
     };
   }
 
   process(chat, messages, { baseline, platform, advance = true }) {
     const selfId = this.identity[platform]?.self_id || "";
     const names = this.selfNames(platform);
-    const floorEpoch = Number(chat.last_epoch) || 0;
-    const lastId = String(chat.last_msg_id || "");
-    const indexOf = new Map(messages.map((m, i) => [String(m.msg_id), i]));
-    const hasWatermark = !!lastId && indexOf.has(lastId);
-    const stopAt = hasWatermark ? indexOf.get(lastId) : -1;
     // 本人 @ 自己 = 对替身说话（spec 0029 / 0039）。它不是"已经回复了对面"，
     // 不该参与 selfEpoch——否则会把自己刚下指令时对面还没处理的 @ 吞掉。
     const isCmdMsg = (m) => !!selfId && m.sender_id === selfId &&
@@ -689,25 +992,24 @@ export class Poller {
       .filter((m) => selfId && m.sender_id === selfId && !isCmdMsg(m) &&
         !progressIds.has(String(m.msg_id)))
       .map((m) => Number(m.ts_epoch) || 0));
-    // 消息列表是最新在前；同秒多条时第一个最大的就是最新，不能只按 epoch 收口。
+    // 水位只用于展示与旧数据兼容；「新不新」由 seen 环回答（spec 0065）。
     let best = null;
-    for (let i = 0; i < messages.length; i += 1) {
-      const epoch = Number(messages[i].ts_epoch) || 0;
-      if (epoch < floorEpoch) continue;
+    for (const m of messages) {
+      const epoch = Number(m.ts_epoch) || 0;
       if (!best || epoch > best.epoch) {
-        best = { epoch, ts: String(messages[i].ts || ""), id: String(messages[i].msg_id) };
+        best = { epoch, ts: String(m.ts || ""), id: String(m.msg_id) };
       }
     }
+    const seen = new Set((chat.seen || []).map(String));
     const classified = [];
     const newIds = new Set();
-    for (let i = 0; i < messages.length; i += 1) { // 最新在前
-      const m = messages[i];
+    for (const m of messages) { // 最新在前
+      const id = String(m.msg_id);
       // 进度卡是本人发的 Card，不是“本人已回复”；不进 recent/selfEpoch/newIds。
-      if (progressIds.has(String(m.msg_id))) continue;
-      const isNew = !baseline && (hasWatermark
-        ? i < stopAt
-        : (Number(m.ts_epoch) || 0) > floorEpoch);
-      if (isNew) newIds.add(String(m.msg_id));
+      if (progressIds.has(id)) continue;
+      // 读过的不再分类：账号流与对账都会重读重叠区间（spec 0065）。
+      if (advance && seen.has(id)) continue;
+      if (!baseline) newIds.add(id);
       const isSelf = !!selfId && m.sender_id === selfId;
       const allMode = chat.kind === "group" && chat.wake_mode === "all";
       // 私聊「只认 @」：非 @ 记知会，正文不落盘、不算待回、不进唤醒批次。
@@ -727,9 +1029,6 @@ export class Poller {
         state = "new";
       } else if (isSelf) {
         state = "replied";
-      } else if (selfEpoch && (Number(m.ts_epoch) || 0) < selfEpoch) {
-        state = kind === "fyi" ? "ignored" : "replied";
-        skip = "you-replied";
       } else if (kind === "fyi") {
         // 全量模式：群里的非 @ 消息也要叫醒 agent（只看不回），所以记 new。
         state = allMode ? "new" : "ignored";
@@ -739,7 +1038,7 @@ export class Poller {
       }
       const keepBody = (state === "new" || state === "opened") && kind !== "out";
       classified.push({
-        msg_id: String(m.msg_id),
+        msg_id: id,
         sender_id: String(m.sender_id || ""),
         sender_name: String(m.sender_name || ""),
         content: keepBody ? String(m.content || "") : "",
@@ -776,9 +1075,11 @@ export class Poller {
       duty.cancelClosing(chat, { now: nowSec(), reason: "有新消息，取消收尾" });
     }
     this.state.mergeRecent(chat, classified);
+    if (advance) this.state.markSeen(chat, messages.map((m) => String(m.msg_id)));
+    // 只收口「已经给过 agent」的行：本人发言证明不了答过没投递的 @（spec 0065）。
     if (!baseline && selfEpoch) this.state.markEarlierReplied(chat, selfEpoch);
-    // 点开只读（wake=false）不推进水位：这次发现的新消息留给下一轮定时唤醒，
-    // 否则 batch 会被“看过”吞掉，永远不会叫醒 agent。
+    // 点开只读（wake=false）不推进游标 / seen：这次发现的新消息留给下一轮定时唤醒，
+    // 否则批次会被“看过”吞掉，永远不会叫醒 agent。
     if (advance) {
       if (best) {
         chat.last_epoch = best.epoch;
@@ -789,35 +1090,8 @@ export class Poller {
         chat.last_ts = "";
       }
     }
-    const batch = this.collectBatch(chat, classified, newIds);
-    return { batch, selfEpoch };
-  }
-
-  /**
-   * 唤醒批次。
-   * · mention 模式：只收本轮新到、仍是 new 的待回消息（水位已推进，天然不重复）。
-   * · all 模式：合并窗口内的消息留在本地等下一轮，所以按 last_wake_epoch 去重，
-   *   把积压的一次性给过去。上限就是本地保留的 10 条指针，更大的突发量按 skill 在线拉。
-   */
-  collectBatch(chat, classified, newIds) {
-    const pendings = new Set(["dm", "mention", "service", "fyi", "cmd"]);
-    const allMode = chat.kind === "group" && chat.wake_mode === "all";
-    if (!allMode) {
-      return classified.filter((m) => {
-        if (!newIds.has(m.msg_id)) return false;
-        if (m.kind !== "dm" && m.kind !== "mention" && m.kind !== "service" &&
-            m.kind !== "cmd") return false;
-        const row = chat.recent.find((x) => x.msg_id === m.msg_id);
-        return !!row && row.state === "new";
-      });
-    }
-    const floor = Number(chat.last_wake_epoch) || 0;
-    return (chat.recent || [])
-      // opened 也算：点开看过不等于 agent 已经处理过，靠 last_wake_epoch 去重即可。
-      .filter((m) => pendings.has(m.kind) && (m.state === "new" || m.state === "opened") &&
-        (Number(m.ts_epoch) || 0) > floor)
-      .sort((a, b) => (a.ts_epoch - b.ts_epoch))
-      .slice(-RECENT_LIMIT);
+    const batch = this.state.pendingUndelivered(chat, DELIVER_BATCH);
+    return { batch, newIds, selfEpoch };
   }
 
   /**
@@ -845,35 +1119,42 @@ export class Poller {
     return true;
   }
 
-  async maybeWake(chat, batch) {
+  async maybeWake(chat, batch = null) {
     if (!chat.watching || chat.blocked) return false;
-    if (batch.some((m) => m.kind === "cmd") && !this.allowCmdWake(chat)) return false;
-    const key = chatKey(chat.platform, chat.chat_id);
+    const rows = Array.isArray(batch) ? batch : this.state.pendingUndelivered(chat, DELIVER_BATCH);
+    if (rows.some((m) => m.kind === "cmd") && !this.allowCmdWake(chat)) return false;
     // 已被取消、正在收尾的旧轮不算在飞：它不该让新消息的载荷被标成「上一轮被打断」。
     const active = typeof this.turns?.busy === "function"
       ? this.turns.busy(chat.platform, chat.chat_id)
       : !!this.turns?.isActive(chat.platform, chat.chat_id);
     const allMode = chat.kind === "group" && chat.wake_mode === "all";
     // 指令是交互，不等合并窗口：窗口内的旁观消息仍按窗口攒着。
-    const hasCmd = batch.some((m) => m.kind === "cmd");
-    if (allMode && batch.length && !hasCmd) {
+    const hasCmd = rows.some((m) => m.kind === "cmd");
+    if (allMode && rows.length && !hasCmd) {
       // 合并窗口：窗口内攒着，下一轮一次给过去。窗口 0 = 不合并。
       const win = Math.max(0, Number(this.cfg.poll?.group_wake_sec ?? 60) || 0);
       const since = nowSec() - (Number(chat.last_wake_at) || 0);
       if (win > 0 && chat.last_wake_at && since < win) return false;
     }
-    if (batch.length) {
+    if (rows.length) {
       if (!this.turns) return false;
-      const r = await this.turns.wake(chat, { interrupted: active, batch });
-      if (r.ok && allMode) {
+      // 纯 drain（这批消息都早于上次唤醒）不打断在飞轮次；有新命中才打断。
+      const fresh = !chat.last_wake_at ||
+        rows.some((m) => (Number(m.ts_epoch) || 0) > (Number(chat.last_wake_at) || 0));
+      const r = await this.turns.wake(chat, { interrupted: active && fresh, batch: rows });
+      if (r.ok) {
         chat.last_wake_at = nowSec();
-        chat.last_wake_epoch = Math.max(...batch.map((m) => Number(m.ts_epoch) || 0));
+        this.state.markDelivered(chat, rows.map((m) => m.msg_id));
         this.state.save();
       }
       return !!r.ok;
     }
     if (chat.wake?.failed && !active && this.state.pendingCount(chat) > 0 && this.turns) {
       const r = await this.turns.wake(chat, { interrupted: active });
+      if (r.ok) {
+        this.state.markDelivered(chat, this.state.pendingMessages(chat).map((m) => m.msg_id));
+        this.state.save();
+      }
       return !!r.ok;
     }
     return false;
@@ -1293,6 +1574,11 @@ export class Poller {
       blocked_group: rows.filter((r) => r.blocked && r.kind === "group").length,
       last_result: this.lastResult,
       command_scan: { ...this.lastCommandScan },
+      // 账号级消息流（spec 0065）：面板用它显示「一条流覆盖多少会话」与截断/失败。
+      stream: {
+        ...(this.state.data.runtime?.stream || {}),
+        supported: this.streamable({ platform: "feishu" }),
+      },
     };
   }
 

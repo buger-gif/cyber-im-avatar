@@ -270,19 +270,57 @@ test("target display names stay unique without touching existing names", () => {
   assert.equal(c.name, "同名");
 });
 
-test("recent keeps at most 10 newest and clears bodies when not pending", () => {
+test("recent keeps 10 context rows but never evicts undelivered hits", () => {
   const { state } = tempState();
   const chat = state.ensureChat("feishu", "oc_x", { name: "X", kind: "p2p" });
   const rows = [];
   for (let i = 0; i < 12; i += 1) rows.push(msg(`m${i}`, 100 + i));
   state.mergeRecent(chat, rows);
-  assert.equal(chat.recent.length, RECENT_LIMIT);
+  assert.equal(chat.recent.length, 12, "未投递的命中不能被 10 条挤掉");
   assert.equal(chat.recent[0].msg_id, "m11");
-  assert.equal(chat.recent.at(-1).msg_id, "m2");
   assert.ok(chat.recent.every((m) => m.content));
+
+  // 投递之后回到上下文窗口：只留最新 10 条。
+  state.markDelivered(chat, chat.recent.map((m) => m.msg_id));
+  state.mergeRecent(chat, []);
+  assert.equal(chat.recent.length, RECENT_LIMIT);
+  assert.equal(chat.recent.at(-1).msg_id, "m2");
+
+  // 已处理（ignored）的行不受保护，按窗口收口。
+  const other = state.ensureChat("feishu", "oc_y", { name: "Y", kind: "p2p" });
+  const ignored = [];
+  for (let i = 0; i < 12; i += 1) ignored.push(msg(`i${i}`, 100 + i, { state: "ignored" }));
+  state.mergeRecent(other, ignored);
+  assert.equal(other.recent.length, RECENT_LIMIT);
 
   state.setMessageState("feishu", "m11", "replied");
   assert.equal(chat.recent.find((m) => m.msg_id === "m11").content, "");
+});
+
+test("pendingUndelivered / markDelivered / seen ring", () => {
+  const { state } = tempState();
+  const chat = state.ensureChat("feishu", "oc_x", { name: "X", kind: "p2p" });
+  state.mergeRecent(chat, [
+    msg("m1", 101), msg("m2", 102, { kind: "mention" }), msg("m3", 103, { state: "ignored" }),
+  ]);
+  assert.deepEqual(state.pendingUndelivered(chat).map((m) => m.msg_id), ["m1", "m2"]);
+  assert.equal(state.markDelivered(chat, ["m1"]), 1);
+  assert.equal(state.markDelivered(chat, ["m1"]), 0, "重复标记是幂等的");
+  assert.deepEqual(state.pendingUndelivered(chat).map((m) => m.msg_id), ["m2"]);
+  assert.equal(state.markSeen(chat, ["m1", "m2", "m1"]), 2);
+  assert.equal(state.hasSeen(chat, "m2"), true);
+  assert.equal(state.hasSeen(chat, "zzz"), false);
+  assert.deepEqual(chat.seen, ["m2", "m1"]);
+});
+
+test("markEarlierReplied only closes delivered rows", () => {
+  const { state } = tempState();
+  const chat = state.ensureChat("feishu", "oc_x", { name: "X", kind: "p2p" });
+  state.mergeRecent(chat, [msg("seen", 101), msg("unseen", 102)]);
+  state.markDelivered(chat, ["seen"]);
+  state.markEarlierReplied(chat, 200);
+  assert.equal(chat.recent.find((m) => m.msg_id === "seen").state, "replied");
+  assert.equal(chat.recent.find((m) => m.msg_id === "unseen").state, "new", "没投递过的不能被吞");
 });
 
 test("mergeRecent dedupes by msg_id and keeps newest first", () => {
@@ -353,7 +391,7 @@ test("old state without last_msg_id / media fields loads with safe defaults", ()
   assert.equal(chat.last_msg_id, "");
   assert.deepEqual(Object.keys(chat.recent[0]), [
     "msg_id", "sender_id", "sender_name", "content", "ts", "ts_epoch", "kind", "state", "skip",
-    "msg_type", "app_link", "media_id", "media_paths", "reply_to", "quote",
+    "msg_type", "app_link", "media_id", "media_paths", "reply_to", "quote", "delivered_at",
   ]);
   assert.equal(chat.recent[0].skip, "", "老数据没有 skip，读出来是空串");
   assert.equal(chat.recent[0].msg_type, "");
